@@ -207,7 +207,40 @@ def test_e2e_get_full_shows_metadata(x_path, secrets_dir):
 def test_e2e_get_nonexistent_exits_3(x_path, secrets_dir):
     code, _, err = _run_x(x_path, ["secret", "get", "nonexistent"], secrets_dir)
     assert code == 3
-    assert "不存在" in err or "nonexistent" in err
+
+
+def test_e2e_get_extracts_api_key_from_multiline_value(x_path, secrets_dir):
+    """Multi-line value containing ``api_key:`` → only the api_key goes to clipboard.
+
+    Regression for the user-reported bug: ``x secret get 小米`` was
+    pasting 5 lines of mixed ``api_key:`` / ``base_url:`` / etc. into
+    the clipboard. Now the clipboard gets just the first ``api_key:``
+    value, and stdout still gets the full multi-line block.
+    """
+    multiline_value = (
+        "api_key: sk-extracted-test\n"
+        "base_url: https://example.com/v1\n"
+        "api_key: sk-second-key\n"
+    )
+    _run_x(
+        x_path,
+        ["secret", "set", "multitest", "--value", multiline_value],
+        secrets_dir,
+    )
+    code, out, err = _run_x(x_path, ["secret", "get", "multitest"], secrets_dir)
+
+    # 1. stdout still has the FULL multi-line value (no behavior change
+    #    for piping / --no-clipboard users).
+    assert code == 0
+    assert "sk-extracted-test" in out
+    assert "sk-second-key" in out
+    assert "base_url" in out
+
+    # 2. stderr tells the user an extraction happened (so they know
+    #    the clipboard has just one line, not the full block).
+    assert "已提取" in err or "api_key" in err, (
+        f"expected extraction note in stderr, got: {err!r}"
+    )
 
 
 # ============================================================

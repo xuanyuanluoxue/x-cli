@@ -77,6 +77,28 @@
 - stderr 含 `🔐 警告：密钥已输出到 stdout（可能被 shell 历史 / 日志捕获）`
 - `note` / `category` / `created_at` **不**打印（除非 `--full`）
 
+### 场景 2.5：get <name> 多行 value 时剪贴板只拿 api_key
+
+**Given**:
+- DB 含 `multitest`，value 是多行文本（含 `api_key:` / `token:` / `app_secret:` / `gateway_token:` 模式之一）
+  ```
+  api_key: sk-extracted-test
+  base_url: https://example.com/v1
+  api_key: sk-second-key
+  ```
+
+**When**:
+- `x secret get multitest`（默认行为 + 剪贴板）
+
+**Then**:
+- 退出码 0
+- **stdout**：完整多行 value（**不**改 — 管道 / `--no-clipboard` 用户看到全部）
+- **剪贴板**：只有第一个 `api_key:` / `token:` / `app_secret:` / `gateway_token:` 行的值（无前缀、无换行）— `sk-extracted-test`
+- stderr 含 `📋 已复制到剪贴板（…）（已提取 api_key 行）`
+- 适用：多行 value 里的纯 API key 直接粘贴到 API 工具。如果用户要看完整 value 仍可以用 `--no-clipboard` 或 `--full`
+
+> **设计动机**：用户粘贴密钥到工具时，多行 value（migration 自旧系统时常见）粘出来是 5 行乱七八糟的文本。自动提取第一个 key 行让"拿来即用"。
+
 ---
 
 ## 场景 3：get --full 输出完整元数据

@@ -200,6 +200,35 @@ def _render_secret_table(entries: list) -> str:
 # ============================================================
 
 
+# Pattern that recognises a "key line" in a multi-line stored value,
+# e.g. "api_key: sk-xxx" or "token: foo" or "app_secret: bar". Used by
+# ``_secret_get`` to extract a single token from a multi-line value
+# before writing to the clipboard (the most common use case is "I just
+# want the api_key to paste into a tool, not the whole block with
+# base_url, client_id, etc.").
+#
+# Note: anchored at line start, takes the first non-whitespace run
+# after the colon as the value. Multi-line values with three api_key
+# entries (e.g. the migrated 小米 token) get the FIRST one on the
+# clipboard — the user can use --no-clipboard to see all of them.
+import re
+
+_KEY_LINE_RE = re.compile(r"^[ \t]*(?:api_key|token|app_secret|gateway_token)[ \t]*:[ \t]*(\S+)", re.MULTILINE)
+
+
+def _extract_first_key(value: str) -> str | None:
+    """Return the first ``api_key:`` / ``token:`` / ``app_secret:`` / ``gateway_token:``
+    value found in a multi-line stored value, or ``None`` if no such line
+    is present.
+
+    Used by :func:`_secret_get` to write a clean token to the clipboard
+    when the stored value is multi-line. The full value still goes to
+    stdout (so piping / ``--no-clipboard`` users see everything).
+    """
+    match = _KEY_LINE_RE.search(value)
+    return match.group(1) if match else None
+
+
 def _secret_list(args: argparse.Namespace) -> int:
     """``x secret list`` — 列出所有密钥（不显示 value）。
 
@@ -262,13 +291,26 @@ def _secret_get(args: argparse.Namespace) -> int:
         return 0
 
     # 默认流程：stdout + 剪贴板
+    # 剪贴板拿到的是「干净」的 token（从多行 value 中提取第一个
+    # api_key: / token: / app_secret: / gateway_token: 行的值），方便
+    # 直接粘贴。stdout 仍给完整 value（管道 / 调试用户能看到全部）。
     if not args.no_stdout:
         print(entry.value)
 
     if not args.no_clipboard:
-        ok, msg = _copy_to_clipboard(entry.value)
+        extracted = _extract_first_key(entry.value)
+        if extracted is not None and extracted != entry.value:
+            # 多行 value 且能识别 key 行 → 把第一个 key 写到剪贴板
+            clipboard_text = extracted
+            extract_note = "（已提取 api_key 行）"
+        else:
+            # 单行 value 或无 key 模式 → 整块写到剪贴板
+            clipboard_text = entry.value
+            extract_note = ""
+        ok, msg = _copy_to_clipboard(clipboard_text)
         if ok:
-            print(f"📋 已复制到剪贴板（{msg}）", file=sys.stderr)
+            note = f"📋 已复制到剪贴板（{msg}）{extract_note}".rstrip()
+            print(note, file=sys.stderr)
         else:
             print(f"⚠️ 复制到剪贴板失败：{msg}（请用 --no-stdout 关掉 stdout 或手动复制）", file=sys.stderr)
 
