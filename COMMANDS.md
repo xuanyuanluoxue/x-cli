@@ -117,9 +117,9 @@
 
 ---
 
-### P1 — 这周做（🚧 v0.4.x — 配置 + 日志基础设施）
+### P1 — 这周做（✅ v0.4.y — 配置 + 日志基础设施 已完成）
 
-- [ ] `x --config <路径>` — 加载 YAML 配置（覆盖默认 todo_dir / secrets_path / log_level / log_path）
+- [x] `x --config <路径>` — 加载 YAML 配置（覆盖默认 todo_dir / secrets_path / log_level / log_path）
   - 默认配置路径：`xcli_data_dir()/config.yaml`（独立于 xavier）
   - 环境变量 `XCLI_CONFIG` 覆盖（最高优先级）
   - 配置文件不存在时用硬编码默认（**不**报错）
@@ -128,16 +128,21 @@
   - 配置文件 schema：`{todo_dir, secrets_path, log_level, log_path}`（手写 parser，**不**引 PyYAML）
   - 退出码：0 成功 / 2 参数错 / 5 配置错
   - BDD 规格：[docs/behaviors/config-behavior.md](docs/behaviors/config-behavior.md)
-- [ ] `x --log-level <级别>` — 全局日志级别（DEBUG / INFO / WARNING / ERROR / CRITICAL，大小写不敏感）
+  - **已上线（commit `e8abe1b`）**
+- [x] `x --log-level <级别>` — 全局日志级别（DEBUG / INFO / WARNING / ERROR / CRITICAL，大小写不敏感）
   - 优先于配置文件中的 `log_level`（CLI 临时覆盖）
   - 双写：stderr + `<xcli_data_dir>/x.log`（v0.4.x 不做 rotation，单文件 append）
   - 用 stdlib `logging`，**不**引第三方
+  - 接受 `WARN` / `FATAL` 别名
   - BDD 规格：[docs/behaviors/config-behavior.md](docs/behaviors/config-behavior.md)
-- [ ] `x --config init` — 一键写默认配置到 `xcli_data_dir()/config.yaml`
-  - 已存在的配置不覆盖（除非 `--force`）
+  - **已上线（commit `e8abe1b`）**
+- [x] `x --config init` — 一键写默认配置到 `xcli_data_dir()/config.yaml`
+  - 已存在的配置不覆盖（除非 `--force` — 未来加）
   - 输出带注释的 YAML 模板（解释每个字段）
+  - 二次运行 exit 2 + 提示用 --force
+  - **已上线（commit `e8abe1b`）**
 
-> **向后兼容保证**：
+> **向后兼容保证**（已实现并验证）：
 > - `XAVIER_TODO_DIR` / `XCLI_SECRETS_DIR` 仍 work（测试 / 用户覆盖）
 > - 配置文件里的 `todo_dir` / `secrets_path` 优先级**高于** 上面 2 个 env var（更明确的用户意图）
 > - 旧 CLI 调用（`x todo list` 无 flag）行为零变化
