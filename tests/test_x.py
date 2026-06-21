@@ -100,9 +100,20 @@ def test_todo_help_flag_shows_main_help(capsys):
     assert "todo" in captured.out
 
 
-@pytest.mark.parametrize("action", ["list", "add", "update", "archive", "stats"])
+@pytest.mark.parametrize("action", [])
 def test_todo_action_not_yet_implemented(action):
-    """对应场景：x todo <action> 全部占位（Phase 1 未实现）"""
+    """对应场景：x todo <action> 全部占位（Phase 1 未实现）
+
+    所有 todo 子命令均已实现并覆盖在独立测试文件：
+    - ``add``    → ``tests/test_todo_add.py``
+    - ``list``   → ``tests/test_todo_list.py``
+    - ``stats``  → ``tests/test_todo_stats.py``
+    - ``update`` → ``tests/test_todo_update.py``
+    - ``archive`` → ``tests/test_todo_archive.py``
+
+    本测试保留 parametrize 框架，但当前没有未实现的子命令；如果以后
+    新增了占位子命令，往参数列表里加即可。
+    """
     err = io.StringIO()
     with redirect_stderr(err):
         exit_code = main(["todo", action])
@@ -126,14 +137,8 @@ def test_build_parser_does_not_crash():
 # ============================================================
 #  argv 透传：子命令的 argparse 自己处理剩余参数
 # ============================================================
-
-def test_unknown_flag_after_subcommand_is_argparse_error(capsys):
-    """对应场景：x todo list --status pending（占位阶段 list 不接受 --status）
-    → 透传给 _todo_run 的 argparse，触发 SystemExit(2)"""
-    with pytest.raises(SystemExit) as exc_info:
-        main(["todo", "list", "--status", "pending"])
-    # argparse 用法错误退出码是 2
-    assert exc_info.value.code == 2
-    captured = capsys.readouterr()
-    # argparse 会输出错误信息到 stderr
-    assert "--status" in captured.err or "unrecognized" in captured.err.lower()
+# 注：原 ``test_unknown_flag_after_subcommand_is_argparse_error`` 测试
+# ``x todo list --status pending`` 在占位阶段触发 argparse 的 SystemExit(2)；
+# 但 ``list`` 已被 action-list task 实现并接受 ``--status``，该用例不再适用。
+# 真正的未知-flag 用法错误测试由各 action 的子命令测试覆盖（见
+# ``tests/test_todo_*.py``）。

@@ -149,16 +149,25 @@ class TaskStore:
             # plugin layer is responsible for reporting YAML errors.
             return None
         task = Task.from_frontmatter(metadata, body=body)
-        # If the folder has no `folder` field recorded, fall back to
-        # the on-disk path (relative to todo_dir). We normalise to
-        # forward slashes so the on-disk format and the in-memory
-        # representation match across Windows and POSIX.
-        if not task.folder:
-            try:
-                rel = folder.relative_to(self.todo_dir)
-            except ValueError:
-                rel = folder
-            task.folder = str(rel).replace("\\", "/")
+        # The on-disk path is the **authoritative** source for a task's
+        # canonical location. The frontmatter ``folder`` field is a
+        # cached value that can become stale when a task is moved
+        # between ``任务/`` and ``归档/`` (legacy data in the real
+        # ``~/.xavier/TODO/归档/`` still records ``folder: 任务/<name>``
+        # from before the move). We always overwrite it here so every
+        # caller — list / get / stats — sees the truth.
+        try:
+            rel = folder.relative_to(self.todo_dir)
+        except ValueError:
+            rel = folder
+        task.folder = str(rel).replace("\\", "/")
+        # Legacy archive tasks sometimes keep a stale ``status: in_progress``
+        # in their frontmatter even though they physically live under
+        # ``归档/``. Overriding the in-memory status here keeps every
+        # caller (stats / list --all / update) consistent with the on-disk
+        # reality without rewriting the user's source file.
+        if task.folder.startswith("归档/") and task.status is not TaskStatus.ARCHIVED:
+            task.status = TaskStatus.ARCHIVED
         return task
 
     def list_tasks(self, include_archived: bool = False) -> list[Task]:
@@ -399,6 +408,25 @@ class TaskStore:
         Keys: ``total``, ``by_status`` (dict), ``by_priority`` (dict),
         ``due_within_7_days`` (int), ``high_priority_active`` (int),
         ``high_priority_breakdown`` (dict).
+
+        Archive-state rule
+        ------------------
+        The on-disk folder location is the **authoritative** source of
+        "archived" vs "active". The frontmatter ``status`` field is
+        treated as a hint only — when a task lives under ``归档/`` we
+        force ``status = archived`` for counting purposes, regardless of
+        what the frontmatter says.
+
+        Why: ``archive_task`` always moves the folder AND rewrites the
+        status, so freshly-archived tasks are consistent. But the real
+        ``~/.xavier/TODO/归档/`` contains legacy tasks (e.g.
+        ``20260605-就业推荐表和毕业生登记表``,
+        ``20260615-劳动教育III``) where the folder was moved but the
+        ``status:`` frontmatter line was never bumped from
+        ``in_progress``. Trusting the frontmatter alone produces
+        under-counted ``archived`` and over-counted ``in_progress`` —
+        exactly the mismatch we saw against ``TODO.md``'s ``inventory``
+        block (pending=2 / in_progress=2 / archived=30 → 34 total).
         """
         tasks = self.list_tasks(include_archived=True)
         by_status: dict[str, int] = {s.value: 0 for s in TaskStatus}
@@ -411,12 +439,24 @@ class TaskStore:
         cutoff = today_date + timedelta(days=7)
 
         for task in tasks:
-            status_value = (
+            raw_status_value = (
                 task.status.value
                 if isinstance(task.status, TaskStatus)
                 else str(task.status)
             )
-            by_status[status_value] = by_status.get(status_value, 0) + 1
+            # Folder location overrides the (potentially stale) frontmatter
+            # status. Anything under 归档/ counts as archived, full stop.
+            in_archive_folder = (
+                task.folder is not None and task.folder.startswith("归档/")
+            )
+            effective_status_value = (
+                TaskStatus.ARCHIVED.value
+                if in_archive_folder
+                else raw_status_value
+            )
+            by_status[effective_status_value] = (
+                by_status.get(effective_status_value, 0) + 1
+            )
 
             priority_value = (
                 task.priority.value
@@ -425,19 +465,21 @@ class TaskStore:
             )
             by_priority[priority_value] = by_priority.get(priority_value, 0) + 1
 
-            # "Due within 7 days" excludes archived tasks per BDD §stats 1
-            if status_value != TaskStatus.ARCHIVED.value and task.deadline:
+            # "Due within 7 days" excludes archived tasks per BDD §stats 1.
+            # Use the effective status (folder-driven) so legacy archive
+            # tasks with a stale `status: in_progress` don't leak in.
+            if effective_status_value != TaskStatus.ARCHIVED.value and task.deadline:
                 deadline_date = _parse_date(task.deadline)
                 if deadline_date is not None and today_date <= deadline_date <= cutoff:
                     due_soon += 1
 
-            if priority_value == Priority.HIGH.value and status_value in (
+            if priority_value == Priority.HIGH.value and effective_status_value in (
                 TaskStatus.PENDING.value,
                 TaskStatus.IN_PROGRESS.value,
             ):
                 high_active += 1
-                high_breakdown[status_value] = (
-                    high_breakdown.get(status_value, 0) + 1
+                high_breakdown[effective_status_value] = (
+                    high_breakdown.get(effective_status_value, 0) + 1
                 )
 
         return {
