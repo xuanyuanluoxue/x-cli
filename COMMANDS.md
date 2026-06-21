@@ -72,50 +72,67 @@
 
 ---
 
-### P0 — 立即做（🚧 v0.4.0 — x todo 独立化）
+### P0 — 立即做（✅ v0.4.0 — x todo 独立化 已完成）
 
-- [ ] **存储路径改独立** — `core/storage.py:_default_todo_dir()` 改用 `core/paths.py:xcli_todo_dir()`（默认 `%LOCALAPPDATA%\x-cli\todo\` Win / `~/.local/share/x-cli/todo/` Unix）
+- [x] **存储路径改独立** — `core/storage.py:_default_todo_dir()` 改用 `core/paths.py:xcli_todo_dir()`（默认 `%LOCALAPPDATA%\x-cli\todo\` Win / `~/.local/share/x-cli/todo/` Unix）
   - 不变量：`x todo` **永不**读写 `~/.xavier/TODO/`（除非显式 `--from`）
   - 向后兼容：`XAVIER_TODO_DIR` 环境变量仍可覆盖
   - BDD 规格：[docs/behaviors/todo-storage-behavior.md](docs/behaviors/todo-storage-behavior.md)
-- [ ] `x todo init [--dir <path>]` — 一键创建 x-cli 独立 TODO 目录（任务/ + 归档/ + README.md）
+  - **已上线（commit `a6978c8`）**
+- [x] `x todo init [--dir <path>]` — 一键创建 x-cli 独立 TODO 目录（任务/ + 归档/ + README.md）
   - 幂等：已存在则提示，不覆盖
   - 退出码：0 成功 / 1 无法创建（权限 / IO 错）/ 2 参数错
   - BDD 规格：[docs/behaviors/todo-init-behavior.md](docs/behaviors/todo-init-behavior.md)
-- [ ] `x todo import --from <dir> [--to <dir>]` — 从 xavier 系统单向迁移任务到 x-cli 独立库
+  - **已上线（commit `a6978c8`）**
+- [x] `x todo import --from <dir> [--to <dir>]` — 从 xavier 系统单向迁移任务到 x-cli 独立库
   - **不写回 xavier**（单向只读）
   - 重复跳过（同 name 已存在不覆盖）
   - Frontmatter 全字段 round-trip（含未知字段如 `paused_at`）
   - BDD 规格：[docs/behaviors/todo-import-behavior.md](docs/behaviors/todo-import-behavior.md)
+  - **已上线（commit `a6978c8`）**
 
 ---
 
-### P1 — 这周做（todo 全生命周期闭环）
+### P1 — 这周做（🚧 v0.4.x — todo 全生命周期闭环）
 
 - [ ] `x todo restore <id>` — 从归档还原到 active
   - 行为：把 `归档/YYYYMMDD-<name>/` 移回 `任务/<name>/`，清掉 `status: archived` + `reason` 字段
-  - 退出码：0 成功 / 3 任务不存在 / 4 任务没归档（不可 restore）
+  - 退出码：0 成功 / 3 任务不存在 / 4 任务没归档（不可 restore）/ 5 归档 YAML 解析失败
   - 边界：归档名带日期前缀，restore 时去掉；同名 active 任务已存在 → 退出码 3
+  - 增强：保留最后已知 status（不只是 pending）；--status 强制覆盖；--dry-run 预览
+  - BDD 规格：[docs/behaviors/todo-restore-behavior.md](docs/behaviors/todo-restore-behavior.md)
+
+---
+
+### P2 — 以后做（v0.4.x — 常用快捷）
+
+- [ ] `x todo search <keyword>` — 跨字段模糊搜索（name + note + tags）
+  - 大小写不敏感，子串匹配，默认含归档
+  - 退出码：0 成功 / 2 空关键词
+  - BDD 规格：[docs/behaviors/todo-search-behavior.md](docs/behaviors/todo-search-behavior.md)
+- [ ] `x todo done <id>` — `archive --reason done` 的快捷方式（80% 常用 case）
+  - 行为完全等价于 `x todo archive <id> --reason done`
+  - 退出码：0 成功 / 3 不存在 / 4 已归档
+  - BDD 规格：[docs/behaviors/todo-done-behavior.md](docs/behaviors/todo-done-behavior.md)
+
+---
 
 ### P1 — 这周做（配置 / 环境）
-
-- [ ] `x todo init [--dir <路径>]` — 首次初始化 TODO 目录
-  - 创建 `~/.xavier/TODO/任务/` + `归档/` + `TODO.md` 索引
-  - `--dir` 默认 `~/.xavier/TODO`，可指定测试目录
 
 - [ ] `x --config <路径>` — 加载 YAML 配置（路径 / 日志级别 / TODO 目录覆盖）
   - 配置文件 schema：`{todo_dir: ..., log_level: DEBUG/INFO/WARNING/ERROR}`
   - 环境变量 `XAVIER_CONFIG` 作为隐式默认值
-
 - [ ] `x --log-level <级别>` — 全局日志级别（DEBUG / INFO / WARNING / ERROR）
   - 输出到 `~/.xavier/logs/x.log`（按日期滚动）
 
 ### P2 — 以后做（可选功能）
 
 - [ ] `x todo edit <id>` — 交互式编辑器打开 TODO.md（vim / notepad）
-- [ ] `x todo search <关键词>` — 按关键词全文搜索
-- [ ] `x todo done <id>` — `archive --reason done` 的快捷方式
 - [ ] `x todo tag <id> <标签...>` — 单独管理 tags（不重写整个任务）
+
+> **已完成（移到 P2 块上方 / 独立 BDD 规格）**：
+> - `x todo search` → [docs/behaviors/todo-search-behavior.md](docs/behaviors/todo-search-behavior.md)
+> - `x todo done` → [docs/behaviors/todo-done-behavior.md](docs/behaviors/todo-done-behavior.md)
 
 ### P3 — 远期（其他插件）
 
