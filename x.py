@@ -24,7 +24,7 @@ from core.logging import get_logger, setup_logging
 from plugins import todo as _todo_plugin
 from plugins import secret as _secret_plugin
 
-__version__ = "0.2.0"
+__version__ = "0.5.0"
 
 
 # ============================================================

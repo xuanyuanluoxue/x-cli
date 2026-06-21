@@ -2,51 +2,72 @@
 
 > **目标读者**：接续开发 x-cli 的 AI agent 或人类开发者
 > **必读**：**在写代码前必须先读本文档**
-> **状态**：本文档反映 **v0.2.0 MVP 实际架构**（2026-06-21）
+> **状态**：本文档反映 **v0.5.0 实际架构**（2026-06-21，Phase 4 plugin split 已实装）
 
 ---
 
 ## 1. 整体架构
 
-### 1.1 MVP 阶段：单文件 + core 库（当前实际）
+### 1.1 当前架构：entry point + core + plugins（v0.5.0）
 
-**MVP 阶段采用「主入口 + 核心库」分层**（不是微内核），原因：todo 5 个 action 加起来不到 500 行逻辑，拆插件的收益不抵成本。
+**x-cli 5 层架构**（从上到下）：
 
 ```
-x.py  (731 行，单文件)
-├── 主入口 (build_parser / main)
-├── --version 处理
-├── SUBCOMMAND_HANDLERS 字典 → {"todo": _todo_run}
-└── _todo_run → 5 个 action handler（inline）
-    ├── _todo_list
-    ├── _todo_add
-    ├── _todo_update
-    ├── _todo_archive
-    └── _todo_stats
+x.py  (215 行，entry point only)
+├── --version / --config / --log-level / --config-init 全局 flag
+├── SUBCOMMAND_HANDLERS 字典
+│     {"todo": plugins.todo.run,
+│      "secret": plugins.secret.run}
+└── main()  →  加载 config + log → 派发到 plugin.run()
 
-core/  (核心库，被 x.py 引用)
-├── models.py    ← Task dataclass + 3 个 enum（TaskStatus/Priority/ArchiveReason）
-├── parser.py    ← YAML frontmatter 解析/序列化（手写，stdlib-only）
-├── slug.py      ← 中英文 slug 生成（stdlib-only，50+ 硬编码拼音 + unicodedata）
-└── storage.py   ← TaskStore：文件系统 CRUD + 统计 + 索引维护
+plugins/  (子命令插件，每个文件 1 个子系统)
+├── todo.py    ← x todo: 10 个 action + register(parser) + run(args)
+└── secret.py  ← x secret: 8 个 action + register(parser) + run(args)
+
+core/  (核心库，被 x.py + plugins/ 共享)
+├── models.py      ← Task dataclass + 3 个 enum
+├── parser.py      ← YAML frontmatter 解析/序列化（手写，stdlib-only）
+├── slug.py        ← 中英文 slug 生成（stdlib-only）
+├── paths.py       ← 跨平台路径解析（XCLI_TODO_DIR / XCLI_DATA_DIR）
+├── formatting.py  ← CJK-aware display helpers（display_width + pad）
+├── storage.py     ← TaskStore：文件系统 CRUD + 统计 + 索引维护
+├── secrets.py     ← SecretStore：JSON DB CRUD + import + export
+├── config.py      ← AppConfig + YAML 解析（v0.4.y）
+└── logging.py     ← stdlib logging wrapper（v0.4.y）
+
+# 第三方依赖：0（dependencies = []）
 ```
+
+**Plugin 合约**（每个 `plugins/<name>.py` 必须实现）：
+
+```python
+def register(parser: argparse.ArgumentParser) -> None:
+    """绑子命令 + flags 到 parser"""
+
+def run(args: Sequence[str]) -> int:
+    """解析 + 派发，返回 exit code"""
+```
+
+**加新子命令的步骤**（未来维护）：
+1. 创建 `plugins/<name>.py`，实现 `register` + `run`
+2. 在 `x.py:SUBCOMMAND_HANDLERS` 加 1 行条目
+3. 写 BDD spec（`docs/behaviors/<name>-behavior.md`）+ tests
 
 **核心理念**：
-- **主入口 `x.py`**：解析 + 字典分发，**未启用 importlib**
-- **核心库 `core/`**：纯 stdlib，**零第三方依赖**（`pyproject.toml dependencies = []`）
-- **数据存储**：直接读 `<xcli_todo_dir>/任务/<name>/TODO.md` 和 `<xcli_todo_dir>/归档/<YYYYMMDD>-<name>/TODO.md`
+- **Entry point `x.py` 只做 argparse + config + log + 派发**（215 行）
+- **Plugins `plugins/` 各自独立**，互不依赖
+- **核心库 `core/` 纯 stdlib，零三方依赖**（`pyproject.toml dependencies = []`）
+- **数据存储**：x-cli 独立于外部系统（`%LOCALAPPDATA%\x-cli\` Windows / `~/.local/share/x-cli/` Unix）
 
-### 1.2 Phase 4 目标：微内核（未来）
+### 1.2 Phase 4 历史：从单文件到插件（已完成 v0.5.0）
 
-```
-x (主入口 — 字典分发 → 改 importlib 动态加载)
-├── 插件系统（importlib.import_module）
-│   ├── plugins/todo.py    ← 从 x.py 迁出
-│   ├── plugins/skill.py   ← 未来
-│   ├── plugins/system.py  ← 未来
-│   └── ...
-├── 配置管理（<xcli_config_path>）— 未实现
-├── 日志系统（<xcli_data_dir>/）— 未实现
+v0.4.y 之前 `x.py` 是 1739 行单文件，所有 18 个 handler inline。Phase 4 拆分：
+- v0.2.0-v0.4.y：单文件 + `SUBCOMMAND_HANDLERS` 字典分发（1739 行）
+- v0.5.0：拆出 `plugins/todo.py` + `plugins/secret.py`，`x.py` 降到 215 行
+- 526 tests / 0 fail / 7 skip（拆分前后一致）
+
+未来可能的扩展（**不**在当前 scope — 见 COMMANDS.md backlog）：
+- `plugins/foo.py` 加新子命令（流程见 1.1）
 └── 自动更新（未来）
 ```
 

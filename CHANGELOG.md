@@ -26,6 +26,48 @@
 
 ---
 
+## [0.5.0] - 2026-06-21 — Phase 4 plugin split + open-source-prep
+
+### Added
+- **`core/formatting.py`**（55 行）：共享的 CJK-aware display helpers（`display_width()` + `pad()`），替代原本散落在 `x.py` 的 `_display_width` / `_pad`
+- **`plugins/todo.py`**（1221 行）：`x todo` 子命令族的 10 个 handler + `register()` + `run()`，从 `x.py` 迁出
+- **`plugins/secret.py`**（434 行）：`x secret` 子命令族的 8 个 handler + `register()` + `run()`，从 `x.py` 迁出
+- **`plugins/__init__.py`**：package docstring + plugin contract 说明（`register` + `run` 约定）
+- **`docs/TODO-SPEC.md`**：项目内嵌的 TODO 磁盘格式规范（YAML frontmatter schema / 字段规则 / 状态枚举 / 迁移说明），替换原本指向 `~/.xavier/TODO/00-TODO-SPEC.md` 的外链
+- **`LICENSE`**：MIT License（Copyright © 2026 Xavier）
+- **`README.md`**（重写）：公开面向的 README（install / usage / hard invariants / roadmap / license），替换 v0.2.0 时代版本
+- **`README.zh.md`**（新增）：README 的中文完整翻译
+
+### Changed
+- **`x.py`**：1739 行 → 215 行（entry point only，subcommand 分发通过 `SUBCOMMAND_HANDLERS` 字典）
+  - 加新子命令 = 1 个 `plugins/<name>.py` 文件 + `SUBCOMMAND_HANDLERS` 1 行字典条目
+- **`core/paths.py`**：环境变量 `XAVIER_TODO_DIR` 改名为 `XCLI_TODO_DIR`（主名），`XAVIER_TODO_DIR` 保留为 deprecated alias 并触发 one-time stderr warning
+- **`core/storage.py`**：`_default_todo_dir()` 简化为直接调用 `xcli_todo_dir()`（环境变量解析集中在 `core/paths.py`）
+- **`x.py` 模板文本**：`x todo init` 创建的 README 模板从中文改为英文，避免在公开分享的代码里留个人化表述
+- **14 个 BDD 文档**：路径占位符（`<xcli_todo_dir>/`、`<legacy-credentials-dir>/`、`xcli_data_dir`），env var 引用统一为 `XCLI_TODO_DIR`，spec 链接从 `~/.xavier/TODO/00-TODO-SPEC.md` 改为 `../TODO-SPEC.md`
+- **12 个测试文件**：env var 从 `XAVIER_TODO_DIR` 改为 `XCLI_TODO_DIR`（兼容旧 alias，外部脚本不受影响）
+- **`docs/architecture.md` / `docs/commands.md` / `AGENTS.md` / `COMMANDS.md`**：清理所有 `Xavier` / `xavier 系统` / `陈新捷` 引用，中性化为 `legacy TODO system` / `<legacy-config-dir>` 等
+
+### Deprecated
+- **`XAVIER_TODO_DIR` 环境变量**：保留为向后兼容（仍可读），但会触发一次性 stderr warning 指向新名 `XCLI_TODO_DIR`。计划 v0.6.0 移除
+
+### Tests
+- 526 PASS / 0 FAIL / 7 SKIP（与重构前完全一致；7 个 skip 全是平台条件 / 真用户样本 / stub 参数化）
+- 19 个 test 文件**零修改**：`x.py` 通过 re-export 保持所有旧名（`_todo_list`、`_todo_register`、`_STATUS_ICONS` 等）
+
+### Commits
+- `92f9c46` — refactor(x): Phase 4 plugin split
+- `7f6898a` — docs(AGENTS): mark Phase 4 plugin split as done
+- `d822778` — docs+chore(x): open-source-prep (XCLI_TODO_DIR + neutralisation)
+- `2d2816f` — docs(COMMANDS): flat-table rewrite
+- `e8abe1b` + `deef0fd` — v0.4.y --config / --log-level / --config-init
+- `a6978c8` — v0.4.0 x todo independent storage
+- `265de76` + `e4b6813` — v0.4.x x todo restore/search/done
+- `cb31ca5` + `f56834f` — v0.3.0 x secret clipboard + import
+- `ec3eead` — v0.3.0 x secret initial
+
+---
+
 ## [0.3.0] - 2026-06-21 — x secret 子系统完成
 
 ### Added
