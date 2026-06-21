@@ -339,9 +339,8 @@ def test_import_from_dir_basic(tmp_path: Path) -> None:
     e = entries[0]
     assert e.name == "minimax"
     assert e.category == "接口密钥"  # from .md filename (sans .md)
-    # KEY: prefix is stripped — the value field holds only the credential.
-    assert "sk-test1234" in e.value
-    assert "api_key:" not in e.value
+    # Value is stored verbatim — full ``api_key: sk-test1234`` preserved.
+    assert "api_key: sk-test1234" in e.value
     # Metadata table → note
     assert "用途" in e.note
     assert "测试" in e.note
@@ -396,8 +395,8 @@ def test_import_does_not_delete_old_files(tmp_path: Path) -> None:
     assert md_file.exists()
 
 
-def test_import_strips_key_prefix_from_single_line(tmp_path: Path) -> None:
-    """Single-line ``KEY: VALUE`` text blocks store only the value (no prefix)."""
+def test_import_preserves_key_prefix_verbatim(tmp_path: Path) -> None:
+    """Single-line ``KEY: VALUE`` blocks store the line unchanged (no stripping)."""
     md = tmp_path / "接口密钥.md"
     md.write_text(
         "## minimax\n\n```text\napi_key: sk-cp-xxxx\n```\n",
@@ -408,19 +407,17 @@ def test_import_strips_key_prefix_from_single_line(tmp_path: Path) -> None:
     store.import_from_dir(tmp_path)
     e = store.get("minimax")
     assert e is not None
-    assert e.value == "sk-cp-xxxx"
-    assert "api_key" not in e.value
+    assert e.value == "api_key: sk-cp-xxxx"
 
 
-def test_import_strips_key_prefix_from_multiline(tmp_path: Path) -> None:
-    """Multi-line blocks strip each line's ``KEY:`` prefix independently."""
+def test_import_preserves_multiline_verbatim(tmp_path: Path) -> None:
+    """Multi-line blocks preserve each line exactly — no prefix stripping."""
     md = tmp_path / "令牌.md"
     md.write_text(
         "## feishu\n\n"
         "```text\n"
         "app_id: cli_a92\n"
         "app_secret: 0UNVM\n"
-        "webhook: https://open.feishu.cn/hook\n"
         "```\n",
         encoding="utf-8",
     )
@@ -429,33 +426,12 @@ def test_import_strips_key_prefix_from_multiline(tmp_path: Path) -> None:
     store.import_from_dir(tmp_path)
     e = store.get("feishu")
     assert e is not None
-    # Each line had its prefix stripped
-    assert "cli_a92" in e.value
-    assert "0UNVM" in e.value
-    assert "https://open.feishu.cn/hook" in e.value
-    # Prefixes are gone
-    assert "app_id:" not in e.value
-    assert "app_secret:" not in e.value
-    assert "webhook:" not in e.value
-
-
-def test_import_preserves_lines_without_key_prefix(tmp_path: Path) -> None:
-    """Lines that don't match ``KEY: VALUE`` (URLs, plain text) pass through unchanged."""
-    md = tmp_path / "接口密钥.md"
-    md.write_text(
-        "## github\n\n```text\nghp_ohABCDEF123\n```\n",
-        encoding="utf-8",
-    )
-
-    store = SecretStore(db_path=tmp_path / "out.json")
-    store.import_from_dir(tmp_path)
-    e = store.get("github")
-    assert e is not None
-    assert e.value == "ghp_ohABCDEF123"
+    assert "app_id: cli_a92" in e.value
+    assert "app_secret: 0UNVM" in e.value
 
 
 def test_import_skips_readme_files(tmp_path: Path) -> None:
-    """README.md / README*.md / 模板.md are not treated as secret sources."""
+    """README.md / 模板.md are not treated as secret sources."""
     (tmp_path / "README.md").write_text(
         "## 格式规范（v1.0）\n\n```text\napi_key: sk-fake\n```\n",
         encoding="utf-8",
@@ -481,8 +457,8 @@ def test_import_stamps_timestamps(tmp_path: Path) -> None:
     store.import_from_dir(tmp_path)
     e = store.get("foo")
     assert e is not None
-    assert e.created_at  # non-empty
-    assert e.updated_at  # non-empty
+    assert e.created_at
+    assert e.updated_at
 
 
 def test_import_empty_dir_returns_zero_zero(tmp_path: Path) -> None:

@@ -64,31 +64,6 @@ _TABLE_ROW_RE = re.compile(r"^\|\s*(.+?)\s*\|\s*$")
 # A separator row: ``|------|------|`` (or any dash-only cells).
 _TABLE_SEP_RE = re.compile(r"^\|[\s\-:|]+\|\s*$")
 
-# A ``key: value`` line inside a fenced ``text`` block. Used by the MD
-# importer to strip the ``key:`` prefix and keep only the value, so the
-# stored secret is the pure credential (e.g. ``sk-cp-xxx``) rather than
-# ``api_key: sk-cp-xxx``. The ``key`` portion must look like an identifier
-# (no whitespace, max 30 chars, alphanumeric / CJK) so that URLs like
-# ``https://...`` and sentences containing colons are left alone.
-_KEY_VALUE_LINE_RE = re.compile(
-    r"^([\w\u4e00-\u9fff][\w\u4e00-\u9fff _-]{0,29}):\s+(.+)$"
-)
-
-
-def _strip_key_prefix(line: str) -> str:
-    """If ``line`` matches ``KEY: VALUE``, return ``VALUE`` (trimmed).
-
-    Conservative — only strips when the prefix is a short identifier-like
-    token (no whitespace, max 30 chars). Lines without a colon, lines whose
-    "key" contains spaces, or lines longer than the cap are returned
-    unchanged so URLs (``https://...``), sentences, and unusual formats
-    pass through verbatim.
-    """
-    m = _KEY_VALUE_LINE_RE.match(line)
-    if m is None:
-        return line
-    return m.group(2)
-
 
 # ============================================================
 #  Exceptions
@@ -646,11 +621,11 @@ def _parse_markdown_sections(text: str, category: str) -> list[SecretEntry]:
             if line.strip().startswith("```"):
                 state = "IN_SECTION"
             else:
-                # Strip ``KEY: `` prefix when present so the stored secret
-                # is the pure credential (e.g. ``sk-cp-xxx`` instead of
-                # ``api_key: sk-cp-xxx``). Multi-line blocks keep one
-                # cleaned line per source line.
-                value.append(_strip_key_prefix(line))
+                # Store the line verbatim — no transformations. If the
+                # user wants only the value, they put only the value in
+                # ``x secret set``; for .md imports the whole ``key: value``
+                # block is the canonical source so we preserve it as-is.
+                value.append(line)
             continue
 
         if state == "IN_OTHER_FENCE":
