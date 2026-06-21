@@ -22,7 +22,10 @@
 - 无
 
 ### Fixed
-- 无
+- **`x secret get` 多行 value 剪贴板提取**：当存储的 value 包含 `api_key:` / `token:` / `app_secret:` / `gateway_token:` 行时，剪贴板只取第一个匹配行的值（**不是**整块多行文本），方便直接粘贴到 API 工具。stdout 仍给完整多行 value（管道 / `--no-clipboard` 用户看到全部），stderr 加"（已提取 api_key 行）"提示。修复用户报告的 `x secret get 小米` 粘贴出 5 行乱文本的 bug
+  - 实现：`plugins/secret.py:_extract_first_key()` + `_KEY_LINE_RE`
+  - BDD：新增场景 §2.5 `docs/behaviors/secret-behavior.md`
+  - 测试：新增 `test_e2e_get_extracts_api_key_from_multiline_value` + 11/11 regex unit checks
 
 ---
 
