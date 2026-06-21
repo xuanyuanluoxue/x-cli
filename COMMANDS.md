@@ -12,156 +12,77 @@
 
 ---
 
-## ✅ 已实现（v0.3.0 — 2026-06-21）
+## ✅ 已实现（v0.4.y — 2026-06-21）
 
 | 命令 | 用途 | 关键参数 |
 |------|------|----------|
-| `x --version` | 显示版本号 | — |
-| `x --help` | 显示帮助 | — |
-| `x todo` | 显示 todo 子命令帮助 | — |
-| `x todo list` | 列出任务（CJK 对齐 + 状态/优先级图标） | `--status` `--priority` `--tag` `--all` |
-| `x todo add <名称>` | 添加任务 | `--priority` `--deadline` `--tags` |
+| `x --version` (`-v`) | 显示版本号 | — |
+| `x --help` (`-h`) | 显示帮助 | — |
+| `x --config <path>` | 加载 YAML 配置 | 覆盖默认 todo_dir / secrets_path / log_level / log_path |
+| `x --log-level <level>` | 全局日志级别 | DEBUG / INFO / WARNING / ERROR / CRITICAL（大小写不敏感，WARN/FATAL 别名） |
+| `x --config-init` | 写默认配置到 `xcli_data_dir()/config.yaml` | 不覆盖（除非未来 `--force`） |
+| `x todo list` | 列出任务（CJK 对齐 + 状态/优先级图标）| `--status` `--priority` `--tag` `--all` |
+| `x todo add <name>` | 添加任务 | `--priority` `--deadline` `--tags` |
 | `x todo update <id>` | 更新任务字段 | `--status` `--priority` `--deadline` `--tags` |
 | `x todo archive <id>` | 归档任务 | `--reason` (done/cancelled/expired/failed) |
-| `x todo stats` | 统计信息（带图标） | — |
+| `x todo restore <id>` | 归档→active 还原 | `--status`（强制覆盖）/ `--dry-run` |
+| `x todo search <keyword>` | 跨字段模糊搜索（name + note + tags）| `--active-only` / `--archived-only` / `--status` |
+| `x todo done <id>` | `archive --reason done` 的快捷 | — |
+| `x todo stats` | 统计信息（带图标）| — |
+| `x todo init [--dir <path>]` | 创建独立 TODO 目录（幂等）| — |
+| `x todo import --from <dir>` | 从 xavier 系统单向迁移到 x-cli 库 | `--to <path>` `--dry-run` |
 | `x secret list` | 列出所有密钥（**不显示 value**）| — |
-| `x secret get <name>` | 输出 value 到 stdout（带警告）| `--full` |
-| `x secret set <name>` | 新增条目 | `--value` `--category` `--note` |
-| `x secret update <name>` | 改 value / note | `--value` `--note` |
+| `x secret get <name>` | 输出 value（默认复制到剪贴板 + 输出 stdout）| `--full` / `--no-clipboard` / `--no-stdout` |
+| `x secret set <name>` | 新增条目 | `--value`（必填）/ `--category` / `--note` |
+| `x secret update <name>` | 改 value / note | `--value` / `--note` |
 | `x secret rm <name>` | 删除条目 | — |
-| `x secret search <keyword>` | name/note 模糊搜（不搜 value）| — |
+| `x secret search <keyword>` | name/note 模糊搜（**不搜 value**）| — |
 | `x secret import --from <dir>` | 从 .md 批量迁移（旧文件保留）| — |
 | `x secret export` | JSON 备份 | `--to <path>` |
 
-**数据源**：`~/.xavier/TODO/任务/` + `~/.xavier/TODO/归档/`
+**合计 21 个命令**（3 顶层 + 10 todo + 8 secret）+ 3 全局 flag
 
-**调用方式**：PowerShell 直接 `x todo list`（PATH 已配 `.venv\Scripts`）
+**存储（全部独立于 xavier 系统）**：
+
+| 子系统 | 路径（Windows） | 路径（Unix） |
+|---|---|---|
+| TODO | `%LOCALAPPDATA%\x-cli\todo\` | `~/.local/share/x-cli/todo/` |
+| Secret | `%LOCALAPPDATA%\x-cli\secrets.json` | `~/.local/share/x-cli/secrets.json` |
+| Config | `%LOCALAPPDATA%\x-cli\config.yaml` | `~/.local/share/x-cli/config.yaml` |
+| Log | `%LOCALAPPDATA%\x-cli\x.log` | `~/.local/share/x-cli/x.log` |
+
+**环境变量覆盖**（向后兼容）：
+- `XAVIER_TODO_DIR` / `XCLI_SECRETS_DIR` 仍 work（测试 / 用户覆盖）
+- `XCLI_CONFIG` 覆盖配置文件路径
+- 配置文件里的 `todo_dir` / `secrets_path` 优先级**高于**上面 2 个 env var
+
+**调用方式**：PowerShell 直接 `x todo list`（PATH 已配 `C:\Users\Chatxavier\.local\bin\x.bat` wrapper）
 
 ---
 
 ## ⏳ 我想要的（按优先级排序）
 
-### P0 — 立即做
+### P1 — 立即做
 
-- [x] `x secret list` — 列出所有密钥（id / name / category / updated_at，**不显示值**）
-- [x] `x secret get <name>` — 输出 value 到 stdout（带"密钥外泄"警告）
-- [x] `x secret set <name> --value <v> [--category <c>] [--note <n>]` — 插入新条目
-- [x] `x secret update <name> --value <v> [--note <n>]` — 改 value
-- [x] `x secret rm <name>` — 删除条目
-- [x] `x secret search <keyword>` — name/note 模糊匹配
-- [x] `x secret import --from <dir>` — 从 `~/.xavier/密钥/*.md` 批量迁移（旧文件保留）
-- [x] `x secret export` — JSON 备份
-
-**存储（独立于 xavier 系统）**：
-- Windows: `%LOCALAPPDATA%\x-cli\secrets.json`
-- macOS/Linux: `~/.local/share/x-cli/secrets.json`
-- 环境变量 `XCLI_SECRETS_DIR` 覆盖
-- 文件权限 600
-- MVP 不加密（明文 + 文件权限保护）
-- Schema: `{name, category, value, note, created_at, updated_at}`
-
-**迁移字段映射**：
-| DB 字段 | 来源 |
-|---------|------|
-| `name` | `.md` 文件的 `## <section>` 标题 |
-| `category` | 文件名（去 `.md`）|
-| `value` | 整个 `text` 代码块原文 |
-| `note` | section 上面的 metadata 表格 |
-
-**退出码**：0 成功 / 2 参数错 / 3 不存在 / 4 已存在（set 时）/ 5 DB 错
-
----
-
-### P0 — 立即做（✅ v0.4.0 — x todo 独立化 已完成）
-
-- [x] **存储路径改独立** — `core/storage.py:_default_todo_dir()` 改用 `core/paths.py:xcli_todo_dir()`（默认 `%LOCALAPPDATA%\x-cli\todo\` Win / `~/.local/share/x-cli/todo/` Unix）
-  - 不变量：`x todo` **永不**读写 `~/.xavier/TODO/`（除非显式 `--from`）
-  - 向后兼容：`XAVIER_TODO_DIR` 环境变量仍可覆盖
-  - BDD 规格：[docs/behaviors/todo-storage-behavior.md](docs/behaviors/todo-storage-behavior.md)
-  - **已上线（commit `a6978c8`）**
-- [x] `x todo init [--dir <path>]` — 一键创建 x-cli 独立 TODO 目录（任务/ + 归档/ + README.md）
-  - 幂等：已存在则提示，不覆盖
-  - 退出码：0 成功 / 1 无法创建（权限 / IO 错）/ 2 参数错
-  - BDD 规格：[docs/behaviors/todo-init-behavior.md](docs/behaviors/todo-init-behavior.md)
-  - **已上线（commit `a6978c8`）**
-- [x] `x todo import --from <dir> [--to <dir>]` — 从 xavier 系统单向迁移任务到 x-cli 独立库
-  - **不写回 xavier**（单向只读）
-  - 重复跳过（同 name 已存在不覆盖）
-  - Frontmatter 全字段 round-trip（含未知字段如 `paused_at`）
-  - BDD 规格：[docs/behaviors/todo-import-behavior.md](docs/behaviors/todo-import-behavior.md)
-  - **已上线（commit `a6978c8`）**
-
----
-
-### P1 — 这周做（🚧 v0.4.x — todo 全生命周期闭环）
-
-- [ ] `x todo restore <id>` — 从归档还原到 active
-  - 行为：把 `归档/YYYYMMDD-<name>/` 移回 `任务/<name>/`，清掉 `status: archived` + `reason` 字段
-  - 退出码：0 成功 / 3 任务不存在 / 4 任务没归档（不可 restore）/ 5 归档 YAML 解析失败
-  - 边界：归档名带日期前缀，restore 时去掉；同名 active 任务已存在 → 退出码 3
-  - 增强：保留最后已知 status（不只是 pending）；--status 强制覆盖；--dry-run 预览
-  - BDD 规格：[docs/behaviors/todo-restore-behavior.md](docs/behaviors/todo-restore-behavior.md)
-
----
-
-### P2 — 以后做（v0.4.x — 常用快捷）
-
-- [ ] `x todo search <keyword>` — 跨字段模糊搜索（name + note + tags）
-  - 大小写不敏感，子串匹配，默认含归档
-  - 退出码：0 成功 / 2 空关键词
-  - BDD 规格：[docs/behaviors/todo-search-behavior.md](docs/behaviors/todo-search-behavior.md)
-- [ ] `x todo done <id>` — `archive --reason done` 的快捷方式（80% 常用 case）
-  - 行为完全等价于 `x todo archive <id> --reason done`
-  - 退出码：0 成功 / 3 不存在 / 4 已归档
-  - BDD 规格：[docs/behaviors/todo-done-behavior.md](docs/behaviors/todo-done-behavior.md)
-
----
-
-### P1 — 这周做（✅ v0.4.y — 配置 + 日志基础设施 已完成）
-
-- [x] `x --config <路径>` — 加载 YAML 配置（覆盖默认 todo_dir / secrets_path / log_level / log_path）
-  - 默认配置路径：`xcli_data_dir()/config.yaml`（独立于 xavier）
-  - 环境变量 `XCLI_CONFIG` 覆盖（最高优先级）
-  - 配置文件不存在时用硬编码默认（**不**报错）
-  - 显式 --config 但路径不存在 → 报错（fail fast）
-  - YAML 解析失败 → 退出码 5
-  - 配置文件 schema：`{todo_dir, secrets_path, log_level, log_path}`（手写 parser，**不**引 PyYAML）
-  - 退出码：0 成功 / 2 参数错 / 5 配置错
-  - BDD 规格：[docs/behaviors/config-behavior.md](docs/behaviors/config-behavior.md)
-  - **已上线（commit `e8abe1b`）**
-- [x] `x --log-level <级别>` — 全局日志级别（DEBUG / INFO / WARNING / ERROR / CRITICAL，大小写不敏感）
-  - 优先于配置文件中的 `log_level`（CLI 临时覆盖）
-  - 双写：stderr + `<xcli_data_dir>/x.log`（v0.4.x 不做 rotation，单文件 append）
-  - 用 stdlib `logging`，**不**引第三方
-  - 接受 `WARN` / `FATAL` 别名
-  - BDD 规格：[docs/behaviors/config-behavior.md](docs/behaviors/config-behavior.md)
-  - **已上线（commit `e8abe1b`）**
-- [x] `x --config init` — 一键写默认配置到 `xcli_data_dir()/config.yaml`
-  - 已存在的配置不覆盖（除非 `--force` — 未来加）
-  - 输出带注释的 YAML 模板（解释每个字段）
-  - 二次运行 exit 2 + 提示用 --force
-  - **已上线（commit `e8abe1b`）**
-
-> **向后兼容保证**（已实现并验证）：
-> - `XAVIER_TODO_DIR` / `XCLI_SECRETS_DIR` 仍 work（测试 / 用户覆盖）
-> - 配置文件里的 `todo_dir` / `secrets_path` 优先级**高于** 上面 2 个 env var（更明确的用户意图）
-> - 旧 CLI 调用（`x todo list` 无 flag）行为零变化
-
-### P2 — 以后做（可选功能）
-
-- [ ] `x todo edit <id>` — 交互式编辑器打开 TODO.md（vim / notepad）
+- [ ] `x todo edit <id>` — 交互式编辑器打开 TODO.md（vim / notepad / 记事本）
 - [ ] `x todo tag <id> <标签...>` — 单独管理 tags（不重写整个任务）
+- [ ] `x --config --force` — `--config-init` 加 force flag（覆盖已存在配置）
+- [ ] 日志轮转 — 按日期 / 按大小（v0.4.x 单文件 append 不够用）
 
-> **已完成（移到 P2 块上方 / 独立 BDD 规格）**：
-> - `x todo search` → [docs/behaviors/todo-search-behavior.md](docs/behaviors/todo-search-behavior.md)
-> - `x todo done` → [docs/behaviors/todo-done-behavior.md](docs/behaviors/todo-done-behavior.md)
+### P2 — 以后做（常用快捷 / 增强）
+
+- [ ] `x --log-level <level>` 在子命令里覆盖（现在是全局）
+- [ ] Config validation（typo 检测 for unknown keys）
+- [ ] Config 热重载（运行中修改不生效，需重启）
+- [ ] `--help` 解析修复（现在被顶层 parser 截走，没传给子命令）
+- [ ] x secret update 加 `--category` 支持（现在只能 rm + set）
 
 ### P3 — 远期（其他插件）
 
-- [ ] `x skill list` — 列出已安装 skills
-- [ ] `x skill install <name>` — 安装 skill
-- [ ] `x system backup` — 备份 `~/.xavier/` 到本地 / 云端
-- [ ] `x system health` — 系统健康检查
+- [ ] `x skill list / install / remove / update` — 技能管理（150+ skills 散在 4 个目录）
+- [ ] `x agent list / start / stop / logs` — agent 编排（hermes / marvis / brain-science 等）
+- [ ] `x web start / stop / status` — 本地 web server 管理
+- [ ] `x system backup / health / log` — 系统工具
 
 ---
 
@@ -186,10 +107,32 @@
 <!-- 自由记录：开发心得、想法、约束 -->
 
 - 命令名用 kebab-case：x todo list（不缩写）
-- 退出码约定：0 成功 / 1 未知 / 2 参数错 / 3 不存在 / 4 已归档 / 5 数据完整性
+- 退出码约定：0 成功 / 1 未知子命令 / 2 参数错 / 3 不存在 / 4 已归档/已存在 / 5 数据完整性
 - 输出格式：成功有 emoji 前缀（✅ ❌ ⏳），表格列 CJK 对齐
-- 配置文件：`~/.xavier/config.yaml`（手写解析，不引 PyYAML）
+- 配置/存储/日志文件用 stdlib（不引第三方），所有数据**独立于 xavier 系统**
+- 跨平台路径用 `core/paths.py:xcli_data_dir()` 统一解析
 
 ---
 
-*最后更新：2026-06-21（创建 + 列出 MVP 已实现 + Phase 2-4 待开发）*
+## 📋 Commit history
+
+| Commit | 版本 | 主题 |
+|---|---|---|
+| `deef0fd` | v0.4.y | docs: COMMANDS.md flip — --config / --log-level / --config-init ✅ |
+| `e8abe1b` | v0.4.y | feat: --config / --log-level / --config-init global options |
+| `e4b6813` | v0.4.x | feat: restore / search / done（todo 生命周期闭环 + 2 快捷）|
+| `a6978c8` | v0.4.0 | feat: x todo 独立存储 + init + import |
+| `0f73333` | v0.4.0 | docs: BDD specs (storage / init / import) |
+| `44d0670` | v0.4.y | docs: BDD spec (config + log-level) |
+| `265de76` | v0.4.x | docs: BDD specs (restore / search / done) |
+| `f56834f` | v0.3.0 | fix(secret): preserve full text block content |
+| `cb31ca5` | v0.3.0 | feat(secret): strip key prefix + clipboard + skip README |
+| `ec3eead` | v0.3.0 | feat: CJK alignment + x secret subsystem |
+| `eab6dac` | v0.2.0 | feat(x.py): 5 个 todo action + stats bug + slug stdlib |
+| `f952549` | v0.2.0 | feat(core): parser + models + storage |
+| `c1fa8e5` | v0.2.0 | docs(behaviors): 5 个 todo BDD 规格 |
+| `ce36312` | v0.1.0 | chore: 项目骨架 |
+
+---
+
+*最后更新：2026-06-21（v0.4.y 落地后重写 — 扁平"已实现"表 + commit history）*
