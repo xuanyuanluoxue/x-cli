@@ -114,16 +114,16 @@ def test_render_stats_empty_store():
     assert "📊 TODO 统计信息" in out
     assert "总任务数：0" in out
     # No status breakdown when total is 0
-    assert "- pending" not in out
-    assert "- in_progress" not in out
-    assert "- archived" not in out
+    assert "⏳ pending" not in out
+    assert "▶ in_progress" not in out
+    assert "✅ archived" not in out
     # Priority section always present
-    assert "- high：0" in out
-    assert "- medium：0" in out
-    assert "- low：0" in out
+    assert "🔥 high：0" in out
+    assert "⚡ medium：0" in out
+    assert "🐢 low：0" in out
     assert "即将到期（7 天内）：0" in out
-    # No 🔥 line when no high-priority active
-    assert "🔥" not in out
+    # No 🔥 高优先级任务 breakdown when no high-priority active
+    assert "🔥 高优先级任务" not in out
 
 
 def test_render_stats_full_breakdown_includes_all_five_status_lines():
@@ -140,14 +140,14 @@ def test_render_stats_full_breakdown_includes_all_five_status_lines():
         "high_priority_breakdown": {"pending": 0, "in_progress": 0},
     }
     out = _render_stats(stats)
-    assert "- pending：3" in out
-    assert "- in_progress：5" in out
-    assert "- blocked：1" in out
-    assert "- waiting：0" in out
-    assert "- archived：2" in out
-    assert "- high：4" in out
-    assert "- medium：6" in out
-    assert "- low：1" in out
+    assert "⏳ pending：3" in out
+    assert "▶ in_progress：5" in out
+    assert "⏸ blocked：1" in out
+    assert "⌛ waiting：0" in out
+    assert "✅ archived：2" in out
+    assert "🔥 high：4" in out
+    assert "⚡ medium：6" in out
+    assert "🐢 low：1" in out
     assert "即将到期（7 天内）：1" in out
 
 
@@ -165,7 +165,7 @@ def test_render_stats_appends_high_priority_breakdown_when_present():
         "high_priority_breakdown": {"pending": 2, "in_progress": 2},
     }
     out = _render_stats(stats)
-    assert "🔥 高优先级任务：4（pending: 2 / in_progress: 2）" in out
+    assert "🔥 高优先级任务：4（⏳ pending: 2 / ▶ in_progress: 2）" in out
 
 
 def test_render_stats_high_priority_breakdown_skips_when_zero():
@@ -182,7 +182,7 @@ def test_render_stats_high_priority_breakdown_skips_when_zero():
         "high_priority_breakdown": {"pending": 0, "in_progress": 0},
     }
     out = _render_stats(stats)
-    assert "🔥" not in out
+    assert "🔥 高优先级任务" not in out
 
 
 def test_render_stats_returns_text_with_trailing_newline():
@@ -322,18 +322,18 @@ def test_stats_empty_repo(store):
     assert "📊 TODO 统计信息" in stdout
     assert "总任务数：0" in stdout
     # Status breakdown omitted when total=0
-    assert "- pending" not in stdout
-    assert "- in_progress" not in stdout
-    assert "- blocked" not in stdout
-    assert "- waiting" not in stdout
-    assert "- archived" not in stdout
+    assert "⏳ pending" not in stdout
+    assert "▶ in_progress" not in stdout
+    assert "⏸ blocked" not in stdout
+    assert "⌛ waiting" not in stdout
+    assert "✅ archived" not in stdout
     # Priority breakdown always present
-    assert "- high：0" in stdout
-    assert "- medium：0" in stdout
-    assert "- low：0" in stdout
+    assert "🔥 high：0" in stdout
+    assert "⚡ medium：0" in stdout
+    assert "🐢 low：0" in stdout
     assert "即将到期（7 天内）：0" in stdout
     # No 🔥 line
-    assert "🔥" not in stdout
+    assert "🔥 高优先级任务" not in stdout
 
 
 # ============================================================
@@ -355,11 +355,11 @@ def test_stats_only_archived(store):
     assert stderr == ""
     assert "总任务数：5" in stdout
     # All 5 status lines shown when total > 0
-    assert "- pending：0" in stdout
-    assert "- in_progress：0" in stdout
-    assert "- blocked：0" in stdout
-    assert "- waiting：0" in stdout
-    assert "- archived：5" in stdout
+    assert "⏳ pending：0" in stdout
+    assert "▶ in_progress：0" in stdout
+    assert "⏸ blocked：0" in stdout
+    assert "⌛ waiting：0" in stdout
+    assert "✅ archived：5" in stdout
     # Archived deadlines are excluded from "due within 7 days"
     assert "即将到期（7 天内）：0" in stdout
 
@@ -416,7 +416,7 @@ def test_stats_high_priority_breakdown_appears(store):
 
     code, stdout, _ = run_stats(store)
     assert code == 0
-    assert "🔥 高优先级任务：4（pending: 2 / in_progress: 2）" in stdout
+    assert "🔥 高优先级任务：4（⏳ pending: 2 / ▶ in_progress: 2）" in stdout
 
 
 def test_stats_no_high_priority_line_when_no_active_high(store):
@@ -430,7 +430,7 @@ def test_stats_no_high_priority_line_when_no_active_high(store):
 
     code, stdout, _ = run_stats(store)
     assert code == 0
-    assert "🔥" not in stdout
+    assert "🔥 高优先级任务" not in stdout
 
 
 # ============================================================
@@ -454,8 +454,8 @@ def test_stats_unknown_fields_do_not_affect_counts(store):
     code, stdout, _ = run_stats(store)
     assert code == 0
     assert "总任务数：2" in stdout
-    assert "- pending：1" in stdout
-    assert "- in_progress：1" in stdout
+    assert "⏳ pending：1" in stdout
+    assert "▶ in_progress：1" in stdout
     # Stats don't contain the unknown field names
     assert "description" not in stdout
     assert "paused_at" not in stdout
@@ -494,7 +494,7 @@ def test_stats_broken_yaml_reports_error_and_exits_5(store):
     assert "归档/20260101-bad" in stderr
     # Best-effort stats: the 1 good task is still counted
     assert "总任务数：1" in stdout
-    assert "- pending：1" in stdout
+    assert "⏳ pending：1" in stdout
 
 
 def test_stats_no_broken_yaml_returns_zero(store):
@@ -610,9 +610,9 @@ def test_stats_legacy_archive_with_stale_in_progress_counts_as_archived(store):
     # And the command output must reflect these counts.
     code, stdout, _ = run_stats(store)
     assert code == 0
-    assert "- pending：2" in stdout
-    assert "- in_progress：2" in stdout
-    assert "- archived：30" in stdout
+    assert "⏳ pending：2" in stdout
+    assert "▶ in_progress：2" in stdout
+    assert "✅ archived：30" in stdout
 
 
 def test_list_with_all_archived_tasks_show_archived_status(store):

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import unicodedata
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
@@ -21,7 +22,61 @@ from core.storage import (
     TaskStore,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
+
+
+# ============================================================
+#  Visualization helpers (CJK-aware table rendering + icons)
+# ============================================================
+
+
+_STATUS_ICONS: dict[str, str] = {
+    TaskStatus.PENDING.value: "⏳",
+    TaskStatus.IN_PROGRESS.value: "▶",
+    TaskStatus.BLOCKED.value: "⏸",
+    TaskStatus.WAITING.value: "⌛",
+    TaskStatus.ARCHIVED.value: "✅",
+    f"{TaskStatus.ARCHIVED.value} (done)": "✅",
+    f"{TaskStatus.ARCHIVED.value} (cancelled)": "🚫",
+    f"{TaskStatus.ARCHIVED.value} (expired)": "⏰",
+    f"{TaskStatus.ARCHIVED.value} (failed)": "❌",
+}
+
+_PRIORITY_ICONS: dict[str, str] = {
+    Priority.HIGH.value: "🔥",
+    Priority.MEDIUM.value: "⚡",
+    Priority.LOW.value: "🐢",
+}
+
+
+def _display_width(s: str) -> int:
+    """Monospace display width of ``s`` (CJK / emoji = 2, ASCII = 1).
+
+    Uses :func:`unicodedata.east_asian_width` to decide width:
+    * ``W`` (Wide) / ``F`` (Fullwidth) -> 2 cells
+    * ``H`` (Halfwidth) / ``Na`` (Narrow) / ``A`` (Ambiguous) -> 1 cell
+
+    Tab / newline are treated as 0 so they don't break padding.
+    """
+    width = 0
+    for ch in s:
+        if ch in ("\t", "\n", "\r"):
+            continue
+        if unicodedata.east_asian_width(ch) in ("W", "F"):
+            width += 2
+        else:
+            width += 1
+    return width
+
+
+def _pad(s: str, width: int) -> str:
+    """Right-pad ``s`` so its display width is at least ``width``.
+
+    Adds the minimum number of spaces to reach the requested display
+    width. Useful for monospace table alignment with mixed ASCII + CJK.
+    """
+    pad_count = max(0, width - _display_width(s))
+    return s + " " * pad_count
 
 
 # ============================================================
@@ -109,8 +164,10 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
                 "--tags",
                 help="标签（逗号分隔，如 驾照,暑假）；不传则不写入 tags 字段",
             )
+        elif name == "stats":
+            sp = sub.add_parser(name, help="📊 统计信息")
         else:
-            sub.add_parser(name, help=f"{name} 命令")
+            sp = sub.add_parser(name, help=f"{name} 命令")
 
 
 def _todo_not_implemented(action: str) -> int:
@@ -371,7 +428,7 @@ def _coerce_priority(raw: str) -> Priority:
 
 
 def _list_status_cell(task) -> str:
-    """表格 Status 列的展示值；归档任务附 reason（BDD §场景 5）。"""
+    """表格 Status 列的展示值；带图标 + 归档任务附 reason（BDD §场景 5）。"""
     status_value = (
         task.status.value
         if isinstance(task.status, TaskStatus)
@@ -383,15 +440,21 @@ def _list_status_cell(task) -> str:
             if isinstance(task.reason, ArchiveReason)
             else str(task.reason)
         )
-        return f"{status_value} ({reason_value})"
-    return status_value
+        cell = f"{status_value} ({reason_value})"
+    else:
+        cell = status_value
+    icon = _STATUS_ICONS.get(cell, "")
+    return f"{icon} {cell}" if icon else cell
 
 
 def _list_priority_cell(task) -> str:
-    """表格 Priority 列的展示值。"""
+    """表格 Priority 列的展示值；带图标。"""
     if isinstance(task.priority, Priority):
-        return task.priority.value
-    return str(task.priority)
+        cell = task.priority.value
+    else:
+        cell = str(task.priority)
+    icon = _PRIORITY_ICONS.get(cell, "")
+    return f"{icon} {cell}" if icon else cell
 
 
 # 列表命令的列定义（表头 + 取值函数），集中维护表格 schema
@@ -455,15 +518,30 @@ def _todo_list(args: argparse.Namespace) -> int:
     # 4. 输出
     if not tasks:
         # BDD §场景 6：空仓库 / 无匹配 → 提示信息 + 退出码 0
-        print("📭 没有任务")
+        print("📭 没有任务（试试 x todo add \"任务名\" 创建第一个）")
         return 0
 
-    # 表头 + 数据行，tab 分隔
-    header = "\t".join(h for h, _ in _LIST_COLUMNS)
-    print(header)
-    for t in tasks:
-        row = "\t".join(col(t) for _, col in _LIST_COLUMNS)
-        print(row)
+    # 计算每列的显示宽度（取表头与所有数据行的最大值），
+    # 用 display-width 而非字符数，CJK 字符按 2 宽算，确保对齐
+    header_cells = [h for h, _ in _LIST_COLUMNS]
+    rows: list[list[str]] = [
+        [col(t) for _, col in _LIST_COLUMNS] for t in tasks
+    ]
+    col_widths = [
+        max(
+            [_display_width(header_cells[i])]
+            + [_display_width(row[i]) for row in rows]
+        )
+        for i in range(len(_LIST_COLUMNS))
+    ]
+
+    # 表头
+    print("  ".join(_pad(c, col_widths[i]) for i, c in enumerate(header_cells)))
+    # 分隔线（用 ─ 增强可视化）
+    print("  ".join("─" * col_widths[i] for i in range(len(_LIST_COLUMNS))))
+    # 数据行
+    for row in rows:
+        print("  ".join(_pad(c, col_widths[i]) for i, c in enumerate(row)))
     return 0
 
 
@@ -581,18 +659,31 @@ def _render_stats(stats: dict[str, Any]) -> str:
 
     if stats["total"] > 0:
         by_status = stats["by_status"]
-        lines.append(f"- pending：{by_status.get('pending', 0)}")
-        lines.append(f"- in_progress：{by_status.get('in_progress', 0)}")
-        lines.append(f"- blocked：{by_status.get('blocked', 0)}")
-        lines.append(f"- waiting：{by_status.get('waiting', 0)}")
-        lines.append(f"- archived：{by_status.get('archived', 0)}")
+        # 状态分布：用 list 表里同款的图标，保持视觉一致
+        for key, label in (
+            ("pending", "pending"),
+            ("in_progress", "in_progress"),
+            ("blocked", "blocked"),
+            ("waiting", "waiting"),
+            ("archived", "archived"),
+        ):
+            count = by_status.get(key, 0)
+            icon = _STATUS_ICONS.get(key, "")
+            prefix = f"{icon} " if icon else "- "
+            lines.append(f"{prefix}{label}：{count}")
 
     lines.append("")
     lines.append("优先级分布：")
     by_priority = stats["by_priority"]
-    lines.append(f"- high：{by_priority.get('high', 0)}")
-    lines.append(f"- medium：{by_priority.get('medium', 0)}")
-    lines.append(f"- low：{by_priority.get('low', 0)}")
+    for key, label in (
+        ("high", "high"),
+        ("medium", "medium"),
+        ("low", "low"),
+    ):
+        count = by_priority.get(key, 0)
+        icon = _PRIORITY_ICONS.get(key, "")
+        prefix = f"{icon} " if icon else "- "
+        lines.append(f"{prefix}{label}：{count}")
 
     lines.append("")
     lines.append(f"即将到期（7 天内）：{stats['due_within_7_days']}")
@@ -601,8 +692,8 @@ def _render_stats(stats: dict[str, Any]) -> str:
         hb = stats["high_priority_breakdown"]
         lines.append(
             f"🔥 高优先级任务：{stats['high_priority_active']}"
-            f"（pending: {hb.get('pending', 0)} / "
-            f"in_progress: {hb.get('in_progress', 0)}）"
+            f"（⏳ pending: {hb.get('pending', 0)} / "
+            f"▶ in_progress: {hb.get('in_progress', 0)}）"
         )
 
     return "\n".join(lines) + "\n"
@@ -675,6 +766,349 @@ def _todo_stats(args: Sequence[str]) -> int:
 
 
 # ============================================================
+#  x secret 命令实现（MVP 阶段 inline 在主入口）
+# ============================================================
+
+SECRET_ACTIONS: tuple[str, ...] = (
+    "list",
+    "get",
+    "set",
+    "update",
+    "rm",
+    "search",
+    "import",
+    "export",
+)
+
+
+def _secret_register(parser: argparse.ArgumentParser) -> None:
+    """注册 x secret 的子命令参数。
+
+    对应 BDD：``docs/behaviors/secret-behavior.md``（17 个场景）。
+
+    子命令：list / get / set / update / rm / search / import / export。
+    所有 core.secrets / core.paths 调用都在 handler 内做 lazy import，
+    保证 x.py 顶层 import 始终成功（core.secrets 正在并行实现）。
+    """
+    sub = parser.add_subparsers(
+        dest="secret_action", required=False, metavar="ACTION"
+    )
+
+    # list — 无参数
+    sub.add_parser("list", help="列出所有密钥（不显示 value）")
+
+    # get <name> [--full]
+    sp = sub.add_parser("get", help="取一个 value（支持模糊匹配）")
+    sp.add_argument("name", help="密钥名（精确 / 模糊匹配）")
+    sp.add_argument(
+        "--full",
+        action="store_true",
+        help="显示完整元数据（name / category / value / note / created_at / updated_at）",
+    )
+
+    # set <name> --value <v> [--category <c>] [--note <n>]
+    sp = sub.add_parser("set", help="新增条目")
+    sp.add_argument("name", help="密钥名（唯一）")
+    sp.add_argument("--value", required=True, help="密钥值")
+    sp.add_argument(
+        "--category", default="default", help="分类（默认 default）"
+    )
+    sp.add_argument("--note", default="", help="备注")
+
+    # update <name> [--value <v>] [--note <n>]
+    sp = sub.add_parser("update", help="修改 value / note")
+    sp.add_argument("name", help="密钥名")
+    sp.add_argument("--value", help="新 value（不传则不改）")
+    sp.add_argument(
+        "--note",
+        help="新 note（不传则不改；传空字符串会清空）",
+    )
+
+    # rm <name>
+    sp = sub.add_parser("rm", help="删除条目")
+    sp.add_argument("name", help="密钥名")
+
+    # search <keyword>
+    sp = sub.add_parser("search", help="按 name/note 模糊搜（不搜 value）")
+    sp.add_argument("keyword", help="关键词")
+
+    # import --from <dir>
+    sp = sub.add_parser("import", help="从 .md 批量迁移")
+    sp.add_argument(
+        "--from",
+        dest="src_dir",
+        required=True,
+        help="源目录（含 .md 文件）",
+    )
+
+    # export [--to <path>]
+    sp = sub.add_parser("export", help="JSON 备份")
+    sp.add_argument(
+        "--to",
+        dest="dest",
+        help=(
+            "备份文件路径（默认 <db_dir>/secrets-backup-YYYYMMDD-HHMMSS.json）"
+        ),
+    )
+
+
+# list / search 共用的表格列定义（表头 + 取值函数），集中维护 schema
+_SECRET_LIST_COLUMNS: tuple[tuple[str, Callable[[object], str]], ...] = (
+    ("Name", lambda e: f"🔐 {e.name}"),
+    ("Category", lambda e: f"📂 {e.category}"),
+    ("Updated", lambda e: f"🕐 {e.updated_at}"),
+)
+
+
+def _render_secret_table(entries: list) -> str:
+    """Render a list of SecretEntry as a CJK-aligned table (BDD §场景 1, 12).
+
+    空列表走友好提示行，不打表头。列宽按表头与所有数据行的最大
+    display-width 计算（CJK 按 2 宽算），保证中英混排对齐。
+    """
+    if not entries:
+        return "📭 暂无密钥（试试 x secret set <name> --value <v> 创建）\n"
+
+    header_cells = [h for h, _ in _SECRET_LIST_COLUMNS]
+    rows: list[list[str]] = [
+        [col(e) for _, col in _SECRET_LIST_COLUMNS] for e in entries
+    ]
+    col_widths = [
+        max(
+            [_display_width(header_cells[i])]
+            + [_display_width(row[i]) for row in rows]
+        )
+        for i in range(len(_SECRET_LIST_COLUMNS))
+    ]
+
+    lines: list[str] = [
+        "  ".join(_pad(c, col_widths[i]) for i, c in enumerate(header_cells)),
+        "  ".join("─" * col_widths[i] for i in range(len(_SECRET_LIST_COLUMNS))),
+    ]
+    for row in rows:
+        lines.append(
+            "  ".join(_pad(c, col_widths[i]) for i, c in enumerate(row))
+        )
+    return "\n".join(lines) + "\n"
+
+
+def _secret_list(args: argparse.Namespace) -> int:
+    """``x secret list`` — 列出所有密钥（不显示 value）。
+
+    对应 BDD：§场景 1。按 name 字典序升序，永不显示 value（硬性约束）。
+    退出码 0（包含空仓库）。
+    """
+    from core.secrets import SecretStore  # lazy import
+
+    store = SecretStore()
+    entries = sorted(store.list(), key=lambda e: e.name)
+    sys.stdout.write(_render_secret_table(entries))
+    return 0
+
+
+def _secret_get(args: argparse.Namespace) -> int:
+    """``x secret get <name> [--full]`` — 取一个 value。
+
+    对应 BDD：§场景 2-4。
+    - 默认：stdout 第一行 = value（仅 value，无前缀）；stderr 永远打警告
+    - ``--full``：stdout = Field/Value 表格（含完整元数据）
+    - 找不到 → 退出码 3，stderr 报错，stdout 空
+    """
+    from core.secrets import SecretStore  # lazy import
+
+    store = SecretStore()
+    entry = store.find(args.name)
+    if entry is None:
+        print(f"❌ 密钥不存在：{args.name}", file=sys.stderr)
+        return 3
+
+    if args.full:
+        # 完整元数据表格（BDD §场景 3）
+        rows: list[tuple[str, str]] = [
+            ("name", entry.name),
+            ("category", entry.category),
+            ("value", entry.value),
+            ("note", entry.note or ""),
+            ("created_at", entry.created_at),
+            ("updated_at", entry.updated_at),
+        ]
+        col0_w = max(
+            _display_width("Field"),
+            max(_display_width(r[0]) for r in rows),
+        )
+        col1_w = max(
+            _display_width("Value"),
+            max(_display_width(r[1]) for r in rows),
+        )
+        out: list[str] = [
+            "  ".join([_pad("Field", col0_w), _pad("Value", col1_w)]),
+            "  ".join(["─" * col0_w, "─" * col1_w]),
+        ]
+        for k, v in rows:
+            out.append("  ".join([_pad(k, col0_w), _pad(v, col1_w)]))
+        sys.stdout.write("\n".join(out) + "\n")
+    else:
+        # BDD §场景 2：仅 value，无前缀；第一行就是 value
+        print(entry.value)
+
+    # BDD 硬性约束：get 永远 stderr 警告（不管是否 tty / 是否有 --full）
+    print(
+        "🔐 警告：密钥已输出到 stdout（可能被 shell 历史 / 日志捕获）",
+        file=sys.stderr,
+    )
+    return 0
+
+
+def _secret_set(args: argparse.Namespace) -> int:
+    """``x secret set <name> --value <v> [--category <c>] [--note <n>]`` — 新增条目。
+
+    对应 BDD：§场景 5-7。已存在 → 退出码 4（用 update 改）。
+    """
+    from core.secrets import SecretAlreadyExistsError, SecretStore  # lazy import
+
+    store = SecretStore()
+    try:
+        entry = store.set(
+            args.name,
+            args.value,
+            category=args.category,
+            note=args.note,
+        )
+    except SecretAlreadyExistsError:
+        print(
+            f"❌ 密钥已存在：{args.name}（用 x secret update 修改）",
+            file=sys.stderr,
+        )
+        return 4
+
+    print(f"✅ 密钥已创建：{entry.name}")
+    return 0
+
+
+def _secret_update(args: argparse.Namespace) -> int:
+    """``x secret update <name> [--value <v>] [--note <n>]`` — 修改 value / note。
+
+    对应 BDD：§场景 8-9。
+    - 至少要指定 ``--value`` 或 ``--note`` 之一（否则退码 2）
+    - ``--note ""`` 显式传空串表示清空 note
+    - 找不到 → 退出码 3
+    """
+    if args.value is None and args.note is None:
+        print(
+            "❌ 至少要指定 --value 或 --note 之一",
+            file=sys.stderr,
+        )
+        return 2
+
+    from core.secrets import SecretNotFoundError, SecretStore  # lazy import
+
+    store = SecretStore()
+    try:
+        entry = store.update(args.name, value=args.value, note=args.note)
+    except SecretNotFoundError:
+        print(f"❌ 密钥不存在：{args.name}", file=sys.stderr)
+        return 3
+
+    print(f"✅ 密钥已更新：{entry.name}")
+    return 0
+
+
+def _secret_rm(args: argparse.Namespace) -> int:
+    """``x secret rm <name>`` — 删除条目。
+
+    对应 BDD：§场景 10-11。找不到 → 退出码 3。
+    """
+    from core.secrets import SecretNotFoundError, SecretStore  # lazy import
+
+    store = SecretStore()
+    try:
+        entry = store.rm(args.name)
+    except SecretNotFoundError:
+        print(f"❌ 密钥不存在：{args.name}", file=sys.stderr)
+        return 3
+
+    print(f"✅ 密钥已删除：{entry.name}")
+    return 0
+
+
+def _secret_search(args: argparse.Namespace) -> int:
+    """``x secret search <keyword>`` — 按 name/note 模糊搜（不搜 value）。
+
+    对应 BDD：§场景 12。搜索范围 = name + note，硬性**不**搜 value
+    （避免 grep 撞到密钥）。输出格式与 list 一致。
+    """
+    from core.secrets import SecretStore  # lazy import
+
+    store = SecretStore()
+    entries = sorted(store.search(args.keyword), key=lambda e: e.name)
+    sys.stdout.write(_render_secret_table(entries))
+    return 0
+
+
+def _secret_import(args: argparse.Namespace) -> int:
+    """``x secret import --from <dir>`` — 从 .md 批量迁移。
+
+    对应 BDD：§场景 13-14。源目录不存在 → 退出码 5。
+    旧 .md 文件**保留**（单向导入，不删源文件）。
+    """
+    from core.secrets import SecretStore  # lazy import
+
+    src = Path(args.src_dir)
+    if not src.is_dir():
+        print(f"❌ 源目录不存在：{src}", file=sys.stderr)
+        return 5
+
+    store = SecretStore()
+    imported, skipped = store.import_from_dir(src)
+    print(f"📥 迁移完成：导入 {imported} 条，跳过 {skipped} 条（重复）")
+    return 0
+
+
+def _secret_export(args: argparse.Namespace) -> int:
+    """``x secret export [--to <path>]`` — JSON 备份。
+
+    对应 BDD：§场景 15。默认路径 = ``<db_dir>/secrets-backup-YYYYMMDD-HHMMSS.json``。
+    """
+    from core.secrets import SecretStore  # lazy import
+
+    dest = Path(args.dest) if args.dest else None
+    store = SecretStore()
+    path = store.export(dest)
+    n = len(store.list())
+    print(f"✅ 已备份 {n} 条到 {path}")
+    return 0
+
+
+def _secret_run(args: Sequence[str]) -> int:
+    """x secret 入口：解析参数并分发到子命令 handler。
+
+    对应 BDD：``docs/behaviors/secret-behavior.md``（17 场景）。
+
+    无 action → 打印 usage + 退出码 0（BDD §场景 16）。
+    action 解析后通过 ``globals().get("_secret_<action>")`` 派发到对应 handler。
+    """
+    parser = argparse.ArgumentParser(
+        prog="x secret", description="密钥管理（独立 JSON DB）"
+    )
+    _secret_register(parser)
+    parsed = parser.parse_args(list(args))
+
+    if not parsed.secret_action:
+        parser.print_help()
+        return 0
+
+    handler_name = f"_secret_{parsed.secret_action.replace('-', '_')}"
+    handler = globals().get(handler_name)
+    if handler is None:
+        print(
+            f"🚧 x secret {parsed.secret_action} 还未实现",
+            file=sys.stderr,
+        )
+        return 1
+    return handler(parsed)
+
+
+# ============================================================
 #  主入口
 # ============================================================
 
@@ -682,6 +1116,7 @@ def _todo_stats(args: Sequence[str]) -> int:
 # Phase 1 只注册 todo；Phase 4 拆插件后改用 importlib.import_module
 SUBCOMMAND_HANDLERS: dict[str, Callable[[Sequence[str]], int]] = {
     "todo": _todo_run,
+    "secret": _secret_run,
 }
 
 

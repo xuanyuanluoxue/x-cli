@@ -1,7 +1,8 @@
 # 命令参考
 
-> **目标读者**：使用 x-cli 的人类（包括未来的你）  
+> **目标读者**：使用 x-cli 的人类（包括未来的你）
 > **说明**：本文档列出所有命令的完整参考
+> **状态**：v0.2.0 MVP 实际实现（2026-06-21）
 
 ---
 
@@ -15,27 +16,33 @@ x <子命令> [选项]
 
 ### 1.2 全局选项
 
-| 选项 | 说明 |
-|------|------|
-| `-v, --version` | 显示版本号 |
-| `-h, --help` | 显示帮助信息 |
-| `--config <路径>` | 指定配置文件（默认 `~/.xavier/config.yaml`）|
-| `--log-level <级别>` | 设置日志级别（DEBUG/INFO/WARNING/ERROR）|
+| 选项 | 状态 | 说明 |
+|------|------|------|
+| `-v, --version` | ✅ 已实现 | 显示版本号（v0.2.0）|
+| `-h, --help` | ✅ 已实现 | 显示帮助（argparse 默认）|
+| `--config <路径>` | ❌ 未实现 | 指定配置文件（计划读取 `~/.xavier/config.yaml`）|
+| `--log-level <级别>` | ❌ 未实现 | 设置日志级别（DEBUG/INFO/WARNING/ERROR）|
 
-### 1.3 示例
+### 1.3 环境变量
+
+| 变量 | 状态 | 说明 |
+|------|------|------|
+| `XAVIER_TODO_DIR` | ✅ 已实现 | 覆盖 TODO 根目录（默认 `~/.xavier/TODO`）。主要给测试用 |
+
+### 1.4 示例
 
 ```bash
 # 显示版本号
 x --version
+# 输出: x 0.2.0
 
-# 显示帮助信息
+# 显示帮助
 x --help
+x todo --help
+x todo add --help
 
-# 指定配置文件
-x --config /path/to/config.yaml todo list
-
-# 设置日志级别为 DEBUG
-x --log-level DEBUG todo add "测试任务"
+# 切数据源（测试用）
+XAVIER_TODO_DIR=/tmp/test python x.py todo list
 ```
 
 ---
@@ -44,13 +51,17 @@ x --log-level DEBUG todo add "测试任务"
 
 ### 2.1 子命令概览
 
-| 子命令 | 说明 | 参数 |
-|--------|------|------|
-| `x todo list` | 列出任务 | `--status` / `--priority` / `--tag` |
-| `x todo add <名称>` | 添加任务 | `--priority` / `--deadline` / `--tags` |
-| `x todo update <id>` | 更新任务 | `--status` / `--priority` / `--deadline` |
-| `x todo archive <id>` | 归档任务 | `--reason` |
-| `x todo stats` | 统计信息 | 无 |
+| 子命令 | 状态 | 说明 | 参数 |
+|--------|------|------|------|
+| `x todo list` | ✅ | 列出任务 | `--status` / `--priority` / `--tag` / `--all` |
+| `x todo add <名称>` | ✅ | 添加任务 | `--priority` / `--deadline` / `--tags` |
+| `x todo update <id>` | ✅ | 更新任务 | `--status` / `--priority` / `--deadline` / `--tags` |
+| `x todo archive <id>` | ✅ | 归档任务 | `--reason` |
+| `x todo stats` | ✅ | 统计信息 | 无 |
+| `x todo init` | ❌ | 初始化 TODO 目录 | — |
+| `x todo restore` | ❌ | 从归档还原 | — |
+
+---
 
 ### 2.2 `x todo list` — 列出任务
 
@@ -60,31 +71,48 @@ x todo list [选项]
 ```
 
 **选项**：
+
 | 选项 | 说明 |
 |------|------|
-| `--status <状态>` | 按状态过滤（pending/in_progress/archived）|
-| `--priority <优先级>` | 按优先级过滤（high/medium/low）|
-| `--tag <标签>` | 按标签过滤 |
-| `--all` | 显示所有任务（包括已归档）|
+| `--status <状态>` | 按状态过滤（pending / in_progress / blocked / waiting / archived）|
+| `--priority <优先级>` | 按优先级过滤（high / medium / low）|
+| `--tag <标签>` | 按标签过滤（精确匹配 `tags` 列表中的任一元素）|
+| `--all` | 显示所有任务（含已归档）|
+
+> **默认行为**：不显示已归档任务；想看归档加 `--all` 或 `--status archived`
 
 **示例**：
 ```bash
-# 列出所有进行中的任务
+# 列出所有活动任务
+x todo list
+
+# 列出进行中的
 x todo list --status in_progress
 
-# 列出所有高优先级的任务
+# 列出高优先级
 x todo list --priority high
 
-# 列出所有任务（包括已归档）
+# 组合过滤（AND 关系）
+x todo list --priority high --tag 驾照
+
+# 含已归档
 x todo list --all
 ```
 
-**输出格式**（表格）：
+**输出格式**（tab 分隔）：
 ```
-ID      Name                Status      Priority    Deadline
-kemu1   科目一模拟考         pending     high        2026-08-31
-kemu2   自主实习材料         in_progress medium      -
+ID                      Name              Status       Priority    Deadline
+zhuxuejin-2026xia       助学金-下学期材料  in_progress  high        2026-06-22
+zizhu-shixi             自主实习          in_progress  high        2026-07-01
+kemu1                   驾驶证考取        pending      high        2026-08-31
+zimeiti-geren-ip        自媒体-个人IP      pending      medium      -
 ```
+
+> 归档任务的 Status 列会附 reason：`archived (done)`
+
+**退出码**：
+- 0：成功（包括空仓库/无匹配，输出 `📭 没有任务`）
+- 2：非法 status / priority 值
 
 ---
 
@@ -96,30 +124,42 @@ x todo add <名称> [选项]
 ```
 
 **必填参数**：
+
 | 参数 | 说明 |
 |------|------|
 | `<名称>` | 任务名称（必填）|
 
 **选项**：
-| 选项 | 说明 | 默认值 |
-|------|------|--------|
-| `--priority <优先级>` | 优先级（high/medium/low）| `medium` |
-| `--deadline <日期>` | 截止日期（YYYY-MM-DD）| 无 |
-| `--tags <标签>` | 标签（逗号分隔）| 无 |
+
+| 选项 | 默认值 | 说明 |
+|------|--------|------|
+| `--priority <优先级>` | `medium` | high / medium / low |
+| `--deadline <日期>` | 不写 | YYYY-MM-DD |
+| `--tags <标签>` | 不写 | 逗号分隔（如 `驾照,暑假`）|
 
 **示例**：
 ```bash
-# 添加任务（最简）
+# 最简
 x todo add "科目一模拟考"
 
-# 添加任务（完整参数）
+# 完整
 x todo add "科目一模拟考" --priority high --deadline 2026-08-31 --tags 驾照,暑假
 ```
 
-**输出**：
+**输出**（成功）：
 ```
 ✅ 任务已创建：科目一模拟考（ID: kemu1）
 ```
+
+**ID 生成规则**：
+- 中文：拼音首字母 + 数字后缀（如 `kemu1`）
+- 英文：kebab-case（如 `setup-blog`）
+- 重复：自动加 `-2` / `-3` / …
+
+**退出码**：
+- 0：成功
+- 2：任务名为空 / 非法 priority / 非法 deadline 格式
+- 3：任务名已存在
 
 ---
 
@@ -131,31 +171,51 @@ x todo update <id> [选项]
 ```
 
 **必填参数**：
+
 | 参数 | 说明 |
 |------|------|
-| `<id>` | 任务 ID（必填）|
+| `<id>` | 任务 ID（如 `kemu1`）或活动任务名 |
 
-**选项**：
+**选项**（**至少要传一个**）：
+
 | 选项 | 说明 |
 |------|------|
-| `--status <状态>` | 更新状态（pending/in_progress/archived）|
-| `--priority <优先级>` | 更新优先级（high/medium/low）|
-| `--deadline <日期>` | 更新截止日期（YYYY-MM-DD）|
-| `--tags <标签>` | 更新标签（逗号分隔）|
+| `--status <状态>` | 新状态（pending / in_progress / blocked / waiting / archived）|
+| `--priority <优先级>` | 新优先级（high / medium / low）|
+| `--deadline <日期>` | 新截止日期（YYYY-MM-DD；**传 `""` 显式清除**）|
+| `--tags <标签>` | 新标签（逗号分隔；**完全替换而非合并**）|
+
+> ⚠️ **至少要传一个 --xxx 选项**，否则 argparse 报错退出 2
 
 **示例**：
 ```bash
-# 更新任务状态
+# 更新状态
 x todo update kemu1 --status in_progress
 
-# 更新任务优先级和截止日期
+# 同时改 priority 和 deadline
 x todo update kemu1 --priority high --deadline 2026-07-01
+
+# 替换 tags（不是合并）
+x todo update kemu1 --tags 驾照,考试
+
+# 清除 deadline
+x todo update kemu1 --deadline ""
 ```
 
-**输出**：
+**输出**（成功）：
 ```
 ✅ 任务已更新：科目一模拟考（ID: kemu1）
 ```
+
+**字段保留保证**：
+- 未知字段（如 `description` / `paused_at` / `pause_reason`）**原样保留**（手写 parser + Task.extra round-trip）
+- 改 tags 时是**完全替换**（不是追加/合并）
+
+**退出码**：
+- 0：成功
+- 2：无 --xxx 选项 / 非法 status / 非法 priority
+- 3：任务不存在
+- 4：任务已归档（不可 update；要先 restore，未实现）
 
 ---
 
@@ -167,28 +227,50 @@ x todo archive <id> [选项]
 ```
 
 **必填参数**：
+
 | 参数 | 说明 |
 |------|------|
-| `<id>` | 任务 ID（必填）|
+| `<id>` | 任务 ID 或任务名 |
 
 **选项**：
-| 选项 | 说明 | 默认值 |
-|------|------|--------|
-| `--reason <原因>` | 归档原因 | `done` |
+
+| 选项 | 默认值 | 说明 |
+|------|--------|------|
+| `--reason <原因>` | `done` | 归档原因，**只接受英文枚举**：`done` / `cancelled` / `expired` / `failed` |
 
 **示例**：
 ```bash
-# 归档任务（默认原因：done）
+# 归档（默认 done）
 x todo archive kemu1
 
-# 归档任务（指定原因）
-x todo archive kemu1 --reason "已完成"
+# 取消
+x todo archive kemu1 --reason cancelled
+
+# 过期
+x todo archive old-task --reason expired
+
+# 失败
+x todo archive failed-task --reason failed
 ```
 
-**输出**：
+> ⚠️ **不接受中文 reason**（如 `--reason "已完成"`），是 **--reason "已完成" 的严格子集**
+
+**输出**（成功）：
 ```
-✅ 任务已归档：科目一模拟考（ID: kemu1）
+✅ 任务已归档：科目一模拟考（ID: kemu1，reason=done）
 ```
+
+**归档效果**：
+- 文件夹从 `任务/<name>/` 移到 `归档/<YYYYMMDD>-<name>/`（YYYYMMDD = 今天日期）
+- frontmatter 加 `status: archived` + `reason: <原因>`
+- 总索引 `TODO.md` 自动更新（active 桶 -1，归档桶 +1）
+
+**退出码**：
+- 0：成功
+- 2：非法 reason
+- 3：任务不存在
+- 4：任务已归档（重复 archive）
+- 5：归档目标文件夹已存在（碰撞）
 
 ---
 
@@ -208,55 +290,82 @@ x todo stats
 ```
 📊 TODO 统计信息
 
-总任务数：10
-- pending：3
-- in_progress：5
-- archived：2
+总任务数：34
+- pending：2
+- in_progress：2
+- blocked：0
+- waiting：0
+- archived：30
 
 优先级分布：
-- high：2
-- medium：5
-- low：3
+- high：17
+- medium：2
+- low：15
 
 即将到期（7 天内）：1
+🔥 高优先级任务：3（pending: 1 / in_progress: 2）
 ```
+
+**说明**：
+- `总任务数 = pending + in_progress + blocked + waiting + archived`（**不含** broken 文件）
+- `即将到期（7 天内）`：只算 active 任务的 deadline（不含 archived）
+- `🔥 高优先级`：只算 active 的 high（pending + in_progress）
+- 详细 BDD：`docs/behaviors/todo-stats-behavior.md`
+
+**退出码**：
+- 0：成功（无 broken 文件）
+- 5：检测到 YAML 解析失败的文件（stderr 输出每条错误，stdout 仍打印统计）
 
 ---
 
-## 3. `x skill` — 技能管理（未来）
+## 3. `x skill` — 技能管理（**未实现**）
 
 ### 3.1 子命令概览
 
-| 子命令 | 说明 | 参数 |
+| 子命令 | 状态 | 说明 |
 |--------|------|------|
-| `x skill list` | 列出已安装技能 | 无 |
-| `x skill install <名称>` | 安装技能 | `<名称>` |
-| `x skill update <名称>` | 更新技能 | `<名称>` |
-| `x skill remove <名称>` | 删除技能 | `<名称>` |
+| `x skill list` | ❌ 未实现 | 列出已安装技能 |
+| `x skill install <名称>` | ❌ 未实现 | 安装技能 |
+| `x skill update <名称>` | ❌ 未实现 | 更新技能 |
+| `x skill remove <名称>` | ❌ 未实现 | 卸载技能 |
+
+> **计划位置**：`~/.xavier/skills/`（已存在，是 mavis skills 的存放点；与未来 x-cli skill 集成待定）
 
 ---
 
-## 4. `x system` — 系统工具（未来）
+## 4. `x system` — 系统工具（**未实现**）
 
 ### 4.1 子命令概览
 
-| 子命令 | 说明 | 参数 |
+| 子命令 | 状态 | 说明 |
 |--------|------|------|
-| `x system backup` | 备份 `~/.xavier/` | `--dry-run` |
-| `x system sync` | 同步到云端（rclone）| `--target <云端>` |
-| `x system health` | 检查系统健康状态 | 无 |
-| `x system log` | 查看日志 | `--level <级别>` |
+| `x system backup` | ❌ 未实现 | 备份 `~/.xavier/` |
+| `x system sync` | ❌ 未实现 | 同步到云端（rclone）|
+| `x system health` | ❌ 未实现 | 检查系统健康状态 |
+| `x system log` | ❌ 未实现 | 查看日志 |
 
 ---
 
-## 5. 缩写支持（未来）
+## 5. 退出码速查表
 
-### 5.1 子命令缩写
+| 退出码 | 含义 | 触发场景 |
+|--------|------|---------|
+| 0 | 成功 | 所有 action 正常完成 |
+| 1 | 通用错误 | 未知子命令 / 占位 action |
+| 2 | 参数错误 | 非法 status/priority/reason/deadline / 缺必填参数 / 缺 --xxx |
+| 3 | 任务不存在 | list / update / archive 找不到任务 |
+| 4 | 任务已归档 | 重复 archive / 对已归档任务 update |
+| 5 | 数据完整性 | YAML 解析失败 / 归档目标碰撞 |
 
-**MVP 阶段**：不支持缩写（保持简单）
+---
 
-**后期扩展**：支持子命令缩写
+## 6. 缩写支持（**未实现**）
 
+### 6.1 子命令缩写
+
+**MVP 阶段**：不支持缩写（保持简单）。
+
+**后期扩展**（Phase 4+）：支持子命令缩写
 ```bash
 # 完整命令
 x todo list
@@ -265,24 +374,15 @@ x todo list
 x t l
 ```
 
-### 5.2 自动缩写（未来）
+### 6.2 自动缩写（**无计划**）
 
-**想法**：自动匹配唯一前缀
-
-```bash
-# 如果只有 "todo" 以 "t" 开头，则自动匹配
-x t list
-
-# 如果有多个匹配（如 "todo" 和 "tag"），报错提示
-x t list
-# 错误： ambiguous prefix: t (todo, tag)
-```
+> 不计划实现 — argparse 不原生支持，argcomplete Tab 补全更直接。
 
 ---
 
-## 6. Tab 补全（未来）
+## 7. Tab 补全（**未实现**）
 
-### 6.1 启用 Tab 补全
+### 7.1 启用 Tab 补全（计划）
 
 **bash**：
 ```bash
@@ -296,7 +396,7 @@ eval "$(register-python-argcomplete x)"
 eval "$(register-python-argcomplete x)"
 ```
 
-### 6.2 补全示例
+### 7.2 补全示例（计划）
 
 ```bash
 x <TAB><TAB>
@@ -309,6 +409,25 @@ x todo add --<TAB><TAB>
 --priority    --deadline    --tags
 ```
 
+> **未实现** — 需要 `argcomplete` 依赖；MVP 阶段不引
+
 ---
 
-*本文档是活文档，随命令集扩展更新*
+## 8. BDD 行为规格索引
+
+每个 action 都有完整的 Given-When-Then 场景文档：
+
+| 命令 | BDD 文档 | 场景数 |
+|------|---------|--------|
+| `x todo add` | [todo-add-behavior.md](behaviors/todo-add-behavior.md) | 8 |
+| `x todo list` | [todo-list-behavior.md](behaviors/todo-list-behavior.md) | 8 |
+| `x todo update` | [todo-update-behavior.md](behaviors/todo-update-behavior.md) | 8 |
+| `x todo archive` | [todo-archive-behavior.md](behaviors/todo-archive-behavior.md) | 8 |
+| `x todo stats` | [todo-stats-behavior.md](behaviors/todo-stats-behavior.md) | 7 |
+| **合计** | — | **39 场景** |
+
+每个 BDD 场景都有对应的 pytest 用例（在 `tests/test_todo_*.py`）。
+
+---
+
+*本文档是活文档，随命令集扩展更新。MVP 实际状态时间：2026-06-21。*

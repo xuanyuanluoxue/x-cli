@@ -88,6 +88,24 @@ def _run_list_handler(
     return code, out.getvalue(), err.getvalue()
 
 
+def _parse_list_output(out: str) -> tuple[list[str], list[list[str]]]:
+    """Parse ``x todo list`` output into (header_cells, data_rows).
+
+    The renderer writes header + ─── separator + N data rows, separated
+    by 2 spaces (CJK-aware padding instead of tabs).
+    """
+    lines = out.rstrip("\n").splitlines()
+    if not lines:
+        return [], []
+    header = [c.strip() for c in lines[0].split("  ") if c.strip()]
+    data = [
+        [c.strip() for c in line.split("  ") if c.strip()]
+        for line in lines[1:]
+        if not line.lstrip().startswith("─")
+    ]
+    return header, data
+
+
 def make_task(
     store: TaskStore,
     name: str,
@@ -174,20 +192,20 @@ def test_bdd_scenario_1_default_lists_only_active(store):
     assert code == 0
     assert err == ""
 
-    lines = out.strip().splitlines()
-    # 第一行是表头
-    assert lines[0] == "ID\tName\tStatus\tPriority\tDeadline"
+    header, data = _parse_list_output(out)
+    # 表头与 BDD 一致
+    assert header == ["ID", "Name", "Status", "Priority", "Deadline"]
     # 数据行：3 个未归档任务（按 deadline 升序，None 在末尾）
-    data_ids = [line.split("\t")[0] for line in lines[1:]]
+    data_ids = [row[0] for row in data]
     assert data_ids == ["kemu1", "zizhushixi", "laodongjiaoyu3"]
     # 归档任务 20260521-xiangjifanmai 不应出现
     assert "20260521-xiangjifanmai" not in out
     # 验证列顺序与表头一致
-    assert lines[1].split("\t") == [
+    assert data[0] == [
         "kemu1",
         "kemu1",  # name (folder name same as id)
-        "pending",
-        "high",
+        "⏳ pending",
+        "🔥 high",
         "2026-07-15",
     ]
 
@@ -200,10 +218,8 @@ def test_bdd_scenario_1_deadline_sort_none_last(store):
 
     code, out, _ = _run_list_handler([], store)
     assert code == 0
-    ids = [
-        line.split("\t")[0]
-        for line in out.strip().splitlines()[1:]
-    ]
+    _, data = _parse_list_output(out)
+    ids = [row[0] for row in data]
     assert ids == ["early", "late", "no-deadline"]
 
 
@@ -222,10 +238,8 @@ def test_bdd_scenario_2_filter_by_status(store):
     assert code == 0
     assert err == ""
 
-    ids = [
-        line.split("\t")[0]
-        for line in out.strip().splitlines()[1:]
-    ]
+    _, data = _parse_list_output(out)
+    ids = [row[0] for row in data]
     assert ids == ["zizhushixi"]
     assert "kemu1" not in out
     assert "laodongjiaoyu3" not in out
@@ -246,10 +260,8 @@ def test_bdd_scenario_3_filter_by_priority(store):
     assert code == 0
     assert err == ""
 
-    ids = [
-        line.split("\t")[0]
-        for line in out.strip().splitlines()[1:]
-    ]
+    _, data = _parse_list_output(out)
+    ids = [row[0] for row in data]
     assert ids == ["kemu1"]
 
 
@@ -268,10 +280,8 @@ def test_bdd_scenario_4_filter_by_tag(store):
     assert code == 0
     assert err == ""
 
-    ids = [
-        line.split("\t")[0]
-        for line in out.strip().splitlines()[1:]
-    ]
+    _, data = _parse_list_output(out)
+    ids = [row[0] for row in data]
     assert ids == ["kemu1"]
 
 
@@ -304,19 +314,20 @@ def test_bdd_scenario_5_all_includes_archived(store):
     assert code == 0
     assert err == ""
 
-    # 4 行数据：3 active + 1 archived
-    data_lines = out.strip().splitlines()[1:]
+    # 4 行数据：3 active + 1 archived（跳过 ─── 分隔线）
+    all_lines = out.rstrip("\n").splitlines()
+    data_lines = [l for l in all_lines[1:] if not l.lstrip().startswith("─")]
     assert len(data_lines) == 4
 
-    # 归档任务的 status 列应包含 `archived (cancelled)`
+    # 归档任务的 status 列应包含 `archived (cancelled)`（CJK 格式带 🚫 icon，因为 reason=cancelled）
     archived_line = next(
         line for line in data_lines if "xiangjifanmai" in line
     )
-    cells = archived_line.split("\t")
-    assert cells[2] == "archived (cancelled)"
+    cells = [c.strip() for c in archived_line.split("  ") if c.strip()]
+    assert cells[2] == "🚫 archived (cancelled)"
 
     # 未归档任务在前（按 deadline 升序，None 末尾），归档在后
-    ordered = [line.split("\t")[0] for line in data_lines]
+    ordered = [([c.strip() for c in line.split("  ") if c.strip()][0]) for line in data_lines]
     assert ordered[0] == "kemu1"           # deadline 2026-07-15
     assert ordered[1] == "zizhushixi"       # deadline 2026-08-31
     assert ordered[2] == "laodongjiaoyu3"   # deadline None
@@ -367,10 +378,8 @@ def test_bdd_scenario_7_multiple_filters_are_and(store):
         store,
     )
     assert code == 0
-    ids = [
-        line.split("\t")[0]
-        for line in out.strip().splitlines()[1:]
-    ]
+    _, data = _parse_list_output(out)
+    ids = [row[0] for row in data]
     assert ids == ["kemu1"]
 
 
@@ -448,21 +457,28 @@ def test_main_dispatches_todo_list_with_unknown_flag(monkeypatch, tmp_path):
 
 
 def test_table_header_matches_bdd_columns(store):
-    """表头列与 BDD 一致：ID / Name / Status / Priority / Deadline。"""
+    """表头列与 BDD 一致：ID / Name / Status / Priority / Deadline。
+
+    列与列之间用 2 空格分隔（CJK 对齐后的格式）；不再用 tab。
+    """
     make_task(store, "kemu1")
     _, out, _ = _run_list_handler([], store)
     first_line = out.splitlines()[0]
-    assert first_line == "ID\tName\tStatus\tPriority\tDeadline"
+    header_cells = [c.strip() for c in first_line.split("  ") if c.strip()]
+    assert header_cells == ["ID", "Name", "Status", "Priority", "Deadline"]
 
 
-def test_table_columns_separated_by_tab(store):
-    """表格用 tab 对齐（BDD 要求）。"""
+def test_table_columns_separated_by_two_spaces(store):
+    """表格用 2 空格对齐（CJK 友好）。
+
+    第 2 行是 ─── 分隔线，要跳过。
+    """
     make_task(store, "kemu1", deadline="2026-08-31")
     _, out, _ = _run_list_handler([], store)
-    # header + 1 data row
     lines = out.strip().splitlines()
-    for line in lines:
-        cells = line.split("\t")
+    data_lines = [l for l in lines if not l.lstrip().startswith("─")]
+    for line in data_lines:
+        cells = [c.strip() for c in line.split("  ") if c.strip()]
         assert len(cells) == 5, f"line {line!r} has {len(cells)} cells, expected 5"
 
 

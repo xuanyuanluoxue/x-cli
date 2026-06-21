@@ -8,14 +8,15 @@
 ## 0. 开工前必读（按顺序）
 
 1. **本文件 (AGENTS.md)** — 项目规约
-2. **[README.md](README.md)** — 项目主文档 + 快速开始
-3. **[docs/architecture.md](docs/architecture.md)** — 架构设计
-4. **[docs/commands.md](docs/commands.md)** — 完整命令参考
-5. **[docs/behaviors/](docs/behaviors/)** — BDD 行为规格（按命令名组织）
-6. 按任务类型读 docs/ 子文档：
-   - 打包相关 → `docs/release.md`
-   - 测试相关 → `docs/testing.md`
-   - 插件开发 → `docs/plugin-dev.md`
+2. **[COMMANDS.md](COMMANDS.md)** — **用户编辑的命令清单（spec 单一来源）**
+3. **[README.md](README.md)** — 项目主文档 + 快速开始
+4. **[docs/architecture.md](docs/architecture.md)** — 架构设计
+5. **[docs/commands.md](docs/commands.md)** — 完整命令参考
+6. **[docs/behaviors/](docs/behaviors/)** — BDD 行为规格（按命令名组织）
+7. 按任务类型读 docs/ 子文档：
+   - 打包相关 → `docs/release.md`（**未创建**）
+   - 测试相关 → `docs/testing.md`（**未创建**）
+   - 插件开发 → `docs/plugin-dev.md`（**未创建**）
 
 **未读完直接动手 = 失败率高。** 文档里没写的 → **先问用户**，不要猜测。
 
@@ -30,52 +31,87 @@
 | 核心 | Xavier 个人工具集的统一 CLI 入口 |
 | 目标用户 | 陈新捷（开发者本人）|
 | 平台 | Win10+ / macOS / Linux |
+| 当前阶段 | **Phase 1 MVP 已完成**（v0.2.0） |
 
 **这不是**通用 CLI 框架，**是**针对个人使用场景定制的工具集。**别**套用通用 CLI 工具的设计模式。
 
+### 1.1 命令清单驱动开发（Command-List-Driven）
+
+**核心工作流**（2026-06-21 引入）：
+
+```
+[用户]  编辑 COMMANDS.md
+   ↓
+   在 ⏳ 区添加新命令，标 P0/P1/P2/P3
+   ↓
+[AI]    读 COMMANDS.md
+   ↓
+   按 BDD + TDD 流程实现（docs/behaviors/ + tests/）
+   ↓
+   实现完把 ⏳ 改成 ✅
+   ↓
+[用户]  review git diff
+```
+
+**COMMANDS.md 的地位**：
+- **唯一**spec 来源（user-edited）
+- AI 不擅自添加命令 — 必须用户在 COMMANDS.md 列出
+- AI 不擅自删除/废弃命令 — 移到 ❌ 区
+- 实现完改 ✅，让用户 review 改 diff
+
+**禁区**：
+- ❌ AI 不在 COMMANDS.md 加命令（这是 user-only 文件）
+- ❌ AI 不实现 COMMANDS.md ❌ 区的命令
+- ❌ AI 跳过 COMMANDS.md 凭空加功能
+
 ---
 
-## 2. 目录结构（重要）
+## 2. 目录结构（重要 — 实际布局）
 
 ```
 x-cli/
 ├── AGENTS.md          ← 你正在读
+├── COMMANDS.md        ← **用户编辑的命令清单（spec 唯一来源）**
 ├── README.md          ← 项目主文档 + 快速开始
-├── CHANGELOG.md      ← 版本历史
+├── CHANGELOG.md       ← 版本历史
 ├── .gitignore
-├── pyproject.toml   ← Python 项目配置（待创建）
-├── x.py               ← 主入口（MVP 阶段单文件）
-├── plugins/           ← 插件目录
+├── pyproject.toml     ← Python 项目配置（setuptools + pytest）
+├── x.py               ← 主入口 + 5 个 x todo action（inline，731 行）
+├── core/              ← 核心逻辑（被 x.py 引用）
 │   ├── __init__.py
-│   ├── todo.py      ← x todo 插件（MVP）
-│   ├── skill.py     ← x skill 插件（未来）
-│   └── system.py    ← x system 插件（未来）
-├── core/              ← 核心逻辑（后期拆分）
+│   ├── models.py      ← 数据模型（Task / TaskStatus / Priority / ArchiveReason）
+│   ├── parser.py      ← YAML frontmatter 解析/序列化（手写，stdlib-only）
+│   ├── slug.py        ← 中英文 slug 生成（stdlib-only，硬编码拼音表 + unicodedata）
+│   └── storage.py     ← 文件系统 CRUD（list/add/update/archive/stats + inventory 维护）
+├── plugins/           ← 子命令插件（**MVP 阶段为空 package**，待 Phase 4 拆出）
+│   └── __init__.py
+├── tests/             ← pytest 测试（13 个文件，336 用例，覆盖率 93%，含 `test_e2e_todo.py` + `test_e2e_secret.py` 子进程测试）
 │   ├── __init__.py
-│   ├── parser.py      ← YAML frontmatter 解析
-│   ├── models.py      ← 数据模型（Task / Subtask）
-│   ├── storage.py    ← 文件系统操作
-│   └── indexer.py    ← 总索引生成
-├── tests/             ← 测试
-│   ├── __init__.py
+│   ├── test_models.py
 │   ├── test_parser.py
-│   └── test_storage.py
+│   ├── test_storage.py
+│   ├── test_x.py
+│   ├── test_todo_add.py
+│   ├── test_todo_list.py
+│   ├── test_todo_update.py
+│   ├── test_todo_archive.py
+│   └── test_todo_stats.py
 ├── docs/              ← 详细文档
 │   ├── architecture.md   ← 架构设计
 │   ├── commands.md       ← 命令参考
-│   ├── behaviors/       ← BDD 行为规格
-│   │   ├── todo-add-behavior.md
-│   │   ├── todo-list-behavior.md
-│   │   └── ...
-│   └── ...
-└── release/           ← 打包脚本
-    ├── build.py
-    └── README.md
+│   └── behaviors/        ← BDD 行为规格（Given-When-Then）
+│       ├── todo-add-behavior.md
+│       ├── todo-list-behavior.md
+│       ├── todo-update-behavior.md
+│       ├── todo-archive-behavior.md
+│       └── todo-stats-behavior.md
+├── release/           ← 打包脚本（**目录已建但暂未实现**）
+└── .mavis/            ← mavis 团队计划状态（不入 git，见 .gitignore）
 ```
 
 **关键约束**：
-- `plugins/` 只能放插件代码（每个子命令一个文件）
-- `core/` 只能放核心逻辑代码（可被多个插件共享）
+- `plugins/` MVP 阶段只放占位 `__init__.py`，**所有 todo action 都在 x.py 里**
+- `core/` 只能放核心逻辑代码（可被多个命令共享）
 - `tests/` 只能放测试代码
 - `docs/behaviors/` 只能放 BDD 行为规格（Given-When-Then 格式）
 - **不要**混
@@ -87,16 +123,17 @@ x-cli/
 | 组件 | 技术 | 备注 |
 |---|---|---|
 | CLI 框架 | `argparse`（stdlib，支持子命令） | 不用 click（避免过度依赖）|
-| 插件机制 | `importlib` 动态加载 | 子命令作为插件（`plugins/<name>.py`）|
-| 数据格式 | **YAML frontmatter**（兼容现有） | 不迁移到 JSON/TOML |
+| 插件机制 | `importlib` 动态加载 | **MVP 阶段未启用**（todo inline 在 x.py，SUBCOMMAND_HANDLERS 字典分发）|
+| 数据格式 | **YAML frontmatter**（兼容现有） | **手写 parser**（不引 PyYAML；未知字段 round-trip 不丢）|
 | 数据存储 | 文件系统（同现有：`~/.xavier/TODO/`） | 不引入 DB |
-| 配置 | `~/.xavier/config.yaml` | 全局配置（替代环境变量）|
-| 测试 | `pytest` + `pytest-cov` | 覆盖率目标 ≥ 80% |
-| 打包 | PyInstaller --onefile | 产物目标 ~10MB |
-| 日志 | `logging`（stdlib） | 输出到 `~/.xavier/logs/` |
+| Slug 生成 | `unicodedata` + 硬编码拼音表 | **MVP 阶段不引 pypinyin/jieba**（保持 stdlib-only）|
+| 配置 | `~/.xavier/config.yaml` | **MVP 阶段未实现**（`XAVIER_TODO_DIR` 环境变量作为临时覆盖）|
+| 测试 | `pytest` + `pytest-cov` | 覆盖率当前 93%（含 E2E 子进程层 + secret 子系统）|
+| 打包 | PyInstaller --onefile | **未实现**（见 release/）|
+| 日志 | `logging`（stdlib） | **MVP 阶段未实现**（只用 print 到 stdout/stderr）|
 
 **选型原则**：
-- **能少即少** — 已有库能解决就不引新的
+- **能少即少** — 已有库能解决就不引新的（`pyproject.toml dependencies = []`）
 - **能标准即标准** — 优先 Python stdlib，第三方库谨慎
 - **跨平台** — CLI 必须 Win10+ / macOS / Linux 兼容
 
@@ -126,7 +163,7 @@ x-cli/
 ### 4.3 测试规范
 
 - 每个核心功能必须有单元测试 **+ 行为规格**
-- 测试文件命名：`test_<module>.py`
+- 测试文件命名：`test_<module>.py` 或 `test_<command>_<action>.py`
 - 行为规格文件命名：`<command>-behavior.md`（存放在 `docs/behaviors/`）
 - 覆盖率目标：≥ 80%
 - **BDD+TDD 强制要求**：见 §5
@@ -189,31 +226,9 @@ x-cli/
 - <结果 2>
 ```
 
-**示例**（`docs/behaviors/todo-add-behavior.md`）：
-
-```markdown
-# x todo add 行为规格
-
-## 场景：成功添加任务
-
-**Given**：
-- 任务名称：`"科目一模拟考"`
-- 优先级：`high`
-- 截止日期：`2026-08-31`
-
-**When**：
-- 运行 `x todo add "科目一模拟考" --priority high --deadline 2026-08-31`
-
-**Then**：
-- 退出码：0（成功）
-- 输出消息：`"✅ 任务已创建：科目一模拟考（ID: kemu1）"`
-- 文件系统：`~/.xavier/TODO/任务/kemu1/TODO.md` 已创建
-- YAML frontmatter：`status: pending`（默认值）
-```
-
 ### 5.3 TDD 测试格式
 
-**文件位置**：`tests/test_<module>.py`
+**文件位置**：`tests/test_<module>.py` 或 `tests/test_<command>_<action>.py`
 
 **格式**（对应 BDD 场景）：
 
@@ -238,30 +253,28 @@ def test_add_task_success():
     assert Task.load("kemu1").status == "pending"
 ```
 
-### 5.4 开发顺序（示例）
+### 5.4 开发顺序（实际案例）
 
-**任务**：实现 `x todo add` 命令
+**任务**：实现 `x todo add` 命令（已完成，见 commit `eab6dac`）
 
 1. **BDD 阶段**：
    - 创建 `docs/behaviors/todo-add-behavior.md`
-   - 写 3 个场景：成功添加 / 缺少必填参数 / 重复任务名
-   - 提交：`docs: 新增 x todo add 行为规格`
+   - 写 8 个场景：成功 / 默认值 / 重复名 / 非法 priority / 非法 deadline / tags / 不写未指定字段 / 无任务名
+   - 提交：`docs(behaviors): 新增 5 个 x todo BDD 行为规格（39 场景）`
 
 2. **TDD 阶段**：
    - 创建 `tests/test_todo_add.py`
-   - 写 3 个测试用例（对应 3 个场景）
-   - 运行 `pytest tests/test_todo_add.py` → **全部失败**（Red）
+   - 写 8 个测试用例（对应 8 个场景）
    - 提交：`test: 新增 x todo add 测试用例（Red）`
 
 3. **实现阶段**：
-   - 写 `plugins/todo.py`（最小实现）
-   - 运行 `pytest tests/test_todo_add.py` → **全部通过**（Green）
-   - 重构（如果有必要）
-   - 提交：`feat(todo): 实现 x todo add 命令（Green）`
+   - 在 `x.py` 里加 `_todo_add` handler（MVP 阶段 inline）
+   - 跑测试 → 全部通过（Green）
+   - 提交：`feat(x.py): 实现 5 个 todo action`
 
 4. **验证阶段**：
-   - 运行 `pytest`（全量测试）→ 通过
-   - 检查行为规格覆盖率（`docs/behaviors/todo-add-behavior.md` 所有场景都有测试）
+    - 跑 `pytest`（全量 336 tests）→ 通过
+   - 检查行为规格覆盖率
    - 提交：`chore: x todo add 开发完成`
 
 ---
@@ -276,43 +289,57 @@ def test_add_task_success():
 ```bash
 x todo list              # 列出 TODO 任务
 x todo add "任务名"      # 添加任务
-x skill list            # 列出技能
-x system backup        # 系统备份
+x skill list            # 列出技能（未来）
+x system backup        # 系统备份（未来）
 ```
 
-### 6.2 子命令插件机制
+**实际全局选项**（MVP）：
+- `-v, --version` — 显示版本号（已实现）
+- `-h, --help` — 显示帮助（argparse 默认）
+- `--config <路径>` / `--log-level <级别>` — **未实现**（docs 列了，实现没收）
 
-**目录结构**：
-```
-x-cli/
-├── x.py                 # 主入口（解析子命令）
-└── plugins/            # 子命令插件
-    ├── __init__.py
-    ├── todo.py        # x todo 子命令
-    ├── skill.py       # x skill 子命令（未来）
-    └── system.py     # x system 子命令（未来）
-```
+### 6.2 子命令分发（MVP 实现）
 
-**插件加载逻辑**（伪代码）：
+**主入口 `x.py`** 维护 `SUBCOMMAND_HANDLERS` 字典（MVP 阶段）：
+
 ```python
-# x.py
-import importlib
-
-def main():
-    subcommand = sys.argv[1]  # 第一个参数是子命令名
-    plugin = importlib.import_module(f"plugins.{subcommand}")
-    plugin.run(sys.argv[2:])  # 剩余参数传给插件
+SUBCOMMAND_HANDLERS: dict[str, Callable[[Sequence[str]], int]] = {
+    "todo": _todo_run,
+}
 ```
 
-### 6.3 MVP 阶段简化
+**未来 Phase 4** 才改用 importlib 动态加载：
 
-**当前阶段**（Phase 1）：只实现 `x todo` 子命令
-- 主入口：`x.py`（单文件）
-- 插件：`plugins/todo.py`（直接写在主文件，不拆插件）
+```python
+# 伪代码（Phase 4 实现后）
+import importlib
+handler = importlib.import_module(f"plugins.{subcommand}").run
+```
+
+### 6.3 MVP 阶段 inline 实现
+
+**当前阶段**（Phase 1 / v0.2.0）：5 个 x todo action 全部 inline 在 x.py：
+- `x todo list` — 列表（带过滤）
+- `x todo add` — 添加
+- `x todo update` — 更新（status/priority/deadline/tags）
+- `x todo archive` — 归档（带 reason）
+- `x todo stats` — 统计
 
 **后期扩展**（Phase 4）：拆分插件机制
-- 主入口：`x.py`（只负责解析子命令）
-- 插件：`plugins/*.py`（每个子命令独立文件）
+- 主入口：`x.py`（只负责解析子命令 + 字典分发 → 改为 importlib 动态加载）
+- 插件：`plugins/todo.py`（5 个 action 全部搬出）
+- `x skill` / `x system` 插件按需新增
+
+### 6.4 退出码约定
+
+| 退出码 | 含义 |
+|--------|------|
+| 0 | 成功 |
+| 1 | 通用错误（未知子命令） |
+| 2 | 参数错误（非法 status/priority/reason/deadline 格式、缺必填参数、缺 --xxx） |
+| 3 | 任务不存在 |
+| 4 | 任务已归档（重复 archive / 不可 update） |
+| 5 | 数据完整性问题（YAML 解析失败 / 归档碰撞） |
 
 ---
 
@@ -348,32 +375,68 @@ def main():
 
 ## 8. 关键决策记录
 
-### 2026-06-21：项目启动
+### 2026-06-21：项目启动 + MVP 完成
 
 - ✅ 创建 `x-cli` 项目（替代 `xavier-todo`）
 - ✅ 定义统一入口 `x`（Xavier CLI 总控）
-- ✅ 定义插件机制（`x todo` / `x skill` / `x system`）
 - ✅ 定义开发方法论（BDD + TDD，文档先行）
-- ✅ 定义技术栈（Python + argparse + importlib）
-- ❌ 未开始实现
+- ✅ 定义技术栈（Python + argparse + stdlib-only）
+- ✅ MVP 完成（v0.2.0）：
+  - core 库（parser/models/storage/slug）手写 stdlib-only
+  - 5 个 x todo action 全部实现（list / add / update / archive / stats）
+  - 336 tests pass，覆盖率 93%
+  - v0.3.0 新增 `x secret` 子系统（独立 JSON DB，8 子命令）
+  - 与 `~/.xavier/密钥/` 隔离（不依赖 xavier 系统）
+  - 与 `~/.xavier/TODO/` 真实数据 round-trip byte-identical（SHA-256 验证）
+  - 5 个 BDD 行为规格（39 场景）覆盖所有 action
+  - **E2E 子进程测试**（`tests/test_e2e_todo.py`，22 用例）— 真正启动 `x.exe` 跑 `subprocess.run`，盖住 `pyproject.toml` 脚本入口 + 环境变量路由
+
+**venv 强制**（2026-06-21 加的决策）：
+- 系统 Python 3.14.2 被 `hydra-core` 拉入的 `antlr4` 污染，pytest 跑不起来
+- **必须**用 venv：`.venv\Scripts\python.exe -m pytest` / `pip install -e ".[dev]"`
+- venv Scripts 加到用户 PATH（一次性，README 有命令）
+- 详见 README "故障排查"
+
+**`x secret` 独立 DB**（2026-06-21 加的决策）：
+- x-cli's secret 功能**不**读 `~/.xavier/密钥/` 作为主存储
+- 自管 JSON DB：`%LOCALAPPDATA%\x-cli\secrets.json`（Windows）/ `~/.local/share/x-cli/secrets.json`（Unix）
+- 原因：x-cli 是**通用** CLI 工具，不应该耦合 xavier 系统的特定目录布局
+- migration 命令 (`x secret import --from`) 是单向辅助，不双向同步
+- 用户从 xavier 系统迁过来 → x-cli 后，xavier 那边不删，可手动核对
+
+**踩坑教训**（写在这里给后续 agent 看）：
+1. **Phase 3 拆太多并行 task** — 5 个 worker 同时改 x.py 容易 merge 冲突，每个都要 cold-start + verify。**1 个 task 搞定**省 4 个 cold-start + 4 个 verify
+2. **worker 引入第三方依赖**（pypinyin/jieba）违反"能少即少"原则 → **owner 是最后一道关卡**，必须 override。手动 revert + stdlib 重写
+3. **manual_retry 时机** — 必须在 verifier PASS 前提交才有 retry 效果
+
+### 决策记录
+
+- ✅ **不引 PyYAML** — 手写 parser，未知字段 round-trip 保留（用户字段如 `paused_at` / `description` / `pause_reason` 不丢）
+- ✅ **不引 pypinyin/jieba** — 硬编码 50+ 常用汉字拼音表 + `unicodedata` 处理非汉字，stdlib-only
+- ✅ **不引 click** — argparse 够用，避免依赖
+- ✅ **MVP 阶段 SUBCOMMAND_HANDLERS 字典分发** — 推迟 importlib 动态加载到 Phase 4
+- ❌ **不支持子命令缩写**（`x t l` = `x todo list`）— argparse 不原生支持，argcomplete 补全更直接
+- ❌ **不引入交互式 TUI**（rich）— 个人使用 + 表格 + 颜色 emoji 已够用
 
 ### 待决策
 
-- [ ] 是否引入 `PyYAML` 依赖？（手写解析器 vs 第三方库）
-- [ ] 是否支持子命令缩写？（`x t l` = `x todo list`）
-- [ ] 是否需要交互式 TUI？（`rich` 库 + `x todo tui` 命令）
+- [ ] `x todo restore`（从归档还原到 active）— 用户场景不明，等用户提
+- [ ] `x todo init`（首次初始化 `~/.xavier/TODO/`）— 等用户提
+- [ ] `x --config` / `--log-level` 全局选项优先级（用户没提过）
+- [ ] PyInstaller 打包优先级（用户没提过）
 
 ---
 
 ## 9. 禁忌
 
-- 不要引入不必要的依赖（"能少即少"原则）
-- 不要修改现有 YAML frontmatter 格式（兼容性原则）
-- 不要创建同名的空目录
-- 不要在 `x.py`（MVP 阶段）里写超过 500 行的代码（拆分到 `plugins/`）
-- 不要在没有单元测试和行为规格的情况下提交核心逻辑代码
-- 不要跳过 BDD 阶段直接写测试
-- 不要跳过 TDD 阶段直接写实现
+- ❌ 不要引入不必要的依赖（"能少即少"原则）— 当前 `dependencies = []`
+- ❌ 不要修改现有 YAML frontmatter 格式（兼容性原则）
+- ❌ 不要创建同名的空目录
+- ❌ **不要在 x.py 单文件里无限堆代码** — MVP 阶段已超 500 行（实际 731 行），Phase 4 拆 `plugins/todo.py` 时必须迁出 5 个 `_todo_*` handler
+- ❌ 不要在没有单元测试和行为规格的情况下提交核心逻辑代码
+- ❌ 不要跳过 BDD 阶段直接写测试
+- ❌ 不要跳过 TDD 阶段直接写实现
+- ❌ 不要在 commit 里引入 pypinyin / jieba / PyYAML / click / rich（已确认不需要）
 
 ---
 
@@ -389,4 +452,4 @@ def main():
 
 ---
 
-*本文件是活文档，随项目进展更新*
+*本文件是活文档，随项目进展更新。Phase 1 完成时间：2026-06-21。*
