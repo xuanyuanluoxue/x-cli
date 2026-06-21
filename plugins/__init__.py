@@ -1,14 +1,19 @@
-"""x-cli plugins package (placeholder).
+"""plugins — subcommand plugin package for x-cli.
 
-MVP 阶段（Phase 1）所有 todo action 都直接 inline 在 x.py 里。
-Phase 4 会把这个目录拆成独立插件：
+Each module under this package implements a single top-level subcommand
+(e.g. ``x todo``, ``x secret``) and exposes the contract that
+``x.py`` expects:
 
-    plugins/
-    ├── todo.py    # x todo 子命令（list / add / update / archive / stats）
-    ├── skill.py   # x skill 子命令（未来）
-    └── system.py  # x system 子命令（未来）
+* ``register(parser: argparse.ArgumentParser) -> None`` — bind subparsers
+  + flags for all actions of this subcommand
+* ``run(args: Sequence[str]) -> int`` — parse ``sys.argv[1:]`` for this
+  subcommand and dispatch to the right handler; return exit code
 
-主入口届时改用 importlib.import_module("plugins.<name>") 动态加载。
+To add a new subcommand, drop a file in this package (e.g. ``foo.py``),
+implement ``register`` + ``run``, and add it to
+``x.py:SUBCOMMAND_HANDLERS``. No core changes required.
+
+The Phase 4 split (this file) was the final step of the v0.4.y
+roadmap item — ``x.py`` is now reduced to entry-point glue (~200
+lines) and all action logic lives in plugins/ + core/.
 """
-
-from __future__ import annotations
