@@ -139,6 +139,59 @@ def test_e2e_get_returns_value(x_path, secrets_dir):
     assert "🔐" in err or "警告" in err
 
 
+def test_e2e_get_emits_clipboard_note_on_stderr(x_path, secrets_dir):
+    """When clipboard succeeds (clip.exe on Windows), stderr prints 📋 confirmation.
+
+    We do NOT actually check the OS clipboard contents (the test runs in a
+    subprocess and the parent shell's clipboard may not be reachable). The
+    stderr confirmation is the deterministic signal.
+    """
+    _run_x(
+        x_path,
+        ["secret", "set", "minimax", "--value", "sk-clip-test"],
+        secrets_dir,
+    )
+    _, _, err = _run_x(x_path, ["secret", "get", "minimax"], secrets_dir)
+    # Stderr contains clipboard confirmation (either success 📋 or graceful failure ⚠️)
+    assert ("📋" in err and "剪贴板" in err) or ("⚠️" in err and "剪贴板" in err), (
+        f"expected clipboard confirmation in stderr, got: {err!r}"
+    )
+
+
+def test_e2e_get_no_clipboard_skips_clipboard(x_path, secrets_dir):
+    """``--no-clipboard`` disables the clipboard write; stdout still has value."""
+    _run_x(
+        x_path,
+        ["secret", "set", "minimax", "--value", "sk-no-clip"],
+        secrets_dir,
+    )
+    code, out, err = _run_x(
+        x_path, ["secret", "get", "minimax", "--no-clipboard"], secrets_dir
+    )
+    assert code == 0
+    assert "sk-no-clip" in out
+    # No clipboard confirmation line on stderr
+    assert "📋" not in err
+    assert "已复制到剪贴板" not in err
+
+
+def test_e2e_get_no_stdout_only_clipboard(x_path, secrets_dir):
+    """``--no-stdout`` suppresses stdout; value goes only to clipboard."""
+    _run_x(
+        x_path,
+        ["secret", "set", "minimax", "--value", "sk-only-clip"],
+        secrets_dir,
+    )
+    code, out, err = _run_x(
+        x_path, ["secret", "get", "minimax", "--no-stdout"], secrets_dir
+    )
+    assert code == 0
+    # stdout is empty (no value printed)
+    assert "sk-only-clip" not in out
+    # But clipboard was attempted (confirmation on stderr)
+    assert ("📋" in err) or ("⚠️" in err)
+
+
 def test_e2e_get_full_shows_metadata(x_path, secrets_dir):
     _run_x(
         x_path,

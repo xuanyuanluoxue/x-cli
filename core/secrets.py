@@ -64,6 +64,31 @@ _TABLE_ROW_RE = re.compile(r"^\|\s*(.+?)\s*\|\s*$")
 # A separator row: ``|------|------|`` (or any dash-only cells).
 _TABLE_SEP_RE = re.compile(r"^\|[\s\-:|]+\|\s*$")
 
+# A ``key: value`` line inside a fenced ``text`` block. Used by the MD
+# importer to strip the ``key:`` prefix and keep only the value, so the
+# stored secret is the pure credential (e.g. ``sk-cp-xxx``) rather than
+# ``api_key: sk-cp-xxx``. The ``key`` portion must look like an identifier
+# (no whitespace, max 30 chars, alphanumeric / CJK) so that URLs like
+# ``https://...`` and sentences containing colons are left alone.
+_KEY_VALUE_LINE_RE = re.compile(
+    r"^([\w\u4e00-\u9fff][\w\u4e00-\u9fff _-]{0,29}):\s+(.+)$"
+)
+
+
+def _strip_key_prefix(line: str) -> str:
+    """If ``line`` matches ``KEY: VALUE``, return ``VALUE`` (trimmed).
+
+    Conservative — only strips when the prefix is a short identifier-like
+    token (no whitespace, max 30 chars). Lines without a colon, lines whose
+    "key" contains spaces, or lines longer than the cap are returned
+    unchanged so URLs (``https://...``), sentences, and unusual formats
+    pass through verbatim.
+    """
+    m = _KEY_VALUE_LINE_RE.match(line)
+    if m is None:
+        return line
+    return m.group(2)
+
 
 # ============================================================
 #  Exceptions
@@ -499,12 +524,19 @@ class SecretStore:
         skipped = 0
 
         for md_path in sorted(src_dir.glob("*.md")):
+            # Skip README / index files (they document the format, not real secrets).
+            if md_path.stem.lower() in {"readme", "index", "模板"}:
+                continue
             category = md_path.stem
             text = md_path.read_text(encoding="utf-8")
             for entry in _parse_markdown_sections(text, category):
                 if entry.name in existing_names:
                     skipped += 1
                     continue
+                # Stamp the import time so the row has a usable updated_at for `list`.
+                now = self._now()
+                entry.created_at = now
+                entry.updated_at = now
                 rows.append(entry.to_dict())
                 existing_names.add(entry.name)
                 imported += 1
@@ -614,7 +646,11 @@ def _parse_markdown_sections(text: str, category: str) -> list[SecretEntry]:
             if line.strip().startswith("```"):
                 state = "IN_SECTION"
             else:
-                value.append(line)
+                # Strip ``KEY: `` prefix when present so the stored secret
+                # is the pure credential (e.g. ``sk-cp-xxx`` instead of
+                # ``api_key: sk-cp-xxx``). Multi-line blocks keep one
+                # cleaned line per source line.
+                value.append(_strip_key_prefix(line))
             continue
 
         if state == "IN_OTHER_FENCE":

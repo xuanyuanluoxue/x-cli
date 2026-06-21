@@ -7,6 +7,7 @@ Phase 4: 拆出 plugins/ 目录，每个子命令独立文件。
 from __future__ import annotations
 
 import argparse
+import subprocess
 import sys
 import unicodedata
 from pathlib import Path
@@ -798,12 +799,22 @@ def _secret_register(parser: argparse.ArgumentParser) -> None:
     sub.add_parser("list", help="列出所有密钥（不显示 value）")
 
     # get <name> [--full]
-    sp = sub.add_parser("get", help="取一个 value（支持模糊匹配）")
+    sp = sub.add_parser("get", help="取一个 value（默认复制到剪贴板 + 输出到 stdout）")
     sp.add_argument("name", help="密钥名（精确 / 模糊匹配）")
     sp.add_argument(
         "--full",
         action="store_true",
-        help="显示完整元数据（name / category / value / note / created_at / updated_at）",
+        help="显示完整元数据表格（跳过剪贴板 / 跳过 stdout）",
+    )
+    sp.add_argument(
+        "--no-clipboard",
+        action="store_true",
+        help="不复制到剪贴板（仅 stdout）",
+    )
+    sp.add_argument(
+        "--no-stdout",
+        action="store_true",
+        help="不输出到 stdout（仅剪贴板，适合\"用完即弃\"的场景）",
     )
 
     # set <name> --value <v> [--category <c>] [--note <n>]
@@ -907,12 +918,16 @@ def _secret_list(args: argparse.Namespace) -> int:
 
 
 def _secret_get(args: argparse.Namespace) -> int:
-    """``x secret get <name> [--full]`` — 取一个 value。
+    """``x secret get <name> [--full] [--no-clipboard] [--no-stdout]`` — 取一个 value。
 
-    对应 BDD：§场景 2-4。
-    - 默认：stdout 第一行 = value（仅 value，无前缀）；stderr 永远打警告
-    - ``--full``：stdout = Field/Value 表格（含完整元数据）
-    - 找不到 → 退出码 3，stderr 报错，stdout 空
+    对应 BDD：§场景 2-4 + 用户增强（剪贴板）。
+
+    默认行为（最常用 — 拿来即用）:
+      - stdout 输出 value（兼容管道 / 旧测试）
+      - 复制 value 到系统剪贴板（按量使用的核心场景：拿到就粘贴）
+      - stderr 永远打警告
+
+    退出码：0 成功 / 3 找不到。
     """
     from core.secrets import SecretStore  # lazy import
 
@@ -923,7 +938,7 @@ def _secret_get(args: argparse.Namespace) -> int:
         return 3
 
     if args.full:
-        # 完整元数据表格（BDD §场景 3）
+        # 完整元数据表格（BDD §场景 3）— 不复制到剪贴板（剪贴板只放纯值）
         rows: list[tuple[str, str]] = [
             ("name", entry.name),
             ("category", entry.category),
@@ -947,9 +962,18 @@ def _secret_get(args: argparse.Namespace) -> int:
         for k, v in rows:
             out.append("  ".join([_pad(k, col0_w), _pad(v, col1_w)]))
         sys.stdout.write("\n".join(out) + "\n")
-    else:
-        # BDD §场景 2：仅 value，无前缀；第一行就是 value
+        return 0
+
+    # 默认流程：stdout + 剪贴板
+    if not args.no_stdout:
         print(entry.value)
+
+    if not args.no_clipboard:
+        ok, msg = _copy_to_clipboard(entry.value)
+        if ok:
+            print(f"📋 已复制到剪贴板（{msg}）", file=sys.stderr)
+        else:
+            print(f"⚠️ 复制到剪贴板失败：{msg}（请用 --no-stdout 关掉 stdout 或手动复制）", file=sys.stderr)
 
     # BDD 硬性约束：get 永远 stderr 警告（不管是否 tty / 是否有 --full）
     print(
@@ -957,6 +981,40 @@ def _secret_get(args: argparse.Namespace) -> int:
         file=sys.stderr,
     )
     return 0
+
+
+def _copy_to_clipboard(text: str) -> tuple[bool, str]:
+    """Copy ``text`` to the system clipboard. Returns ``(success, backend_name)``.
+
+    Tries in order: ``clip.exe`` (Windows) → ``pbcopy`` (macOS) → ``xclip`` (Linux X11)
+    → ``wl-copy`` (Linux Wayland) → fall back to printing a hint.
+
+    Stdlib only (no ``pyperclip``).
+    """
+    encoded = text.encode("utf-8")
+    candidates: list[tuple[list[str], str]] = [
+        (["clip"], "Windows clip.exe"),
+        (["pbcopy"], "macOS pbcopy"),
+        (["xclip", "-selection", "clipboard"], "Linux xclip"),
+        (["wl-copy"], "Linux wl-copy (Wayland)"),
+    ]
+    for cmd, name in candidates:
+        try:
+            subprocess.run(
+                cmd,
+                input=encoded,
+                check=True,
+                timeout=5,
+                capture_output=True,
+            )
+            return True, name
+        except FileNotFoundError:
+            continue
+        except subprocess.TimeoutExpired:
+            return False, f"{name} 超时"
+        except subprocess.CalledProcessError as e:
+            return False, f"{name} 退出码 {e.returncode}"
+    return False, "未找到剪贴板后端（clip/pbcopy/xclip/wl-copy）"
 
 
 def _secret_set(args: argparse.Namespace) -> int:
