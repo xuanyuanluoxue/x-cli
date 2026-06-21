@@ -72,6 +72,24 @@
 
 ---
 
+### P0 — 立即做（🚧 v0.4.0 — x todo 独立化）
+
+- [ ] **存储路径改独立** — `core/storage.py:_default_todo_dir()` 改用 `core/paths.py:xcli_todo_dir()`（默认 `%LOCALAPPDATA%\x-cli\todo\` Win / `~/.local/share/x-cli/todo/` Unix）
+  - 不变量：`x todo` **永不**读写 `~/.xavier/TODO/`（除非显式 `--from`）
+  - 向后兼容：`XAVIER_TODO_DIR` 环境变量仍可覆盖
+  - BDD 规格：[docs/behaviors/todo-storage-behavior.md](docs/behaviors/todo-storage-behavior.md)
+- [ ] `x todo init [--dir <path>]` — 一键创建 x-cli 独立 TODO 目录（任务/ + 归档/ + README.md）
+  - 幂等：已存在则提示，不覆盖
+  - 退出码：0 成功 / 1 无法创建（权限 / IO 错）/ 2 参数错
+  - BDD 规格：[docs/behaviors/todo-init-behavior.md](docs/behaviors/todo-init-behavior.md)
+- [ ] `x todo import --from <dir> [--to <dir>]` — 从 xavier 系统单向迁移任务到 x-cli 独立库
+  - **不写回 xavier**（单向只读）
+  - 重复跳过（同 name 已存在不覆盖）
+  - Frontmatter 全字段 round-trip（含未知字段如 `paused_at`）
+  - BDD 规格：[docs/behaviors/todo-import-behavior.md](docs/behaviors/todo-import-behavior.md)
+
+---
+
 ### P1 — 这周做（todo 全生命周期闭环）
 
 - [ ] `x todo restore <id>` — 从归档还原到 active

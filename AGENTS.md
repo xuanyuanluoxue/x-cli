@@ -415,6 +415,8 @@ handler = importlib.import_module(f"plugins.{subcommand}").run
 - ✅ **不引 pypinyin/jieba** — 硬编码 50+ 常用汉字拼音表 + `unicodedata` 处理非汉字，stdlib-only
 - ✅ **不引 click** — argparse 够用，避免依赖
 - ✅ **MVP 阶段 SUBCOMMAND_HANDLERS 字典分发** — 推迟 importlib 动态加载到 Phase 4
+- ✅ **`x secret` 独立 DB（v0.3.0）** — 跟 xavier 系统完全解耦，详见 [docs/architecture.md §11](docs/architecture.md) 和上方的 "`x secret` 独立 DB" 决策块
+- ✅ **`x todo` 独立 DB（v0.4.0 规划中）** — 跟 `x secret` 对齐，从 `~/.xavier/TODO/` 迁到 `%LOCALAPPDATA%\x-cli\todo\` (Win) / `~/.local/share/x-cli/todo/` (Unix)。**不再读写 xavier 系统的 TODO 目录**（除非用户显式 `--from` 走 import）。`XAVIER_TODO_DIR` 环境变量保留作为向后兼容。
 - ❌ **不支持子命令缩写**（`x t l` = `x todo list`）— argparse 不原生支持，argcomplete 补全更直接
 - ❌ **不引入交互式 TUI**（rich）— 个人使用 + 表格 + 颜色 emoji 已够用
 
