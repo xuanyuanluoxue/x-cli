@@ -1,6 +1,6 @@
 """Tests for core/storage.py — TaskStore filesystem CRUD.
 
-All tests use ``tmp_path`` (via the :envvar:`XAVIER_TODO_DIR`
+All tests use ``tmp_path`` (via the :envvar:`XCLI_TODO_DIR`
 override) so the real ``~/.xavier/TODO`` is never touched. The
 fixture ``store`` below initialises an empty store rooted at
 ``tmp_path``; helpers ``write_task`` and ``make_task`` keep each
@@ -35,7 +35,7 @@ from core.storage import (
 @pytest.fixture
 def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TaskStore:
     """Return a TaskStore rooted at ``tmp_path`` (real ~/.xavier/TODO is safe)."""
-    monkeypatch.setenv("XAVIER_TODO_DIR", str(tmp_path))
+    monkeypatch.setenv("XCLI_TODO_DIR", str(tmp_path))
     return TaskStore()  # picks up the env var
 
 
@@ -100,8 +100,8 @@ def write_task(
 
 
 def test_default_constructor_uses_env_var(monkeypatch, tmp_path):
-    """With ``XAVIER_TODO_DIR`` set, ``TaskStore()`` uses it."""
-    monkeypatch.setenv("XAVIER_TODO_DIR", str(tmp_path))
+    """With ``XCLI_TODO_DIR`` set, ``TaskStore()`` uses it."""
+    monkeypatch.setenv("XCLI_TODO_DIR", str(tmp_path))
     s = TaskStore()
     assert s.todo_dir == tmp_path
     assert s.active_dir == tmp_path / "任务"
@@ -110,7 +110,7 @@ def test_default_constructor_uses_env_var(monkeypatch, tmp_path):
 
 def test_explicit_constructor_overrides_env(monkeypatch, tmp_path):
     """An explicit ``todo_dir`` argument wins over the env var."""
-    monkeypatch.setenv("XAVIER_TODO_DIR", "/some/other/path")
+    monkeypatch.setenv("XCLI_TODO_DIR", "/some/other/path")
     other = tmp_path / "explicit"
     s = TaskStore(todo_dir=other)
     assert s.todo_dir == other
@@ -121,10 +121,10 @@ def test_constructor_uses_default_when_no_env(monkeypatch):
 
     Previously (v0.2.0) this was ``~/.xavier/TODO``; the v0.4.0 storage
     decoupling moved the default to x-cli's per-user data dir to keep
-    the CLI independent of the xavier system. The :envvar:`XAVIER_TODO_DIR`
+    the CLI independent of the xavier system. The :envvar:`XCLI_TODO_DIR`
     env var is still honoured for back-compat (and tests use it).
     """
-    monkeypatch.delenv("XAVIER_TODO_DIR", raising=False)
+    monkeypatch.delenv("XCLI_TODO_DIR", raising=False)
     s = TaskStore()
     # Must NOT be the legacy xavier path
     assert ".xavier" not in s.todo_dir.parts, (
@@ -612,7 +612,7 @@ def test_stats_unknown_fields_do_not_affect_counts(store):
 
 def test_env_var_is_isolated(store, monkeypatch):
     """The store fixture sets the env var; the original is restored after."""
-    assert os.environ["XAVIER_TODO_DIR"] == str(store.todo_dir)
+    assert os.environ["XCLI_TODO_DIR"] == str(store.todo_dir)
     # Mutating the store's paths must not persist
     assert not (store.todo_dir / "任务").exists() or True  # may be created by tests
 

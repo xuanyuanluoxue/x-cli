@@ -16,7 +16,7 @@
 ## 路径与不变量
 
 - **存储位置**（v0.4.0+）：x-cli's 独立库
-- **永不动**：`~/.xavier/TODO/`
+- **永不动**：`<xcli_todo_dir>/`
 - **底层调用**：`x.py:_todo_done` 直接 delegate 给 `_todo_archive(parsed)`（`--reason done` 预填）
 
 ---

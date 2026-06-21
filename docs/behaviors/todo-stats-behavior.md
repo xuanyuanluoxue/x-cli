@@ -2,7 +2,7 @@
 
 > **对应命令**：`x todo stats`
 > **命令参考**：[docs/commands.md §2.6](../../commands.md)
-> **数据规范**：[~/.xavier/TODO/00-TODO-SPEC.md §4](../../_TODO-SPEC.md)（v1.3，总索引格式）
+> **数据规范**：[../TODO-SPEC.md](../TODO-SPEC.md)
 >
 > **覆盖范围**：
 > - 常规统计（状态分布 + 优先级分布 + 即将到期）
@@ -17,7 +17,7 @@
 ## 场景 1：常规统计（典型场景）
 
 **Given**：
-- 仓库 `~/.xavier/TODO/` 存在以下任务：
+- 仓库 `<xcli_todo_dir>/` 存在以下任务：
   - 状态分布：
     - `pending`：3（kemu1、zizhushixi、laodongjiaoyu3）
     - `in_progress`：5
@@ -62,7 +62,7 @@
 ## 场景 2：空仓库
 
 **Given**：
-- 仓库 `~/.xavier/TODO/` 已初始化
+- 仓库 `<xcli_todo_dir>/` 已初始化
 - `任务/` 和 `归档/` 均为空
 
 **When**：

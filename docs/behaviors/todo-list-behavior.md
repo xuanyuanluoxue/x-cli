@@ -2,7 +2,7 @@
 
 > **对应命令**：`x todo list [选项]`
 > **命令参考**：[docs/commands.md §2.2](../../commands.md)
-> **数据规范**：[~/.xavier/TODO/00-TODO-SPEC.md](../../../_TODO-SPEC.md)（v1.3）
+> **数据规范**：[../TODO-SPEC.md](../TODO-SPEC.md)
 >
 > **覆盖范围**：
 > - 无过滤（默认只列未归档）
@@ -17,7 +17,7 @@
 ## 场景 1：默认列出所有未归档任务
 
 **Given**：
-- 仓库 `~/.xavier/TODO/` 已初始化
+- 仓库 `<xcli_todo_dir>/` 已初始化
 - 存在 3 个未归档任务：
   - `kemu1`（科目一模拟考，pending / high）
   - `zizhushixi`（自主实习，in_progress / medium）
@@ -111,7 +111,7 @@
 ## 场景 6：空仓库（无任务）
 
 **Given**：
-- 仓库 `~/.xavier/TODO/` 已初始化
+- 仓库 `<xcli_todo_dir>/` 已初始化
 - `任务/` 子目录为空
 - `归档/` 子目录为空
 

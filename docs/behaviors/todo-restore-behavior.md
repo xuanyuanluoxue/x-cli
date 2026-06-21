@@ -16,7 +16,7 @@
 ## 路径与不变量
 
 - **存储位置**（v0.4.0+）：x-cli's 独立库 `%LOCALAPPDATA%\x-cli\todo\` (Win) / `~/.local/share/x-cli/todo/` (Unix)
-- **永不动**：`~/.xavier/TODO/`（除非显式 `XAVIER_TODO_DIR` 覆盖）
+- **永不动**：`<xcli_todo_dir>/`（除非显式 `XCLI_TODO_DIR` 覆盖）
 - **归档目录命名**：`YYYYMMDD-<name>/`（date 是归档当天）
 - **还原目标**：`任务/<name>/`（去掉日期前缀）
 

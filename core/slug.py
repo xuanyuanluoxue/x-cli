@@ -22,7 +22,7 @@ AGENTS.md §9 "能少即少"). Satisfies the BDD contract in
    alone.
 
 The hardcoded pinyin map covers ~50 of the most common characters
-encountered in Xavier's TODO task names. Unmapped characters are
+encountered in common CJK TODO task names. Unmapped characters are
 skipped — the slug may end up shorter than the original name, but it
 will always be unique (via :func:`unique_slug`) and filesystem-safe.
 

@@ -34,7 +34,7 @@ core/  (核心库，被 x.py 引用)
 **核心理念**：
 - **主入口 `x.py`**：解析 + 字典分发，**未启用 importlib**
 - **核心库 `core/`**：纯 stdlib，**零第三方依赖**（`pyproject.toml dependencies = []`）
-- **数据存储**：直接读 `~/.xavier/TODO/任务/<name>/TODO.md` 和 `~/.xavier/TODO/归档/<YYYYMMDD>-<name>/TODO.md`
+- **数据存储**：直接读 `<xcli_todo_dir>/任务/<name>/TODO.md` 和 `<xcli_todo_dir>/归档/<YYYYMMDD>-<name>/TODO.md`
 
 ### 1.2 Phase 4 目标：微内核（未来）
 
@@ -45,8 +45,8 @@ x (主入口 — 字典分发 → 改 importlib 动态加载)
 │   ├── plugins/skill.py   ← 未来
 │   ├── plugins/system.py  ← 未来
 │   └── ...
-├── 配置管理（~/.xavier/config.yaml）— 未实现
-├── 日志系统（~/.xavier/logs/）— 未实现
+├── 配置管理（<xcli_config_path>）— 未实现
+├── 日志系统（<xcli_data_dir>/）— 未实现
 └── 自动更新（未来）
 ```
 
@@ -131,26 +131,26 @@ elif parsed.todo_action == "add":
 
 ### 3.1 计划中的配置文件
 
-**全局配置**：`~/.xavier/config.yaml`（**未实现**）
+**全局配置**：`<xcli_config_path>`（**未实现**）
 
 ```yaml
-# ~/.xavier/config.yaml （计划格式）
+# <xcli_config_path> （计划格式）
 todo:
   default_status: pending
   default_priority: medium
-  tasks_dir: ~/.xavier/TODO/任务
+  tasks_dir: <xcli_todo_dir>/任务
 
 log:
   level: INFO
-  file: ~/.xavier/logs/x-cli.log
+  file: <xcli_data_dir>/x.log
 ```
 
-### 3.2 临时替代：`XAVIER_TODO_DIR` 环境变量
+### 3.2 临时替代：`XCLI_TODO_DIR` 环境变量
 
 **MVP 阶段**没有 config 加载，只支持一个环境变量覆盖 TODO 根目录（主要给测试用）：
 
 ```bash
-XAVIER_TODO_DIR=/tmp/test_todo python x.py todo list
+XCLI_TODO_DIR=/tmp/test_todo python x.py todo list
 ```
 
 代码位置：`core/storage.py:_default_todo_dir()`
@@ -164,7 +164,7 @@ import os
 
 def load_config(config_path=None):
     if config_path is None:
-        config_path = os.path.expanduser("~/.xavier/config.yaml")
+        config_path = os.path.expanduser("<xcli_config_path>")
     if not os.path.exists(config_path):
         return {}
     with open(config_path, "r", encoding="utf-8") as f:
@@ -213,7 +213,7 @@ tags: ["驾照", "暑假"]
 ### 4.2 目录结构
 
 ```
-~/.xavier/TODO/
+<xcli_todo_dir>/
 ├── TODO.md                  # 总索引（自动维护，由 x todo archive/stats 触发）
 ├── 00-TODO-SPEC.md          # 规范文档（手动维护）
 ├── 任务/                    # 活动任务
@@ -242,11 +242,11 @@ tags: ["驾照", "暑假"]
 
 **构造方式**：
 ```python
-TaskStore()                              # 用 ~/.xavier/TODO
+TaskStore()                              # 用 <legacy-config-dir>/TODO
 TaskStore(todo_dir=Path("/tmp/test"))    # 测试用
 ```
 
-`XAVIER_TODO_DIR` 环境变量优先级最高（覆盖构造参数）。
+`XCLI_TODO_DIR` 环境变量优先级最高（覆盖构造参数）。
 
 ---
 
@@ -258,7 +258,7 @@ TaskStore(todo_dir=Path("/tmp/test"))    # 测试用
 
 **日志输出**：
 - 控制台：≥ `WARNING`（只显示错误和警告）— **未实现**（MVP 用 print）
-- 文件：`~/.xavier/logs/x-cli.log`（≥ `INFO`）— **未实现**
+- 文件：`<xcli_data_dir>/x.log`（≥ `INFO`）— **未实现**
 
 ### 5.2 MVP 替代
 
@@ -365,7 +365,7 @@ pyinstaller --onefile --name x x.py
 
 ### 9.3 Git 自动提交（**无需求**）
 
-> 用户用 `regen-index.ps1` 自己手动管理 .xavier git，不让 x-cli 抢 Git 控制权。
+> 用户用 `regen-index.ps1` 自己手动管理 .x-cli git，不让 x-cli 抢 Git 控制权。
 
 ---
 
@@ -377,7 +377,7 @@ pyinstaller --onefile --name x x.py
 | 拼音转换 | 硬编码 + unicodedata | 不引 pypinyin（保持 stdlib-only）|
 | CLI 框架 | argparse | 够用；不引 click |
 | 插件加载 | 字典分发（MVP）→ importlib（Phase 4）| 5 个 action 不值得拆 |
-| 数据存储 | 文件系统（todo） + JSON DB（secret） | todo 兼容 `~/.xavier/TODO/`；secret 用独立 JSON（不与 xavier 系统耦合）|
+| 数据存储 | 文件系统（todo） + JSON DB（secret） | todo 兼容 `<xcli_todo_dir>/`；secret 用独立 JSON（不与 legacy TODO system耦合）|
 | 测试框架 | pytest + pytest-cov | Python 生态标准 |
 | 打包 | PyInstaller | 单文件可执行，跨平台 |
 
@@ -387,7 +387,7 @@ pyinstaller --onefile --name x x.py
 
 ### 11.1 定位
 
-x-cli 的密钥管理子命令。**不**与 xavier 系统的 `~/.xavier/密钥/` 耦合——x-cli 是通用工具，应有独立数据源。
+x-cli 的密钥管理子命令。**不**与 legacy TODO system的 `<legacy-credentials-dir>/` 耦合——x-cli 是通用工具，应有独立数据源。
 
 ### 11.2 存储
 
@@ -428,7 +428,7 @@ tests/
 
 ### 11.5 迁移策略（`x secret import`）
 
-从 `~/.xavier/密钥/*.md` 解析：
+从 `<legacy-credentials-dir>/*.md` 解析：
 
 | DB 字段 | 来源 |
 |---------|------|

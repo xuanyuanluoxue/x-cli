@@ -11,7 +11,7 @@
 
 **Given**:
 - venv 已建好（`.venv/Scripts/x.exe` 存在）
-- `XAVIER_TODO_DIR` 指向临时目录，里面有 1 个 active 任务
+- `XCLI_TODO_DIR` 指向临时目录，里面有 1 个 active 任务
 
 **When**:
 - 在 PowerShell 任意目录运行 `x todo list`
@@ -35,7 +35,7 @@
 **Then**:
 - 第一条命令退出码 0，stdout 含 `✅ 任务已创建：科目一模拟考（ID: kemu1）`
 - 第二条命令退出码 0，表格含 `kemu1` 行
-- 文件系统：`~/.xavier/TODO/任务/科目一模拟考/TODO.md` 存在
+- 文件系统：`<xcli_todo_dir>/任务/科目一模拟考/TODO.md` 存在
 
 ---
 
@@ -196,7 +196,7 @@
 **Then**:
 - 退出码 0
 - stdout 含 `✅ 任务已归档：科目一模拟考（ID: kemu1，reason=done）`
-- 文件系统：`~/.xavier/TODO/归档/YYYYMMDD-科目一模拟考/TODO.md` 存在
+- 文件系统：`<xcli_todo_dir>/归档/YYYYMMDD-科目一模拟考/TODO.md` 存在
 - 重新 `x todo list` 该任务消失（默认不显示归档）
 
 ---
@@ -290,10 +290,11 @@
 |---|---|
 | Python 版本 | 3.14.2 |
 | venv 路径 | `.venv/` |
-| 真实 TODO 路径 | **永不触碰**（全部走 `XAVIER_TODO_DIR` 临时目录） |
+| 真实 TODO 路径 | **永不触碰**（全部走 `XCLI_TODO_DIR` 临时目录） |
 | `x` 调用方式 | subprocess 启动 `.venv/Scripts/x.exe`（**不**走 `python x.py`）|
-| 测试隔离 | pytest fixture `tmp_path` + `monkeypatch.setenv("XAVIER_TODO_DIR", ...)` |
+| 测试隔离 | pytest fixture `tmp_path` + `monkeypatch.setenv("XCLI_TODO_DIR", ...)` |
 
 ---
 
 *本文档是活文档，E2E 测试集随命令扩展同步更新。*
+

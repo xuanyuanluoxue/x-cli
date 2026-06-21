@@ -5,21 +5,22 @@ writing tasks on disk. It deliberately knows nothing about the CLI —
 plugins call into this layer to list, add, update, and archive
 tasks, and to compute statistics.
 
-Path layout (mirrors ``~/.xavier/TODO/00-TODO-SPEC.md`` §2)::
+Path layout (see ``docs/TODO-SPEC.md`` for the full data format)::
 
     <todo_dir>/
     ├── 任务/<name>/TODO.md        # active tasks
     └── 归档/<YYYYMMDD>-<name>/TODO.md   # archived tasks
 
 **Storage location** (v0.4.0+): x-cli's TODO DB is **independent**
-from the xavier system — it lives under :func:`core.paths.xcli_todo_dir`
+from any external system — it lives under :func:`core.paths.xcli_todo_dir`
 (``%LOCALAPPDATA%\\x-cli\\todo\\`` on Windows, ``~/.local/share/x-cli/todo/``
-on Unix). The :envvar:`XAVIER_TODO_DIR` env var is preserved as a
-back-compat override (used by tests and by users who explicitly want
-to point at a different location — including the legacy xavier path).
+on Unix). The :envvar:`XCLI_TODO_DIR` env var overrides the default
+(used by tests and by users who explicitly want to point at a
+different location). The legacy :envvar:`XAVIER_TODO_DIR` env var is
+still honoured with a one-time deprecation warning.
 
 The store is constructed with no arguments for production use; tests
-pass a ``tmp_path`` via :envvar:`XAVIER_TODO_DIR` so the real x-cli's
+pass a ``tmp_path`` via :envvar:`XCLI_TODO_DIR` so the real x-cli's
 TODO directory is never touched.
 """
 
@@ -44,15 +45,12 @@ from core.paths import xcli_todo_dir
 def _default_todo_dir() -> Path:
     """Resolve the TODO root.
 
-    Honours :envvar:`XAVIER_TODO_DIR` (legacy compat — tests, user
-    override). Defaults to :func:`core.paths.xcli_todo_dir`, which
-    returns x-cli's platform-specific data directory. **Never** returns
-    ``~/.xavier/TODO`` (use ``x todo import --from <path>`` to migrate
-    from the xavier system).
+    Delegates to :func:`core.paths.xcli_todo_dir`, which handles the
+    :envvar:`XCLI_TODO_DIR` override (and the legacy
+    :envvar:`XAVIER_TODO_DIR` alias with a deprecation warning). This
+    function exists so :class:`TaskStore` can be constructed with no
+    explicit path while tests still control the location via env var.
     """
-    override = os.environ.get("XAVIER_TODO_DIR")
-    if override:
-        return Path(override)
     return xcli_todo_dir()
 
 

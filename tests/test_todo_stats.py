@@ -6,7 +6,7 @@ Each test maps to a scenario in
 here exercise the formatter, the broken-YAML detector, the dispatcher
 in ``x.py``, and the integration through ``x.main``.
 
-All tests use ``tmp_path`` (via :envvar:`XAVIER_TODO_DIR`) so the real
+All tests use ``tmp_path`` (via :envvar:`XCLI_TODO_DIR`) so the real
 ``~/.xavier/TODO`` is never touched.
 """
 
@@ -38,7 +38,7 @@ from x import (
 @pytest.fixture
 def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TaskStore:
     """Return a TaskStore rooted at ``tmp_path`` (real ~/.xavier/TODO is safe)."""
-    monkeypatch.setenv("XAVIER_TODO_DIR", str(tmp_path))
+    monkeypatch.setenv("XCLI_TODO_DIR", str(tmp_path))
     return TaskStore()
 
 
@@ -693,7 +693,7 @@ def test_update_legacy_archived_task_is_blocked(store):
 
 def test_main_dispatches_todo_stats(monkeypatch, tmp_path):
     """`x todo stats` runs through the main entry point."""
-    monkeypatch.setenv("XAVIER_TODO_DIR", str(tmp_path))
+    monkeypatch.setenv("XCLI_TODO_DIR", str(tmp_path))
     # Empty repo so output is deterministic
     out = io.StringIO()
     err = io.StringIO()
@@ -707,7 +707,7 @@ def test_main_dispatches_todo_stats(monkeypatch, tmp_path):
 
 def test_main_todo_stats_unknown_flag_errors(monkeypatch, tmp_path):
     """`x todo stats --something` is an argparse usage error (exit 2)."""
-    monkeypatch.setenv("XAVIER_TODO_DIR", str(tmp_path))
+    monkeypatch.setenv("XCLI_TODO_DIR", str(tmp_path))
     with pytest.raises(SystemExit) as exc_info:
         main(["todo", "stats", "--bogus"])
     assert exc_info.value.code == 2

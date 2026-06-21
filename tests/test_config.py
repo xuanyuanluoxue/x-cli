@@ -2,7 +2,7 @@
 
 Covers all 10 scenarios in
 :file:`docs/behaviors/config-behavior.md`. The tests are deliberately
-environment-isolated: every test sets ``XCLI_CONFIG`` / ``XAVIER_TODO_DIR``
+environment-isolated: every test sets ``XCLI_CONFIG`` / ``XCLI_TODO_DIR``
 explicitly via ``monkeypatch.setenv`` and tears the ``x-cli`` data dir
 to a ``tmp_path`` so we never read the developer's real machine.
 """
@@ -38,7 +38,7 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     developer's real ``%LOCALAPPDATA%`` on Windows.
     """
     monkeypatch.delenv("XCLI_CONFIG", raising=False)
-    monkeypatch.delenv("XAVIER_TODO_DIR", raising=False)
+    monkeypatch.delenv("XCLI_TODO_DIR", raising=False)
     monkeypatch.delenv("XCLI_SECRETS_DIR", raising=False)
     if sys.platform == "win32":
         monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))

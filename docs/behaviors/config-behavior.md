@@ -21,7 +21,7 @@ x-cli 现在每次启动都从 `core/paths.py` 读硬编码的默认路径。但
 
 ## 路径与不变量
 
-- **默认配置文件**：`xcli_data_dir()/config.yaml`（独立于 xavier 系统的 `~/.xavier/config/`）
+- **默认配置文件**：`xcli_data_dir()/config.yaml`（独立于 legacy TODO system的 `<legacy-config-dir>/`）
   - Windows: `%LOCALAPPDATA%\x-cli\config.yaml`
   - Unix: `~/.local/share/x-cli/config.yaml`
 - **环境变量**：`XCLI_CONFIG` 覆盖（指向文件路径，不是目录）
@@ -215,7 +215,7 @@ x-cli 现在每次启动都从 `core/paths.py` 读硬编码的默认路径。但
 
 | 项 | 值 |
 |---|---|
-| 默认配置路径 | `xcli_data_dir()/config.yaml`（独立于 xavier）|
+| 默认配置路径 | `xcli_data_dir()/config.yaml`（独立于 legacy TODO system）|
 | 环境变量 | `XCLI_CONFIG` 覆盖 |
 | 配置 schema | 见下方（YAML）|
 | 不存在的配置 | 不报错（用默认）|
@@ -307,12 +307,12 @@ $ XCLI_CONFIG=D:\my-config.yaml x todo list
 | 现有 | 新增 | 关系 |
 |---|---|---|
 | `x todo` 子命令 | `x --config init` | 新子命令（init 仅生成配置文件）|
-| `XAVIER_TODO_DIR` env | `XCLI_CONFIG` + `todo_dir` 配置项 | 优先级：`XCLI_CONFIG` > `todo_dir` 配置 > `XAVIER_TODO_DIR`（向后兼容）|
+| `XCLI_TODO_DIR` env | `XCLI_CONFIG` + `todo_dir` 配置项 | 优先级：`XCLI_CONFIG` > `todo_dir` 配置 > `XCLI_TODO_DIR`（向后兼容）|
 | `XCLI_SECRETS_DIR` env | `secrets_path` 配置项 | 同上 |
 | `print(...)` 输出 | `_log(level, msg)` | 新内部 API（替代散落的 print）|
 
 **优先级规则**（重要）：
-- `XAVIER_TODO_DIR` / `XCLI_SECRETS_DIR` 仍然 work（向后兼容）
+- `XCLI_TODO_DIR` / `XCLI_SECRETS_DIR` 仍然 work（向后兼容）
 - 但 `XCLI_CONFIG` 文件里的 `todo_dir` / `secrets_path` 优先级**更高**（更明确的用户意图）
 - 配置文件不存在（且无 env）→ 用代码硬编码默认
 

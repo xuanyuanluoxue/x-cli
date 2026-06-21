@@ -2,7 +2,7 @@
 
 > **对应命令**：`x todo update <id> [选项]`
 > **命令参考**：[docs/commands.md §2.4](../../commands.md)
-> **数据规范**：[~/.xavier/TODO/00-TODO-SPEC.md](../../../_TODO-SPEC.md)（v1.3）
+> **数据规范**：[../TODO-SPEC.md](../TODO-SPEC.md)
 >
 > **覆盖范围**：
 > - 更新单字段（status / priority / deadline / tags）
@@ -26,7 +26,7 @@
 **Then**：
 - 退出码：`0`
 - 输出：`"✅ 任务已更新：科目一模拟考（ID: kemu1）"`
-- `~/.xavier/TODO/任务/科目一模拟考/TODO.md` 的 frontmatter：
+- `<xcli_todo_dir>/任务/科目一模拟考/TODO.md` 的 frontmatter：
   - `status`：in_progress（已更新）
   - `priority`：high（**未变**）
   - `deadline`：2026-08-31（**未变**）
@@ -58,7 +58,7 @@
 
 **Given**：
 - 仓库中不存在任务 `nonexistent-id`
-- 但 `~/.xavier/TODO/任务/科目一/TODO.md` 存在（id=`kemu1`）
+- 但 `<xcli_todo_dir>/任务/科目一/TODO.md` 存在（id=`kemu1`）
 
 **When**：
 - 运行 `x todo update nonexistent-id --status in_progress`
@@ -125,7 +125,7 @@
 ## 场景 7：更新 archived 任务（错误路径）
 
 **Given**：
-- 归档任务 `20260521-xiangjifanmai` 存在（位于 `~/.xavier/TODO/归档/20260521-相机贩卖业务/TODO.md`，`status=archived`）
+- 归档任务 `20260521-xiangjifanmai` 存在（位于 `<xcli_todo_dir>/归档/20260521-相机贩卖业务/TODO.md`，`status=archived`）
 
 **When**：
 - 运行 `x todo update 20260521-xiangjifanmai --priority high`

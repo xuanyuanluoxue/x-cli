@@ -28,8 +28,8 @@
 |---|---|
 | 名称 | **x-cli** |
 | 性质 | **个人使用**（非团队、非商业）|
-| 核心 | Xavier 个人工具集的统一 CLI 入口 |
-| 目标用户 | 陈新捷（开发者本人）|
+| 核心 | personal CLI toolset的统一 CLI 入口 |
+| 目标用户 | x-cli (pen name)（开发者本人）|
 | 平台 | Win10+ / macOS / Linux |
 | 当前阶段 | **Phase 1 MVP 已完成**（v0.2.0） |
 
@@ -125,9 +125,9 @@ x-cli/
 | CLI 框架 | `argparse`（stdlib，支持子命令） | 不用 click（避免过度依赖）|
 | 插件机制 | `importlib` 动态加载 | **MVP 阶段未启用**（todo inline 在 x.py，SUBCOMMAND_HANDLERS 字典分发）|
 | 数据格式 | **YAML frontmatter**（兼容现有） | **手写 parser**（不引 PyYAML；未知字段 round-trip 不丢）|
-| 数据存储 | 文件系统（同现有：`~/.xavier/TODO/`） | 不引入 DB |
+| 数据存储 | 文件系统（同现有：`<xcli_todo_dir>/`） | 不引入 DB |
 | Slug 生成 | `unicodedata` + 硬编码拼音表 | **MVP 阶段不引 pypinyin/jieba**（保持 stdlib-only）|
-| 配置 | `~/.xavier/config.yaml` | **MVP 阶段未实现**（`XAVIER_TODO_DIR` 环境变量作为临时覆盖）|
+| 配置 | `<xcli_config_path>` | **MVP 阶段未实现**（`XCLI_TODO_DIR` 环境变量作为临时覆盖）|
 | 测试 | `pytest` + `pytest-cov` | 覆盖率当前 93%（含 E2E 子进程层 + secret 子系统）|
 | 打包 | PyInstaller --onefile | **未实现**（见 release/）|
 | 日志 | `logging`（stdlib） | **MVP 阶段未实现**（只用 print 到 stdout/stderr）|
@@ -345,7 +345,7 @@ handler = importlib.import_module(f"plugins.{subcommand}").run
 
 ## 7. 开发最佳实践
 
-> **参考文档**: [开发最佳实践指南](file:///C:/Users/Chatxavier/Desktop/开发最佳实践指南.md)
+> **参考文档**: [开发最佳实践指南](file:///C:/Users/Chatx-cli/Desktop/开发最佳实践指南.md)
 
 ### 7.1 强制要求
 
@@ -377,8 +377,8 @@ handler = importlib.import_module(f"plugins.{subcommand}").run
 
 ### 2026-06-21：项目启动 + MVP 完成
 
-- ✅ 创建 `x-cli` 项目（替代 `xavier-todo`）
-- ✅ 定义统一入口 `x`（Xavier CLI 总控）
+- ✅ 创建 `x-cli` 项目（替代 `x-cli (project)`）
+- ✅ 定义统一入口 `x`（x-cli 总控）
 - ✅ 定义开发方法论（BDD + TDD，文档先行）
 - ✅ 定义技术栈（Python + argparse + stdlib-only）
 - ✅ MVP 完成（v0.2.0）：
@@ -386,8 +386,8 @@ handler = importlib.import_module(f"plugins.{subcommand}").run
   - 5 个 x todo action 全部实现（list / add / update / archive / stats）
   - 336 tests pass，覆盖率 93%
   - v0.3.0 新增 `x secret` 子系统（独立 JSON DB，8 子命令）
-  - 与 `~/.xavier/密钥/` 隔离（不依赖 xavier 系统）
-  - 与 `~/.xavier/TODO/` 真实数据 round-trip byte-identical（SHA-256 验证）
+  - 与 `<legacy-credentials-dir>/` 隔离（不依赖 legacy TODO system）
+  - 与 `<xcli_todo_dir>/` 真实数据 round-trip byte-identical（SHA-256 验证）
   - 5 个 BDD 行为规格（39 场景）覆盖所有 action
   - **E2E 子进程测试**（`tests/test_e2e_todo.py`，22 用例）— 真正启动 `x.exe` 跑 `subprocess.run`，盖住 `pyproject.toml` 脚本入口 + 环境变量路由
 
@@ -398,11 +398,11 @@ handler = importlib.import_module(f"plugins.{subcommand}").run
 - 详见 README "故障排查"
 
 **`x secret` 独立 DB**（2026-06-21 加的决策）：
-- x-cli's secret 功能**不**读 `~/.xavier/密钥/` 作为主存储
+- x-cli's secret 功能**不**读 `<legacy-credentials-dir>/` 作为主存储
 - 自管 JSON DB：`%LOCALAPPDATA%\x-cli\secrets.json`（Windows）/ `~/.local/share/x-cli/secrets.json`（Unix）
-- 原因：x-cli 是**通用** CLI 工具，不应该耦合 xavier 系统的特定目录布局
+- 原因：x-cli 是**通用** CLI 工具，不应该耦合 legacy TODO system的特定目录布局
 - migration 命令 (`x secret import --from`) 是单向辅助，不双向同步
-- 用户从 xavier 系统迁过来 → x-cli 后，xavier 那边不删，可手动核对
+- 用户从 legacy TODO system迁过来 → x-cli 后，x-cli 那边不删，可手动核对
 
 **踩坑教训**（写在这里给后续 agent 看）：
 1. **Phase 3 拆太多并行 task** — 5 个 worker 同时改 x.py 容易 merge 冲突，每个都要 cold-start + verify。**1 个 task 搞定**省 4 个 cold-start + 4 个 verify
@@ -415,15 +415,15 @@ handler = importlib.import_module(f"plugins.{subcommand}").run
 - ✅ **不引 pypinyin/jieba** — 硬编码 50+ 常用汉字拼音表 + `unicodedata` 处理非汉字，stdlib-only
 - ✅ **不引 click** — argparse 够用，避免依赖
 - ✅ **MVP 阶段 SUBCOMMAND_HANDLERS 字典分发** — 推迟 importlib 动态加载到 Phase 4
-- ✅ **`x secret` 独立 DB（v0.3.0）** — 跟 xavier 系统完全解耦，详见 [docs/architecture.md §11](docs/architecture.md) 和上方的 "`x secret` 独立 DB" 决策块
-- ✅ **`x todo` 独立 DB（v0.4.0 规划中）** — 跟 `x secret` 对齐，从 `~/.xavier/TODO/` 迁到 `%LOCALAPPDATA%\x-cli\todo\` (Win) / `~/.local/share/x-cli/todo/` (Unix)。**不再读写 xavier 系统的 TODO 目录**（除非用户显式 `--from` 走 import）。`XAVIER_TODO_DIR` 环境变量保留作为向后兼容。
+- ✅ **`x secret` 独立 DB（v0.3.0）** — 跟 legacy TODO system完全解耦，详见 [docs/architecture.md §11](docs/architecture.md) 和上方的 "`x secret` 独立 DB" 决策块
+- ✅ **`x todo` 独立 DB（v0.4.0 规划中）** — 跟 `x secret` 对齐，从 `<xcli_todo_dir>/` 迁到 `%LOCALAPPDATA%\x-cli\todo\` (Win) / `~/.local/share/x-cli/todo/` (Unix)。**不再读写 legacy TODO system的 TODO 目录**（除非用户显式 `--from` 走 import）。`XCLI_TODO_DIR` 环境变量保留作为向后兼容。
 - ❌ **不支持子命令缩写**（`x t l` = `x todo list`）— argparse 不原生支持，argcomplete 补全更直接
 - ❌ **不引入交互式 TUI**（rich）— 个人使用 + 表格 + 颜色 emoji 已够用
 
 ### 待决策
 
 - [ ] `x todo restore`（从归档还原到 active）— 用户场景不明，等用户提
-- [ ] `x todo init`（首次初始化 `~/.xavier/TODO/`）— 等用户提
+- [ ] `x todo init`（首次初始化 `<xcli_todo_dir>/`）— 等用户提
 - [ ] `x --config` / `--log-level` 全局选项优先级（用户没提过）
 - [ ] PyInstaller 打包优先级（用户没提过）
 
@@ -446,11 +446,11 @@ handler = importlib.import_module(f"plugins.{subcommand}").run
 
 | 文件 | 路径 | 说明 |
 |------|------|------|
-| 开发最佳实践指南 | `C:\Users\Chatxavier\Desktop\开发最佳实践指南.md` | 完整开发方法论 |
-| x-cli 计划书 | `C:\Users\Chatxavier\Desktop\x-cli-计划书.md` | 完整设计文档 |
-| 现有 TODO 规范 | `C:\Users\Chatxavier\.xavier\TODO\00-TODO-SPEC.md` | v1.3（已过时）|
-| 现有总索引 | `C:\Users\Chatxavier\.xavier\TODO\TODO.md` | v1.6（自动生成）|
-| xavier-c2 AGENTS.md | `D:\code\windows\xavier-c2\AGENTS.md` | 项目规约参考 |
+| 开发最佳实践指南 | `C:\Users\Chatx-cli\Desktop\开发最佳实践指南.md` | 完整开发方法论 |
+| x-cli 计划书 | `C:\Users\Chatx-cli\Desktop\x-cli-计划书.md` | 完整设计文档 |
+| 现有 TODO 规范 | `C:\Users\Chatx-cli\.x-cli\TODO\00-TODO-SPEC.md` | v1.3（已过时）|
+| 现有总索引 | `C:\Users\Chatx-cli\.x-cli\TODO\TODO.md` | v1.6（自动生成）|
+| x-cli-c2 AGENTS.md | `D:\code\windows\x-cli-c2\AGENTS.md` | 项目规约参考 |
 
 ---
 

@@ -7,7 +7,7 @@ tests in ``tests/test_todo_*.py`` by catching issues that only show up
 in the actual entry point:
 
 * ``pyproject.toml`` script entry wiring (``[project.scripts] x = "x:main"``)
-* ``XAVIER_TODO_DIR`` env-var routing through ``core.storage``
+* ``XCLI_TODO_DIR`` env-var routing through ``core.storage``
 * The full ``x`` -> ``x.main`` -> ``SUBCOMMAND_HANDLERS`` chain
 * Setuptools-generated ``x.exe`` wrapper on Windows
 
@@ -86,7 +86,7 @@ def _make_task(
 @pytest.fixture
 def todo_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """Empty TODO root; tests fill it in as needed."""
-    monkeypatch.setenv("XAVIER_TODO_DIR", str(tmp_path))
+    monkeypatch.setenv("XCLI_TODO_DIR", str(tmp_path))
     (tmp_path / "任务").mkdir()
     (tmp_path / "归档").mkdir()
     return tmp_path
@@ -108,12 +108,12 @@ def _run_x(
     *,
     timeout: float = 30.0,
 ) -> tuple[int, str, str]:
-    """Run ``x <args>`` as a subprocess with XAVIER_TODO_DIR=todo_dir.
+    """Run ``x <args>`` as a subprocess with XCLI_TODO_DIR=todo_dir.
 
     Returns ``(returncode, stdout, stderr)`` decoded as UTF-8.
     """
     env = os.environ.copy()
-    env["XAVIER_TODO_DIR"] = str(todo_dir)
+    env["XCLI_TODO_DIR"] = str(todo_dir)
     proc = subprocess.run(
         [x_path, *args],
         capture_output=True,
@@ -747,12 +747,12 @@ def test_e2e_default_path_is_independent_from_xavier(
     """BDD §todo-storage: no env var → default NEVER lands under ~/.xavier/.
 
     We must use a custom env (not ``_run_x``) because that helper always
-    sets ``XAVIER_TODO_DIR``. Here we want to test the **default**
+    sets ``XCLI_TODO_DIR``. Here we want to test the **default**
     path resolution (no env override).
     """
     import re
     env = os.environ.copy()
-    env.pop("XAVIER_TODO_DIR", None)
+    env.pop("XCLI_TODO_DIR", None)
 
     proc = subprocess.run(
         [x_path, "todo", "init"],

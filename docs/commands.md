@@ -20,14 +20,14 @@ x <子命令> [选项]
 |------|------|------|
 | `-v, --version` | ✅ 已实现 | 显示版本号（v0.2.0）|
 | `-h, --help` | ✅ 已实现 | 显示帮助（argparse 默认）|
-| `--config <路径>` | ❌ 未实现 | 指定配置文件（计划读取 `~/.xavier/config.yaml`）|
+| `--config <路径>` | ❌ 未实现 | 指定配置文件（计划读取 `<xcli_config_path>`）|
 | `--log-level <级别>` | ❌ 未实现 | 设置日志级别（DEBUG/INFO/WARNING/ERROR）|
 
 ### 1.3 环境变量
 
 | 变量 | 状态 | 说明 |
 |------|------|------|
-| `XAVIER_TODO_DIR` | ✅ 已实现 | 覆盖 TODO 根目录（默认 `~/.xavier/TODO`）。主要给测试用 |
+| `XCLI_TODO_DIR` | ✅ 已实现 | 覆盖 TODO 根目录（默认 `<legacy-config-dir>/TODO`）。主要给测试用 |
 
 ### 1.4 示例
 
@@ -42,7 +42,7 @@ x todo --help
 x todo add --help
 
 # 切数据源（测试用）
-XAVIER_TODO_DIR=/tmp/test python x.py todo list
+XCLI_TODO_DIR=/tmp/test python x.py todo list
 ```
 
 ---
@@ -329,7 +329,7 @@ x todo stats
 | `x skill update <名称>` | ❌ 未实现 | 更新技能 |
 | `x skill remove <名称>` | ❌ 未实现 | 卸载技能 |
 
-> **计划位置**：`~/.xavier/skills/`（已存在，是 mavis skills 的存放点；与未来 x-cli skill 集成待定）
+> **计划位置**：`<legacy-skills-dir>/`（已存在，是 mavis skills 的存放点；与未来 x-cli skill 集成待定）
 
 ---
 
@@ -339,7 +339,7 @@ x todo stats
 
 | 子命令 | 状态 | 说明 |
 |--------|------|------|
-| `x system backup` | ❌ 未实现 | 备份 `~/.xavier/` |
+| `x system backup` | ❌ 未实现 | 备份 `<legacy-config-dir>/` |
 | `x system sync` | ❌ 未实现 | 同步到云端（rclone）|
 | `x system health` | ❌ 未实现 | 检查系统健康状态 |
 | `x system log` | ❌ 未实现 | 查看日志 |

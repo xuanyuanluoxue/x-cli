@@ -16,7 +16,7 @@
 ## 路径与不变量
 
 - **存储位置**（v0.4.0+）：x-cli's 独立库（`%LOCALAPPDATA%\x-cli\todo\`）
-- **永不动**：`~/.xavier/TODO/`
+- **永不动**：`<xcli_todo_dir>/`
 - **默认包含归档**（除非显式 `--active-only`）— 搜不到是常见痛苦
 - **不搜 body**（body 太长 + 容易误匹配）
 

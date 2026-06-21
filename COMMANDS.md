@@ -30,7 +30,7 @@
 | `x todo done <id>` | `archive --reason done` 的快捷 | — |
 | `x todo stats` | 统计信息（带图标）| — |
 | `x todo init [--dir <path>]` | 创建独立 TODO 目录（幂等）| — |
-| `x todo import --from <dir>` | 从 xavier 系统单向迁移到 x-cli 库 | `--to <path>` `--dry-run` |
+| `x todo import --from <dir>` | 从 legacy TODO system单向迁移到 x-cli 库 | `--to <path>` `--dry-run` |
 | `x secret list` | 列出所有密钥（**不显示 value**）| — |
 | `x secret get <name>` | 输出 value（默认复制到剪贴板 + 输出 stdout）| `--full` / `--no-clipboard` / `--no-stdout` |
 | `x secret set <name>` | 新增条目 | `--value`（必填）/ `--category` / `--note` |
@@ -42,7 +42,7 @@
 
 **合计 21 个命令**（3 顶层 + 10 todo + 8 secret）+ 3 全局 flag
 
-**存储（全部独立于 xavier 系统）**：
+**存储（全部独立于 legacy TODO system）**：
 
 | 子系统 | 路径（Windows） | 路径（Unix） |
 |---|---|---|
@@ -52,11 +52,11 @@
 | Log | `%LOCALAPPDATA%\x-cli\x.log` | `~/.local/share/x-cli/x.log` |
 
 **环境变量覆盖**（向后兼容）：
-- `XAVIER_TODO_DIR` / `XCLI_SECRETS_DIR` 仍 work（测试 / 用户覆盖）
+- `XCLI_TODO_DIR` / `XCLI_SECRETS_DIR` 仍 work（测试 / 用户覆盖）
 - `XCLI_CONFIG` 覆盖配置文件路径
 - 配置文件里的 `todo_dir` / `secrets_path` 优先级**高于**上面 2 个 env var
 
-**调用方式**：PowerShell 直接 `x todo list`（PATH 已配 `C:\Users\Chatxavier\.local\bin\x.bat` wrapper）
+**调用方式**：PowerShell 直接 `x todo list`（PATH 已配 `C:\Users\Chatx-cli\.local\bin\x.bat` wrapper）
 
 ---
 
@@ -109,7 +109,7 @@
 - 命令名用 kebab-case：x todo list（不缩写）
 - 退出码约定：0 成功 / 1 未知子命令 / 2 参数错 / 3 不存在 / 4 已归档/已存在 / 5 数据完整性
 - 输出格式：成功有 emoji 前缀（✅ ❌ ⏳），表格列 CJK 对齐
-- 配置/存储/日志文件用 stdlib（不引第三方），所有数据**独立于 xavier 系统**
+- 配置/存储/日志文件用 stdlib（不引第三方），所有数据**独立于 legacy TODO system**
 - 跨平台路径用 `core/paths.py:xcli_data_dir()` 统一解析
 
 ---

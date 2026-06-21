@@ -1,7 +1,12 @@
-"""x - Xavier 个人工具集的统一 CLI 入口
+"""x - Personal CLI toolset for task tracking and credential management.
 
-Phase 1 (MVP): 单文件实现，主入口 + x todo 子命令（待实现）。
-Phase 4: 拆出 plugins/ 目录，每个子命令独立文件。
+A small, focused CLI built around two subsystems:
+  * x todo  - personal task tracking (YAML-frontmatter folders)
+  * x secret - local credential store (single JSON file, file mode 600)
+
+Single-file entry point; subcommand handlers are dispatched from a small
+handler dict. See README.md for usage and COMMANDS.md for the canonical
+command list.
 """
 
 from __future__ import annotations
@@ -1057,7 +1062,7 @@ def _todo_init(args: argparse.Namespace) -> int:
     行为：
       - 默认在 :func:`core.paths.xcli_todo_dir()` 处创建 ``任务/`` + ``归档/`` + ``README.md``
       - ``--dir <path>`` 覆盖（仅本次 init）
-      - ``XAVIER_TODO_DIR`` 环境变量也会被尊重（向后兼容）
+      - ``XCLI_TODO_DIR`` 环境变量覆盖默认位置（测试 / 用户自定义）
       - 幂等：已存在则提示，**不**覆盖任何已有内容
       - 退出码：0 成功 / 1 无法创建（权限 / IO 错）/ 2 argparse 拒绝
     """
@@ -1067,7 +1072,7 @@ def _todo_init(args: argparse.Namespace) -> int:
         else None
     )
     if target is None:
-        # Honour XAVIER_TODO_DIR if set (back-compat with tests/users)
+        # Honour XCLI_TODO_DIR (or legacy XAVIER_TODO_DIR via the paths helper)
         from core.paths import xcli_todo_dir
 
         target = xcli_todo_dir()
@@ -1090,11 +1095,11 @@ def _todo_init(args: argparse.Namespace) -> int:
     # locally and we won't clobber their notes.
     if not readme.exists():
         readme.write_text(
-            "# x-cli TODO 数据库\n\n"
-            "> 本目录是 **x-cli 独立**的 TODO 数据库，跟 xavier 系统的 `~/.xavier/TODO/` "
-            "是两个独立的副本。\n>\n"
-            "> 从 xavier 迁过来：`x todo import --from <xavier_todo_dir>`\n"
-            "> （单向只读，**不**会写回 xavier 系统）。\n",
+            "# x-cli TODO store\n\n"
+            "> This is the **x-cli independent** TODO database. "
+            "If you are migrating from another TODO system, point\n"
+            "> ``x todo import --from <other_dir>`` at the source directory. "
+            "Imports are one-way and read-only.\n",
             encoding="utf-8",
         )
 
@@ -1712,9 +1717,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         config.log_level,
     )
 
-    # 把 config 派生的路径灌进环境变量，storage 层继续用 XAVIER_TODO_DIR /
+    # 把 config 派生的路径灌进环境变量，storage 层继续用 XCLI_TODO_DIR /
     # XCLI_SECRETS_DIR 读。setdefault —— 已经 set 的（用户显式 export 的）保留。
-    os.environ.setdefault("XAVIER_TODO_DIR", str(config.todo_dir))
+    os.environ.setdefault("XCLI_TODO_DIR", str(config.todo_dir))
     os.environ.setdefault("XCLI_SECRETS_DIR", str(config.secrets_path))
 
     if not parsed.subcommand:

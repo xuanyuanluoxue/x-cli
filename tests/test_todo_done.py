@@ -16,7 +16,7 @@
 The split lets most tests run even before Subagent A lands, while still
 exercising the CLI wiring once it does.
 
-Style: matches ``test_todo_archive.py`` (uses ``XAVIER_TODO_DIR=tmp_path``
+Style: matches ``test_todo_archive.py`` (uses ``XCLI_TODO_DIR=tmp_path``
 + local ``_write_task`` helper).
 """
 
@@ -43,7 +43,7 @@ from core.storage import TaskStore
 @pytest.fixture
 def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TaskStore:
     """Root the TaskStore at ``tmp_path``; never touches the real TODO dir."""
-    monkeypatch.setenv("XAVIER_TODO_DIR", str(tmp_path))
+    monkeypatch.setenv("XCLI_TODO_DIR", str(tmp_path))
     return TaskStore()
 
 

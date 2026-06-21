@@ -5,7 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "x-cli"
 version = "0.1.0"
-description = "Xavier 个人工具集的统一 CLI 入口"
+description = "Personal CLI toolset for task tracking and credential management"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Xavier" },
+]
 requires-python = ">=3.10"
 dependencies = []
 

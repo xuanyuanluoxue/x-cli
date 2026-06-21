@@ -14,7 +14,7 @@ Each test maps to a scenario in
 
 Plus integration / wiring tests.
 
-All tests use ``XAVIER_TODO_DIR`` pointed at ``tmp_path`` so the real
+All tests use ``XCLI_TODO_DIR`` pointed at ``tmp_path`` so the real
 ``~/.xavier/TODO`` is never modified. Each test cleans up the
 ``tmp_path`` fixture (auto-cleaned by pytest) AND every test that
 ``add``s a task asserts there are no leftover folders — we never
@@ -58,7 +58,7 @@ def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TaskStore:
         if (real_todo / "任务").is_dir()
         else []
     )
-    monkeypatch.setenv("XAVIER_TODO_DIR", str(tmp_path))
+    monkeypatch.setenv("XCLI_TODO_DIR", str(tmp_path))
     yield TaskStore()
 
     # Post-test invariant: real ~/.xavier/TODO/任务 is unchanged.
@@ -502,7 +502,7 @@ def test_real_todo_dir_untouched_after_test(
 
     套件里的每个测试都通过 ``store`` fixture 隔离 tmp_path，本测试
     进一步作为保险：即使前面的测试漏掉了 env var 隔离，store fixture
-    也会清空 XAVIER_TODO_DIR 然后恢复。
+    也会清空 XCLI_TODO_DIR 然后恢复。
     """
     real_todo = Path.home() / ".xavier" / "TODO"
     if not (real_todo / "任务").is_dir():

@@ -16,7 +16,7 @@
 ## 场景 1：首次初始化，目录不存在
 
 **Given**:
-- `XAVIER_TODO_DIR` 未设
+- `XCLI_TODO_DIR` 未设
 - `%LOCALAPPDATA%\x-cli\todo\` 不存在
 
 **When**:
@@ -39,7 +39,7 @@
 ## 场景 2：目录已存在（幂等）
 
 **Given**:
-- `XAVIER_TODO_DIR` 未设
+- `XCLI_TODO_DIR` 未设
 - `%LOCALAPPDATA%\x-cli\todo\任务\` 已存在（来自之前的 `x todo list` 调用）
 
 **When**:
@@ -65,14 +65,14 @@
 - 退出码 0
 - stdout 含 `✅ TODO 目录已创建：D:\my-projects\todo`
 - 在该路径创建 `任务/` + `归档/` + `README.md`
-- 后续 `x todo list`（不设 XAVIER_TODO_DIR）仍读默认路径 — **--dir 只影响本次 init**
+- 后续 `x todo list`（不设 XCLI_TODO_DIR）仍读默认路径 — **--dir 只影响本次 init**
 
 ---
 
 ## 场景 4：环境变量 + init
 
 **Given**:
-- `XAVIER_TODO_DIR=D:\test-todo`
+- `XCLI_TODO_DIR=D:\test-todo`
 
 **When**:
 - 运行 `x todo init`
@@ -116,7 +116,7 @@
 |---|---|
 | 默认路径 | `%LOCALAPPDATA%\x-cli\todo\` (Win) / `~/.local/share/x-cli/todo/` (Unix) |
 | 创建内容 | `任务/` + `归档/` 子目录 + `README.md` 索引 |
-| README.md 内容 | 说明这是 x-cli 独立数据库，跟 `~/.xavier/TODO/` 是两个独立副本（如果用户同时用两边）|
+| README.md 内容 | 说明这是 x-cli 独立数据库，跟 `<xcli_todo_dir>/` 是两个独立副本（如果用户同时用两边）|
 | 幂等 | 是（已存在则提示，不覆盖） |
 | 依赖 | **零**第三方库（只 stdlib `pathlib` + `os`）|
 
@@ -137,7 +137,7 @@
 ### 首次初始化
 ```
 $ x todo init
-✅ TODO 目录已创建：C:\Users\Chatxavier\AppData\Local\x-cli\todo\
+✅ TODO 目录已创建：<xcli_todo_dir>\
    - 任务\
    - 归档\
    - README.md
@@ -148,7 +148,7 @@ $ x todo init
 ### 已存在
 ```
 $ x todo init
-✅ TODO 目录已存在：C:\Users\Chatxavier\AppData\Local\x-cli\todo\
+✅ TODO 目录已存在：<xcli_todo_dir>\
    不需要重复创建。
 ```
 

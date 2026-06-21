@@ -2,7 +2,7 @@
 
 > **对应命令**：`x todo archive <id> [选项]`
 > **命令参考**：[docs/commands.md §2.5](../../commands.md)
-> **数据规范**：[~/.xavier/TODO/00-TODO-SPEC.md §5](../../_TODO-SPEC.md)（v1.3，状态流转）
+> **数据规范**：[../TODO-SPEC.md](../TODO-SPEC.md)
 >
 > **覆盖范围**：
 > - 默认 `reason=done` 归档
@@ -17,7 +17,7 @@
 ## 场景 1：默认 `reason=done` 归档（最常见）
 
 **Given**：
-- 任务 `kemu1` 存在：`~/.xavier/TODO/任务/科目一/TODO.md`
+- 任务 `kemu1` 存在：`<xcli_todo_dir>/任务/科目一/TODO.md`
 - `status=in_progress / priority=high / deadline=2026-08-31`
 - 当前日期：`2026-08-30`
 
@@ -28,7 +28,7 @@
 - 退出码：`0`
 - 输出：`"✅ 任务已归档：科目一模拟考（ID: kemu1，reason=done）"`
 - **物理移动**：`任务/科目一/` → `归档/20260830-科目一/`
-- 新位置：`~/.xavier/TODO/归档/20260830-科目一/TODO.md`
+- 新位置：`<xcli_todo_dir>/归档/20260830-科目一/TODO.md`
 - 新 frontmatter：
   - `status`：archived
   - `reason`：done（默认值）
@@ -94,7 +94,7 @@
 ## 场景 5：任务已归档（重复归档错误）
 
 **Given**：
-- 归档任务 `20260521-xiangjifanmai` 存在，位于 `~/.xavier/TODO/归档/20260521-相机贩卖业务/`
+- 归档任务 `20260521-xiangjifanmai` 存在，位于 `<xcli_todo_dir>/归档/20260521-相机贩卖业务/`
 
 **When**：
 - 运行 `x todo archive 20260521-xiangjifanmai`
@@ -136,7 +136,7 @@
 
 **Then**：
 - 退出码：`0`
-- 归档后 `~/.xavier/TODO/归档/20260621-科目一/TODO.md` **必须保留**：
+- 归档后 `<xcli_todo_dir>/归档/20260621-科目一/TODO.md` **必须保留**：
   - `description: 科目一学时已刷完`
   - `paused_at: 2026-06-13`
   - `pause_reason: 用户表态「不刷题了」`
@@ -147,7 +147,7 @@
 ## 场景 8：归档时更新总索引 TODO.md
 
 **Given**：
-- 仓库总索引 `~/.xavier/TODO/TODO.md` 已存在（v1.1 格式，含 `inventory:` 字段）
+- 仓库总索引 `<xcli_todo_dir>/TODO.md` 已存在（v1.1 格式，含 `inventory:` 字段）
 - 归档前：`pending: 3 / in_progress: 4 / blocked: 1 / waiting: 0 / archived: 22`
 
 **When**：

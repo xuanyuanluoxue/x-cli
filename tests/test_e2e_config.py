@@ -26,7 +26,7 @@ Python 3.14. The tests therefore assume the project-local venv at
 
 Per-test isolation policy:
 
-* ``XAVIER_TODO_DIR`` and ``XCLI_SECRETS_DIR`` are **always** redirected
+* ``XCLI_TODO_DIR`` and ``XCLI_SECRETS_DIR`` are **always** redirected
   to a tmp directory so the test never touches the real TODO / secrets
   store.
 * ``XCLI_CONFIG`` is **always** stripped from the inherited env unless
@@ -88,7 +88,7 @@ def _isolation_env(tmp_path: Path) -> dict[str, str]:
     keys (``env_overrides={**_isolation_env(tmp_path), "XCLI_CONFIG": ...}``).
     """
     return {
-        "XAVIER_TODO_DIR": str(tmp_path / "todo"),
+        "XCLI_TODO_DIR": str(tmp_path / "todo"),
         "XCLI_SECRETS_DIR": str(tmp_path / "secrets.json"),
     }
 
@@ -107,7 +107,7 @@ def _run_x(
     listed in ``env_pops`` and applies ``env_overrides``. Returns
     ``(returncode, stdout, stderr)`` decoded as UTF-8.
 
-    Note: callers are responsible for setting ``XAVIER_TODO_DIR`` and
+    Note: callers are responsible for setting ``XCLI_TODO_DIR`` and
     ``XCLI_SECRETS_DIR`` in ``env_overrides`` (use ``_isolation_env``)
     — this helper does not auto-isolate.
     """

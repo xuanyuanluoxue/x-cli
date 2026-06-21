@@ -15,7 +15,7 @@ Each test maps to a scenario in
 Plus an end-to-end test through ``main()`` to make sure the
 argparse wiring works when invoked exactly as a user would.
 
-All tests use ``XAVIER_TODO_DIR`` pointed at ``tmp_path`` so the
+All tests use ``XCLI_TODO_DIR`` pointed at ``tmp_path`` so the
 real ``~/.xavier/TODO`` is never modified. The implementation
 under test (``x._todo_archive``) reads the env var via
 ``TaskStore()``.
@@ -47,7 +47,7 @@ from x import _todo_archive  # for direct unit tests (Scenario 6, 8 edge cases)
 @pytest.fixture
 def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TaskStore:
     """Root the TaskStore at ``tmp_path``; never touches the real TODO dir."""
-    monkeypatch.setenv("XAVIER_TODO_DIR", str(tmp_path))
+    monkeypatch.setenv("XCLI_TODO_DIR", str(tmp_path))
     return TaskStore()
 
 

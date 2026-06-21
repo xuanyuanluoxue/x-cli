@@ -2,7 +2,7 @@
 
 > **对应命令**：`x todo add <名称> [选项]`
 > **命令参考**：[docs/commands.md §2.3](../../commands.md)
-> **数据规范**：[~/.xavier/TODO/00-TODO-SPEC.md](../../../_TODO-SPEC.md)（v1.3）
+> **数据规范**：[../TODO-SPEC.md](../TODO-SPEC.md)
 > **ID 生成规则**：从任务名生成 kebab-case slug（如"科目一模拟考" → `kemu1-moni-kao`），冲突时自动追加数字后缀
 >
 > **覆盖范围**：
@@ -16,7 +16,7 @@
 ## 场景 1：最简形式（只给名称）
 
 **Given**：
-- 仓库 `~/.xavier/TODO/` 已初始化
+- 仓库 `<xcli_todo_dir>/` 已初始化
 - `任务/` 子目录为空（或无重复名任务）
 - 当前日期：`2026-06-21`
 
@@ -26,7 +26,7 @@
 **Then**：
 - 退出码：`0`
 - 输出：`"✅ 任务已创建：测试任务A（ID: <自动生成的 kebab-case id>）"`
-- 文件系统：创建 `~/.xavier/TODO/任务/测试任务A/TODO.md`
+- 文件系统：创建 `<xcli_todo_dir>/任务/测试任务A/TODO.md`
 - YAML frontmatter：
   - `id`：自动生成（kebab-case + 可选数字后缀）
   - `name`：测试任务A
@@ -42,7 +42,7 @@
 ## 场景 2：完整参数（--priority + --deadline + --tags）
 
 **Given**：
-- 仓库 `~/.xavier/TODO/` 已初始化
+- 仓库 `<xcli_todo_dir>/` 已初始化
 - 当前日期：`2026-06-21`
 
 **When**：
@@ -51,7 +51,7 @@
 **Then**：
 - 退出码：`0`
 - 输出：`"✅ 任务已创建：科目一模拟考（ID: kemu1-moni-kao）"`
-- 文件系统：创建 `~/.xavier/TODO/任务/科目一模拟考/TODO.md`
+- 文件系统：创建 `<xcli_todo_dir>/任务/科目一模拟考/TODO.md`
 - YAML frontmatter：
   - `id`：kemu1-moni-kao
   - `name`：科目一模拟考
@@ -68,7 +68,7 @@
 ## 场景 3：重复任务名（错误路径）
 
 **Given**：
-- 仓库已存在任务 `~/.xavier/TODO/任务/科目一/TODO.md`（id=`kemu1`）
+- 仓库已存在任务 `<xcli_todo_dir>/任务/科目一/TODO.md`（id=`kemu1`）
 
 **When**：
 - 运行 `x todo add "科目一"`
@@ -84,7 +84,7 @@
 ## 场景 4：缺必填参数 `名称`（错误路径）
 
 **Given**：
-- 仓库 `~/.xavier/TODO/` 已初始化
+- 仓库 `<xcli_todo_dir>/` 已初始化
 
 **When**：
 - 运行 `x todo add`（不带任何位置参数）
@@ -99,7 +99,7 @@
 ## 场景 5：非法 priority 值（错误路径）
 
 **Given**：
-- 仓库 `~/.xavier/TODO/` 已初始化
+- 仓库 `<xcli_todo_dir>/` 已初始化
 
 **When**：
 - 运行 `x todo add "新任务" --priority urgent`
@@ -114,7 +114,7 @@
 ## 场景 6：日期格式错误（错误路径）
 
 **Given**：
-- 仓库 `~/.xavier/TODO/` 已初始化
+- 仓库 `<xcli_todo_dir>/` 已初始化
 
 **When**：
 - 运行 `x todo add "新任务" --deadline 2026/08/31`
@@ -129,14 +129,14 @@
 ## 场景 7：未指定 `--tags` 时 frontmatter 不写入 tags 字段
 
 **Given**：
-- 仓库 `~/.xavier/TODO/` 已初始化
+- 仓库 `<xcli_todo_dir>/` 已初始化
 
 **When**：
 - 运行 `x todo add "无标签任务"`
 
 **Then**：
 - 退出码：`0`
-- 创建 `~/.xavier/TODO/任务/无标签任务/TODO.md`
+- 创建 `<xcli_todo_dir>/任务/无标签任务/TODO.md`
 - YAML frontmatter 中 **不存在** `tags` 字段（不是空数组，是完全省略）
 
 ---
@@ -144,7 +144,7 @@
 ## 场景 8：未知 frontmatter 字段必须保留（兼容性）
 
 **Given**：
-- 仓库 `~/.xavier/TODO/` 已初始化
+- 仓库 `<xcli_todo_dir>/` 已初始化
 - 用户在任务文件夹里手动加了一些 x-cli 不识别的字段（如 `description: "..."`、`paused_at: 2026-06-13`）
 
 **When**：

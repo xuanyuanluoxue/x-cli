@@ -2,7 +2,7 @@
 
 对应 BDD: ``docs/behaviors/todo-restore-behavior.md`` (10 场景).
 
-Style: matches ``test_storage.py`` — uses ``XAVIER_TODO_DIR=tmp_path`` to
+Style: matches ``test_storage.py`` — uses ``XCLI_TODO_DIR=tmp_path`` to
 never touch the real ``~/.xavier/TODO`` and a local ``_write_task``
 helper for fixture construction.
 
@@ -38,7 +38,7 @@ from core.storage import TaskNotFoundError, TaskStore
 @pytest.fixture
 def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TaskStore:
     """Root the TaskStore at ``tmp_path``; never touches the real TODO dir."""
-    monkeypatch.setenv("XAVIER_TODO_DIR", str(tmp_path))
+    monkeypatch.setenv("XCLI_TODO_DIR", str(tmp_path))
     return TaskStore()
 
 

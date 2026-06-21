@@ -1,7 +1,7 @@
 # x secret 行为规格
 
 > **目标读者**: 接续开发的 AI agent
-> **范围**: `x secret <子命令>` 命令族，独立于 `~/.xavier/密钥/`，自管 JSON 数据库
+> **范围**: `x secret <子命令>` 命令族，独立于 `<legacy-credentials-dir>/`，自管 JSON 数据库
 > **对应测试**: `tests/test_secret.py`（单元）+ `tests/test_e2e_secret.py`（子进程）
 > **状态**: 📋 P0 规划中（2026-06-21）
 

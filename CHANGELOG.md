@@ -29,7 +29,7 @@
 ## [0.3.0] - 2026-06-21 — x secret 子系统完成
 
 ### Added
-- **`x secret` 子命令族**（独立 JSON DB，8 个子命令：list/get/set/update/rm/search/import/export）：独立于 `~/.xavier/密钥/`，自管数据
+- **`x secret` 子命令族**（独立 JSON DB，8 个子命令：list/get/set/update/rm/search/import/export）：独立于 `<legacy-credentials-dir>/`，自管数据
   - 存储：`%LOCALAPPDATA%\x-cli\secrets.json`（Windows）/ `~/.local/share/x-cli/secrets.json`（Unix），文件权限 600
   - 覆盖：环境变量 `XCLI_SECRETS_DIR`
   - BDD 规格：[docs/behaviors/secret-behavior.md](docs/behaviors/secret-behavior.md)（17 场景）
@@ -57,7 +57,7 @@
 ## [0.2.0] - 2026-06-21 — MVP 完成
 
 ### Added
-- **E2E 子进程测试**（`tests/test_e2e_todo.py`，22 用例）：用 `subprocess.run` 真正启动 `x.exe`，覆盖 `pyproject.toml` 脚本入口 + `XAVIER_TODO_DIR` 环境变量路由
+- **E2E 子进程测试**（`tests/test_e2e_todo.py`，22 用例）：用 `subprocess.run` 真正启动 `x.exe`，覆盖 `pyproject.toml` 脚本入口 + `XCLI_TODO_DIR` 环境变量路由
 - **E2E 行为规格**（`docs/behaviors/e2e-cli-behavior.md`，21 场景）：从 PowerShell 真实调用视角描述所有 todo action
 - **venv 强制要求**：README/AGENTS.md 文档化 venv 是必须（系统 Python 3.14.2 被 `hydra-core` 拉入的 `antlr4` 污染）
 - **CJK 对齐 + 状态/优先级图标**：`x todo list` 和 `x todo stats` 现在用 `_display_width` / `_pad` CJK 感知的列宽，附 `⏳`/`▶`/`⏸`/`⌛`/`✅`/`🚫`/`⏰`/`❌` 状态图标和 `🔥`/`⚡`/`🐢` 优先级图标
@@ -66,7 +66,7 @@
 ### Changed
 - 测试套件从 240 / 91% 覆盖 → 262 / 92% 覆盖
 - README 快速开始改为 venv + pip install -e 工作流
-- `x secret` 使用独立存储（`%LOCALAPPDATA%\x-cli\secrets.json`），不与 xavier 系统密钥库耦合
+- `x secret` 使用独立存储（`%LOCALAPPDATA%\x-cli\secrets.json`），不与 legacy TODO system密钥库耦合
 
 ---
 
@@ -99,12 +99,12 @@
   - `test_models.py` / `test_parser.py` / `test_storage.py`（核心库）
   - `test_x.py`（主入口分发）
   - `test_todo_add.py` / `test_todo_list.py` / `test_todo_update.py` / `test_todo_archive.py` / `test_todo_stats.py`（CLI 集成）
-- **环境变量**：`XAVIER_TODO_DIR` 覆盖 TODO 根目录（测试用）
+- **环境变量**：`XCLI_TODO_DIR` 覆盖 TODO 根目录（测试用）
 - **退出码约定**：0/1/2/3/4/5 体系（详见 `docs/commands.md §5`）
 - **占位包**：`plugins/__init__.py`（Phase 4 拆插件用）
 
 ### Compatibility / 兼容性
-- ✅ 与现有 `~/.xavier/TODO/` 数据 **byte-identical round-trip**（SHA-256 验证）
+- ✅ 与现有 `<xcli_todo_dir>/` 数据 **byte-identical round-trip**（SHA-256 验证）
 - ✅ 未知 frontmatter 字段（如 `paused_at` / `description` / `pause_reason` / `subtasks`）原样保留
 - ✅ 与 `regen-index.ps1` 不冲突（`x todo archive/stats` 自动维护 TODO.md 总索引）
 
@@ -113,8 +113,8 @@
 - `x todo init`（初始化 TODO 目录）
 - `x todo restore`（从归档还原）
 - `x skill` / `x system` 插件
-- `~/.xavier/config.yaml` 配置加载
-- `~/.xavier/logs/x-cli.log` 日志系统
+- `<xcli_config_path>` 配置加载
+- `<xcli_data_dir>/x.log` 日志系统
 - PyInstaller 打包（`x.exe` ~10MB）
 - importlib 动态加载插件
 - Tab 补全（argcomplete）
@@ -128,8 +128,8 @@
 ## [0.1.0] - 2026-06-21 — 项目骨架
 
 ### Added
-- 项目启动（替代 `xavier-todo`）
-- 定义统一入口 `x`（Xavier CLI 总控）
+- 项目启动（替代 `x-cli (project)`）
+- 定义统一入口 `x`（x-cli 总控）
 - 定义技术栈（Python + argparse + stdlib-only）
 - 项目目录结构定义
 - AGENTS.md / README.md / docs/architecture.md / docs/commands.md 模板
@@ -141,6 +141,6 @@
 
 ---
 
-[Unreleased]: https://github.com/xavier/x-cli/compare/v0.2.0...HEAD
-[0.2.0]: https://github.com/xavier/x-cli/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/xavier/x-cli/releases/tag/v0.1.0
+[Unreleased]: https://github.com/x-cli/x-cli/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/x-cli/x-cli/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/x-cli/x-cli/releases/tag/v0.1.0

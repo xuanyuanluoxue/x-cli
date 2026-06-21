@@ -24,6 +24,16 @@ import os
 import sys
 from pathlib import Path
 
+# Legacy alias for XCLI_TODO_DIR — used by older test fixtures and by
+# users who exported this before v0.5. We read it as a fallback so
+# existing setups keep working, but emit a one-time deprecation
+# warning to stderr pointing at the new name. The XAVIER_ prefix
+# refers to a legacy system name and will be removed in a future
+# release.
+_LEGACY_TODO_DIR_ENV = "XAVIER_TODO_DIR"
+_TODO_DIR_ENV = "XCLI_TODO_DIR"
+_LEGACY_TODO_DIR_WARNED = False
+
 
 # ============================================================
 #  Public API
@@ -125,15 +135,18 @@ def xcli_secrets_path() -> Path:
 
 
 def xcli_todo_dir() -> Path:
-    """Return the x-cli TODO root (independent of xavier system).
+    """Return the x-cli TODO root.
 
     Resolution order:
 
-    1. If :envvar:`XAVIER_TODO_DIR` is set, return it as-is. The
-       variable name is historical (the original default pointed at
-       ``~/.xavier/TODO/``) but x-cli treats it as a generic override.
-       Tests use this to redirect to a ``tmp_path``.
-    2. Otherwise return the platform-specific default under
+    1. If :envvar:`XCLI_TODO_DIR` is set, return it as-is. Tests use
+       this to redirect to a ``tmp_path``; users can also use it to
+       point at a custom location.
+    2. Else if :envvar:`XAVIER_TODO_DIR` is set, return it as-is and
+       emit a one-time deprecation warning to stderr (the name is
+       historical; it predates the v0.5 rename to :envvar:`XCLI_TODO_DIR`).
+       ``XAVIER_TODO_DIR`` will be removed in a future release.
+    3. Otherwise return the platform-specific default under
        :func:`xcli_data_dir`:
 
        * Windows: ``<data_dir>\\todo\\`` (e.g.
@@ -141,14 +154,16 @@ def xcli_todo_dir() -> Path:
        * Unix:    ``<data_dir>/todo/`` (e.g.
          ``~/.local/share/x-cli/todo``)
 
-    The parent directory is created on every call (the task/ and
-    归档/ subdirectories are created lazily by the caller — typically
-    :class:`core.storage.TaskStore` or the ``x todo init`` handler).
+    The parent directory is created on every call (the ``任务/`` and
+    ``归档/`` sub-directories are created lazily by the caller —
+    typically :class:`core.storage.TaskStore` or the
+    ``x todo init`` handler).
 
-    **Hard invariant**: this function NEVER returns
-    ``~/.xavier/TODO/`` (or any sub-path of it). The only bridge to
-    that directory is the explicit ``x todo import --from <dir>``
-    command, which is one-way and read-only.
+    **Hard invariant**: this function NEVER assumes a specific
+    on-disk location such as ``~/.xavier/TODO/`` — the only bridge
+    to a different TODO layout is the explicit
+    ``x todo import --from <dir>`` command, which is one-way and
+    read-only.
 
     Returns
     -------
@@ -157,15 +172,32 @@ def xcli_todo_dir() -> Path:
         guaranteed to exist after this call returns; sub-directories
         are not.
     """
-    override = os.environ.get("XAVIER_TODO_DIR")
+    override = os.environ.get(_TODO_DIR_ENV)
+    if not override:
+        legacy = os.environ.get(_LEGACY_TODO_DIR_ENV)
+        if legacy:
+            _warn_legacy_todo_dir()
+            override = legacy
     if override:
-        # Honour the legacy override (tests, explicit user override).
-        # We do NOT validate that the path lives outside ~/.xavier — if
-        # the user explicitly sets XAVIER_TODO_DIR=~/.xavier/TODO they
-        # are opting in to sharing the xavier system; x-cli will not
-        # silently redirect.
         return Path(override)
     return xcli_data_dir() / "todo"
+
+
+def _warn_legacy_todo_dir() -> None:
+    """Emit a one-time stderr warning about the legacy env-var name.
+
+    The deprecation flag is module-level so a single process running
+    many CLI invocations warns exactly once. Resets on process restart.
+    """
+    global _LEGACY_TODO_DIR_WARNED
+    if _LEGACY_TODO_DIR_WARNED:
+        return
+    _LEGACY_TODO_DIR_WARNED = True
+    print(
+        f"\u26a0\ufe0f  {_LEGACY_TODO_DIR_ENV} is deprecated; use {_TODO_DIR_ENV} instead. "
+        f"{_LEGACY_TODO_DIR_ENV} will be removed in a future release.",
+        file=sys.stderr,
+    )
 
 
 # ============================================================

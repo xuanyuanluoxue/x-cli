@@ -7,7 +7,7 @@ Each test maps to a scenario in
 filter logic, the table renderer, the empty-store branch, and the
 integration through :func:`x.main`.
 
-All tests use ``tmp_path`` (via :envvar:`XAVIER_TODO_DIR`) so the real
+All tests use ``tmp_path`` (via :envvar:`XCLI_TODO_DIR`) so the real
 ``~/.xavier/TODO`` is never touched.
 """
 
@@ -33,13 +33,13 @@ from x import _todo_list, main
 @pytest.fixture
 def store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TaskStore:
     """Return a TaskStore rooted at ``tmp_path`` (real ~/.xavier/TODO is safe)."""
-    monkeypatch.setenv("XAVIER_TODO_DIR", str(tmp_path))
+    monkeypatch.setenv("XCLI_TODO_DIR", str(tmp_path))
     return TaskStore()  # picks up the env var
 
 
 def _run_list(args: list[str], monkeypatch, tmp_path) -> tuple[int, str, str]:
     """Invoke ``main([\"todo\", \"list\", *args])`` and return ``(code, stdout, stderr)``."""
-    monkeypatch.setenv("XAVIER_TODO_DIR", str(tmp_path))
+    monkeypatch.setenv("XCLI_TODO_DIR", str(tmp_path))
     out, err = io.StringIO(), io.StringIO()
     with redirect_stdout(out), redirect_stderr(err):
         code = main(["todo", "list", *args])
@@ -78,13 +78,13 @@ def _run_list_handler(
 
     out, err = io.StringIO(), io.StringIO()
     # Override the env var so store reads from tmp_path
-    os.environ["XAVIER_TODO_DIR"] = str(store.todo_dir)
+    os.environ["XCLI_TODO_DIR"] = str(store.todo_dir)
     try:
         with redirect_stdout(out), redirect_stderr(err):
             code = _todo_list(ns)
     finally:
         # Restore to avoid leaking into other tests; fixtures re-set it anyway
-        os.environ.pop("XAVIER_TODO_DIR", None)
+        os.environ.pop("XCLI_TODO_DIR", None)
     return code, out.getvalue(), err.getvalue()
 
 
@@ -429,13 +429,13 @@ def test_main_dispatches_todo_list(monkeypatch, tmp_path):
 def test_main_dispatches_todo_list_with_filters(monkeypatch, tmp_path):
     """`x todo list --status in_progress` 通过主入口可正常运行。"""
     # 真实创建一个任务
-    os.environ["XAVIER_TODO_DIR"] = str(tmp_path)
+    os.environ["XCLI_TODO_DIR"] = str(tmp_path)
     try:
         store = TaskStore()
         make_task(store, "kemu1", status="pending", priority="high")
         make_task(store, "zizhushixi", status="in_progress", priority="medium")
     finally:
-        os.environ.pop("XAVIER_TODO_DIR", None)
+        os.environ.pop("XCLI_TODO_DIR", None)
 
     code, out, err = _run_list(["--status", "in_progress"], monkeypatch, tmp_path)
     assert code == 0
