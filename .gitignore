@@ -40,6 +40,12 @@ Thumbs.db
 *.log
 .env
 .config.yaml
+config.yaml
+secrets.json
+secrets-backup-*.json
+todo/
+x.log
+x-*.log
 .pytest_cache/
 .coverage
 htmlcov/
