@@ -117,13 +117,30 @@
 
 ---
 
-### P1 — 这周做（配置 / 环境）
+### P1 — 这周做（🚧 v0.4.x — 配置 + 日志基础设施）
 
-- [ ] `x --config <路径>` — 加载 YAML 配置（路径 / 日志级别 / TODO 目录覆盖）
-  - 配置文件 schema：`{todo_dir: ..., log_level: DEBUG/INFO/WARNING/ERROR}`
-  - 环境变量 `XAVIER_CONFIG` 作为隐式默认值
-- [ ] `x --log-level <级别>` — 全局日志级别（DEBUG / INFO / WARNING / ERROR）
-  - 输出到 `~/.xavier/logs/x.log`（按日期滚动）
+- [ ] `x --config <路径>` — 加载 YAML 配置（覆盖默认 todo_dir / secrets_path / log_level / log_path）
+  - 默认配置路径：`xcli_data_dir()/config.yaml`（独立于 xavier）
+  - 环境变量 `XCLI_CONFIG` 覆盖（最高优先级）
+  - 配置文件不存在时用硬编码默认（**不**报错）
+  - 显式 --config 但路径不存在 → 报错（fail fast）
+  - YAML 解析失败 → 退出码 5
+  - 配置文件 schema：`{todo_dir, secrets_path, log_level, log_path}`（手写 parser，**不**引 PyYAML）
+  - 退出码：0 成功 / 2 参数错 / 5 配置错
+  - BDD 规格：[docs/behaviors/config-behavior.md](docs/behaviors/config-behavior.md)
+- [ ] `x --log-level <级别>` — 全局日志级别（DEBUG / INFO / WARNING / ERROR / CRITICAL，大小写不敏感）
+  - 优先于配置文件中的 `log_level`（CLI 临时覆盖）
+  - 双写：stderr + `<xcli_data_dir>/x.log`（v0.4.x 不做 rotation，单文件 append）
+  - 用 stdlib `logging`，**不**引第三方
+  - BDD 规格：[docs/behaviors/config-behavior.md](docs/behaviors/config-behavior.md)
+- [ ] `x --config init` — 一键写默认配置到 `xcli_data_dir()/config.yaml`
+  - 已存在的配置不覆盖（除非 `--force`）
+  - 输出带注释的 YAML 模板（解释每个字段）
+
+> **向后兼容保证**：
+> - `XAVIER_TODO_DIR` / `XCLI_SECRETS_DIR` 仍 work（测试 / 用户覆盖）
+> - 配置文件里的 `todo_dir` / `secrets_path` 优先级**高于** 上面 2 个 env var（更明确的用户意图）
+> - 旧 CLI 调用（`x todo list` 无 flag）行为零变化
 
 ### P2 — 以后做（可选功能）
 
