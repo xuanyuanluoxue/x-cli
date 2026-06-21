@@ -60,6 +60,46 @@ def xcli_data_dir() -> Path:
     return _ensure_dir(Path.home() / ".local" / "share" / "x-cli")
 
 
+def xcli_config_path() -> Path:
+    """Return the path to the x-cli YAML config file.
+
+    The default lives under :func:`xcli_data_dir` so it follows the
+    platform conventions (``%LOCALAPPDATA%\\x-cli\\config.yaml`` on
+    Windows, ``$XDG_DATA_HOME/x-cli/config.yaml`` on Unix). The
+    :envvar:`XCLI_CONFIG` environment variable overrides this — that
+    resolution happens in :mod:`core.config`, not here, because the
+    loader also has to decide what to do when the override points at a
+    missing file.
+
+    This function does **not** create the file. The
+    :class:`core.config.AppConfig.default` factory uses this as the
+    default ``log_path`` neighbour; the ``x --config init`` handler is
+    responsible for materialising the file.
+
+    Returns
+    -------
+    Path
+        Absolute path to ``<xcli_data_dir()>/config.yaml``.
+    """
+    return xcli_data_dir() / "config.yaml"
+
+
+def xcli_log_path() -> Path:
+    """Return the default path for the x-cli log file.
+
+    Lives next to :func:`xcli_config_path` under the data directory
+    (so a single ``%LOCALAPPDATA%\\x-cli`` tree holds all per-user
+    state). Setting ``log_path: null`` in the config disables file
+    output entirely — handled in :mod:`core.logging`, not here.
+
+    Returns
+    -------
+    Path
+        Absolute path to ``<xcli_data_dir()>/x.log``.
+    """
+    return xcli_data_dir() / "x.log"
+
+
 def xcli_secrets_path() -> Path:
     """Return the full path to the secrets JSON file.
 
