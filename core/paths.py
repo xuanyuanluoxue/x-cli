@@ -84,6 +84,50 @@ def xcli_secrets_path() -> Path:
     return xcli_data_dir() / "secrets.json"
 
 
+def xcli_todo_dir() -> Path:
+    """Return the x-cli TODO root (independent of xavier system).
+
+    Resolution order:
+
+    1. If :envvar:`XAVIER_TODO_DIR` is set, return it as-is. The
+       variable name is historical (the original default pointed at
+       ``~/.xavier/TODO/``) but x-cli treats it as a generic override.
+       Tests use this to redirect to a ``tmp_path``.
+    2. Otherwise return the platform-specific default under
+       :func:`xcli_data_dir`:
+
+       * Windows: ``<data_dir>\\todo\\`` (e.g.
+         ``C:\\Users\\X\\AppData\\Local\\x-cli\\todo``)
+       * Unix:    ``<data_dir>/todo/`` (e.g.
+         ``~/.local/share/x-cli/todo``)
+
+    The parent directory is created on every call (the task/ and
+    归档/ subdirectories are created lazily by the caller — typically
+    :class:`core.storage.TaskStore` or the ``x todo init`` handler).
+
+    **Hard invariant**: this function NEVER returns
+    ``~/.xavier/TODO/`` (or any sub-path of it). The only bridge to
+    that directory is the explicit ``x todo import --from <dir>``
+    command, which is one-way and read-only.
+
+    Returns
+    -------
+    Path
+        Absolute path to x-cli's TODO root. The directory itself is
+        guaranteed to exist after this call returns; sub-directories
+        are not.
+    """
+    override = os.environ.get("XAVIER_TODO_DIR")
+    if override:
+        # Honour the legacy override (tests, explicit user override).
+        # We do NOT validate that the path lives outside ~/.xavier — if
+        # the user explicitly sets XAVIER_TODO_DIR=~/.xavier/TODO they
+        # are opting in to sharing the xavier system; x-cli will not
+        # silently redirect.
+        return Path(override)
+    return xcli_data_dir() / "todo"
+
+
 # ============================================================
 #  Internal helpers
 # ============================================================

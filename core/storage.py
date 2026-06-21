@@ -5,15 +5,22 @@ writing tasks on disk. It deliberately knows nothing about the CLI —
 plugins call into this layer to list, add, update, and archive
 tasks, and to compute statistics.
 
-Path layout (per ``~/.xavier/TODO/00-TODO-SPEC.md`` §2)::
+Path layout (mirrors ``~/.xavier/TODO/00-TODO-SPEC.md`` §2)::
 
     <todo_dir>/
     ├── 任务/<name>/TODO.md        # active tasks
     └── 归档/<YYYYMMDD>-<name>/TODO.md   # archived tasks
 
+**Storage location** (v0.4.0+): x-cli's TODO DB is **independent**
+from the xavier system — it lives under :func:`core.paths.xcli_todo_dir`
+(``%LOCALAPPDATA%\\x-cli\\todo\\`` on Windows, ``~/.local/share/x-cli/todo/``
+on Unix). The :envvar:`XAVIER_TODO_DIR` env var is preserved as a
+back-compat override (used by tests and by users who explicitly want
+to point at a different location — including the legacy xavier path).
+
 The store is constructed with no arguments for production use; tests
-pass a ``tmp_path`` via the :envvar:`XAVIER_TODO_DIR` environment
-variable so no real ``~/.xavier/TODO`` is ever touched.
+pass a ``tmp_path`` via :envvar:`XAVIER_TODO_DIR` so the real x-cli's
+TODO directory is never touched.
 """
 
 from __future__ import annotations
@@ -26,6 +33,7 @@ from typing import Any
 
 from core.models import ArchiveReason, Priority, Task, TaskStatus
 from core.parser import parse_frontmatter
+from core.paths import xcli_todo_dir
 
 
 # ============================================================
@@ -34,11 +42,18 @@ from core.parser import parse_frontmatter
 
 
 def _default_todo_dir() -> Path:
-    """Resolve the TODO root, honouring the :envvar:`XAVIER_TODO_DIR` override."""
+    """Resolve the TODO root.
+
+    Honours :envvar:`XAVIER_TODO_DIR` (legacy compat — tests, user
+    override). Defaults to :func:`core.paths.xcli_todo_dir`, which
+    returns x-cli's platform-specific data directory. **Never** returns
+    ``~/.xavier/TODO`` (use ``x todo import --from <path>`` to migrate
+    from the xavier system).
+    """
     override = os.environ.get("XAVIER_TODO_DIR")
     if override:
         return Path(override)
-    return Path("~/.xavier/TODO").expanduser()
+    return xcli_todo_dir()
 
 
 # ============================================================

@@ -84,7 +84,15 @@ def _pad(s: str, width: int) -> str:
 #  x todo 命令实现（MVP 阶段 inline 在主入口）
 # ============================================================
 
-TODO_ACTIONS: tuple[str, ...] = ("list", "add", "update", "archive", "stats")
+TODO_ACTIONS: tuple[str, ...] = (
+    "list",
+    "add",
+    "update",
+    "archive",
+    "stats",
+    "init",     # v0.4.0 — bootstrap x-cli's independent TODO dir
+    "import",   # v0.4.0 — one-way migration from xavier system
+)
 
 
 def _todo_register(parser: argparse.ArgumentParser) -> None:
@@ -167,6 +175,39 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
             )
         elif name == "stats":
             sp = sub.add_parser(name, help="📊 统计信息")
+        elif name == "init":
+            # v0.4.0 — 一键创建 x-cli's 独立 TODO 目录（任务/ + 归档/ + README.md）
+            sp = sub.add_parser(
+                name,
+                help="创建 x-cli's 独立 TODO 目录（幂等）",
+            )
+            sp.add_argument(
+                "--dir",
+                dest="init_dir",
+                help="自定义目标路径（默认走 xcli_todo_dir 解析）",
+            )
+        elif name == "import":
+            # v0.4.0 — 单向迁移 xavier 系统的 TODO 到 x-cli's 独立库
+            sp = sub.add_parser(
+                name,
+                help="单向迁移（不写回源；重复跳过）",
+            )
+            sp.add_argument(
+                "--from",
+                dest="src_dir",
+                required=True,
+                help="源目录（xavier 系统的 TODO 根，含 任务/ + 归档/）",
+            )
+            sp.add_argument(
+                "--to",
+                dest="dst_dir",
+                help="目标目录（默认 xcli_todo_dir()）",
+            )
+            sp.add_argument(
+                "--dry-run",
+                action="store_true",
+                help="只读源 + 只报告，不实际写入",
+            )
         else:
             sp = sub.add_parser(name, help=f"{name} 命令")
 
@@ -290,6 +331,14 @@ def _todo_run(args: Sequence[str]) -> int:
     # x todo add — Phase 1 已实现（action-add task）
     if parsed.todo_action == "add":
         return _todo_add(parsed)
+
+    # x todo init — v0.4.0 新增（独立目录引导）
+    if parsed.todo_action == "init":
+        return _todo_init(parsed)
+
+    # x todo import — v0.4.0 新增（从 xavier 系统单向迁移）
+    if parsed.todo_action == "import":
+        return _todo_import(parsed)
 
     return _todo_not_implemented(parsed.todo_action)
 
@@ -763,6 +812,169 @@ def _todo_stats(args: Sequence[str]) -> int:
             )
         return 5
 
+    return 0
+
+
+def _todo_init(args: argparse.Namespace) -> int:
+    """``x todo init [--dir <path>]`` — bootstrap x-cli's independent TODO dir.
+
+    对应 BDD：[docs/behaviors/todo-init-behavior.md](../docs/behaviors/todo-init-behavior.md)
+    对应 storage：[docs/behaviors/todo-storage-behavior.md](../docs/behaviors/todo-storage-behavior.md)
+
+    行为：
+      - 默认在 :func:`core.paths.xcli_todo_dir()` 处创建 ``任务/`` + ``归档/`` + ``README.md``
+      - ``--dir <path>`` 覆盖（仅本次 init）
+      - ``XAVIER_TODO_DIR`` 环境变量也会被尊重（向后兼容）
+      - 幂等：已存在则提示，**不**覆盖任何已有内容
+      - 退出码：0 成功 / 1 无法创建（权限 / IO 错）/ 2 argparse 拒绝
+    """
+    target: Path = (
+        Path(args.init_dir).expanduser()
+        if args.init_dir
+        else None
+    )
+    if target is None:
+        # Honour XAVIER_TODO_DIR if set (back-compat with tests/users)
+        from core.paths import xcli_todo_dir
+
+        target = xcli_todo_dir()
+
+    active = target / "任务"
+    archive = target / "归档"
+    readme = target / "README.md"
+
+    try:
+        active.mkdir(parents=True, exist_ok=True)
+        archive.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(
+            f"❌ 无法创建目录 {target!r}：{exc}",
+            file=sys.stderr,
+        )
+        return 1
+
+    # Idempotent README: only write if missing so the user can edit it
+    # locally and we won't clobber their notes.
+    if not readme.exists():
+        readme.write_text(
+            "# x-cli TODO 数据库\n\n"
+            "> 本目录是 **x-cli 独立**的 TODO 数据库，跟 xavier 系统的 `~/.xavier/TODO/` "
+            "是两个独立的副本。\n>\n"
+            "> 从 xavier 迁过来：`x todo import --from <xavier_todo_dir>`\n"
+            "> （单向只读，**不**会写回 xavier 系统）。\n",
+            encoding="utf-8",
+        )
+
+    if any([args.init_dir]):
+        # ``--dir`` was explicit: always show "已创建" (intent: bootstrap
+        # a fresh location). Otherwise show "已存在" if it was already
+        # there.
+        verb = "已创建"
+    else:
+        verb = "已创建" if not (target / "README.md").read_text(encoding="utf-8").startswith(
+            "# x-cli TODO 数据库"
+        ) else "已存在"
+
+    print(f"✅ TODO 目录{verb}：{target}")
+    print("   - 任务\\")
+    print("   - 归档\\")
+    print("   - README.md")
+    print()
+    print("💡 试用：x todo add \"我的第一个任务\"")
+    return 0
+
+
+def _todo_import(args: argparse.Namespace) -> int:
+    """``x todo import --from <src> [--to <dst>] [--dry-run]`` — one-way migration.
+
+    对应 BDD：[docs/behaviors/todo-import-behavior.md](../docs/behaviors/todo-import-behavior.md)
+
+    行为：
+      - 读源目录的 ``任务/`` + ``归档/`` 子目录
+      - 解析每个 ``<name>/TODO.md``（含 YAML frontmatter）
+      - 复制到目标目录（默认 :func:`core.paths.xcli_todo_dir()`）
+      - **不**写回源；**不**删除源文件
+      - 重复（同 name 已存在）跳过，不覆盖
+      - 单个文件解析失败不阻塞其他
+      - 退出码：0 成功 / 1 源目录不存在 / 2 argparse 拒绝
+    """
+    from core.paths import xcli_todo_dir
+
+    src = Path(args.src_dir).expanduser().resolve()
+    dst = (
+        Path(args.dst_dir).expanduser().resolve()
+        if args.dst_dir
+        else xcli_todo_dir()
+    )
+
+    if not src.is_dir():
+        print(f"❌ 源目录不存在：{src}", file=sys.stderr)
+        return 1
+
+    if not args.dry_run:
+        # Ensure destination structure exists (mkdir 任务/ + 归档/)
+        (dst / "任务").mkdir(parents=True, exist_ok=True)
+        (dst / "归档").mkdir(parents=True, exist_ok=True)
+
+    imported = 0
+    skipped_dup = 0
+    skipped_yaml = 0
+    for area, target_area in (("任务", dst / "任务"), ("归档", dst / "归档")):
+        src_area = src / area
+        if not src_area.is_dir():
+            continue
+        for task_dir in sorted(src_area.iterdir()):
+            if not task_dir.is_dir():
+                continue
+            todo_md = task_dir / "TODO.md"
+            if not todo_md.is_file():
+                continue
+            name = task_dir.name
+            if (target_area / name).is_dir() and not args.dry_run:
+                # Already exists at destination — skip (don't overwrite)
+                skipped_dup += 1
+                continue
+            try:
+                text = todo_md.read_text(encoding="utf-8")
+                metadata, body = parse_frontmatter(text)
+            except (ValueError, OSError) as exc:
+                print(
+                    f"⚠️ 跳过 {name!r}（解析失败）：{exc}",
+                    file=sys.stderr,
+                )
+                skipped_yaml += 1
+                continue
+            if args.dry_run:
+                imported += 1  # would have imported
+                continue
+            # Materialise at destination: copy the source directory verbatim
+            # (frontmatter + body preserved by round-tripping through Task model).
+            try:
+                task = Task.from_frontmatter(metadata, body=body)
+            except Exception as exc:  # noqa: BLE001
+                print(
+                    f"⚠️ 跳过 {name!r}（Task 模型构造失败）：{exc}",
+                    file=sys.stderr,
+                )
+                skipped_yaml += 1
+                continue
+            task.folder = f"{target_area.name}/{name}"
+            (target_area / name).mkdir(parents=True, exist_ok=True)
+            (target_area / name / "TODO.md").write_text(
+                task.to_markdown(), encoding="utf-8"
+            )
+            imported += 1
+
+    if args.dry_run:
+        print(f"🔍 [dry-run] 将导入 {imported} 个任务（{skipped_dup} 个重复，{skipped_yaml} 个解析失败）")
+    else:
+        print(f"📥 迁移完成：导入 {imported} 个任务")
+        if skipped_dup:
+            print(f"   - 跳过 {skipped_dup} 个（重复）")
+        if skipped_yaml:
+            print(f"   - 跳过 {skipped_yaml} 个（解析失败）")
+        print()
+        print(f"💡 试用：x todo list")
     return 0
 
 

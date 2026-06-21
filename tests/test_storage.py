@@ -115,11 +115,22 @@ def test_explicit_constructor_overrides_env(monkeypatch, tmp_path):
 
 
 def test_constructor_uses_default_when_no_env(monkeypatch):
-    """No env var → falls back to ``~/.xavier/TODO`` (just check the suffix)."""
+    """No env var → falls back to ``<xcli_data_dir>/todo`` (v0.4.0+ independent).
+
+    Previously (v0.2.0) this was ``~/.xavier/TODO``; the v0.4.0 storage
+    decoupling moved the default to x-cli's per-user data dir to keep
+    the CLI independent of the xavier system. The :envvar:`XAVIER_TODO_DIR`
+    env var is still honoured for back-compat (and tests use it).
+    """
     monkeypatch.delenv("XAVIER_TODO_DIR", raising=False)
     s = TaskStore()
-    assert s.todo_dir.name == "TODO"
-    assert s.todo_dir.parent.name == ".xavier"
+    # Must NOT be the legacy xavier path
+    assert ".xavier" not in s.todo_dir.parts, (
+        f"default TODO dir leaked into xavier system: {s.todo_dir}"
+    )
+    # Must end with the ``todo`` segment under x-cli's data dir
+    assert s.todo_dir.name == "todo"
+    assert s.todo_dir.parent.name == "x-cli"
 
 
 # ============================================================

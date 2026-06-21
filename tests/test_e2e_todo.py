@@ -601,3 +601,175 @@ def test_e2e_unknown_subcommand_exits_1(x_path: str, todo_dir: Path):
     assert code == 1
     assert "未知子命令" in err or "unknown" in err.lower()
     assert "nonexistent" in err
+
+
+# ============================================================
+#  v0.4.0 — x todo init / import (storage decoupling)
+# ============================================================
+
+
+def test_e2e_init_creates_independent_dir(x_path: str, tmp_path: Path):
+    """BDD §todo-init 1: x todo init creates a fresh TODO dir at the requested path."""
+    target = tmp_path / "fresh-todo"
+    code, out, _ = _run_x(
+        x_path, ["todo", "init", "--dir", str(target)], tmp_path
+    )
+    assert code == 0
+    assert (target / "任务").is_dir()
+    assert (target / "归档").is_dir()
+    assert (target / "README.md").is_file()
+    assert "TODO 目录" in out
+    assert "💡" in out  # the "try x todo add" hint
+
+
+def test_e2e_init_is_idempotent(x_path: str, tmp_path: Path):
+    """BDD §todo-init 2: running init twice doesn't fail or overwrite README."""
+    target = tmp_path / "idempotent"
+    _run_x(x_path, ["todo", "init", "--dir", str(target)], tmp_path)
+    # User edits README
+    (target / "README.md").write_text("# My Custom Note\n", encoding="utf-8")
+    # Re-run init
+    code, out, _ = _run_x(
+        x_path, ["todo", "init", "--dir", str(target)], tmp_path
+    )
+    assert code == 0
+    # README not overwritten
+    assert (target / "README.md").read_text(encoding="utf-8") == "# My Custom Note\n"
+
+
+def test_e2e_import_from_xavier_dir_migrates_tasks(x_path: str, tmp_path: Path):
+    """BDD §todo-import 1: copy tasks from a xavier-style dir to x-cli's lib."""
+    # Build a fake xavier dir
+    src = tmp_path / "xavier-todo"
+    (src / "任务").mkdir(parents=True)
+    (src / "归档").mkdir(parents=True)
+    (src / "任务" / "kemu1").mkdir()
+    (src / "任务" / "kemu1" / "TODO.md").write_text(
+        "---\nid: kemu1\nname: kemu1\nstatus: pending\npriority: high\n---\n\nbody",
+        encoding="utf-8",
+    )
+    (src / "任务" / "zizhu").mkdir()
+    (src / "任务" / "zizhu" / "TODO.md").write_text(
+        "---\nid: zizhu\nname: zizhu\nstatus: in_progress\npriority: medium\n---\n\n",
+        encoding="utf-8",
+    )
+
+    dst = tmp_path / "xcli-todo"
+    _run_x(x_path, ["todo", "init", "--dir", str(dst)], tmp_path)
+
+    # Import
+    code, out, _ = _run_x(
+        x_path,
+        ["todo", "import", "--from", str(src), "--to", str(dst)],
+        tmp_path,
+    )
+    assert code == 0
+    assert "迁移完成" in out
+    assert "2 个" in out  # imported 2
+
+    # Verify both tasks now at destination
+    assert (dst / "任务" / "kemu1" / "TODO.md").is_file()
+    assert (dst / "任务" / "zizhu" / "TODO.md").is_file()
+    # Source untouched
+    assert (src / "任务" / "kemu1" / "TODO.md").is_file()
+
+
+def test_e2e_import_skips_duplicates(x_path: str, tmp_path: Path):
+    """BDD §todo-import 2: same name at destination is skipped, not overwritten."""
+    src = tmp_path / "src"
+    (src / "任务").mkdir(parents=True)
+    (src / "任务" / "shared").mkdir()
+    (src / "任务" / "shared" / "TODO.md").write_text(
+        "---\nid: shared\nname: shared\nstatus: pending\npriority: low\n---\n",
+        encoding="utf-8",
+    )
+
+    dst = tmp_path / "dst"
+    _run_x(x_path, ["todo", "init", "--dir", str(dst)], tmp_path)
+    _run_x(x_path, ["todo", "import", "--from", str(src), "--to", str(dst)], tmp_path)
+
+    # User modifies destination
+    dest_md = dst / "任务" / "shared" / "TODO.md"
+    dest_md.write_text(
+        "---\nid: shared\nname: shared\nstatus: done\npriority: high\n---\n",
+        encoding="utf-8",
+    )
+
+    # Re-import: should NOT overwrite
+    code, out, _ = _run_x(
+        x_path,
+        ["todo", "import", "--from", str(src), "--to", str(dst)],
+        tmp_path,
+    )
+    assert code == 0
+    # Status still "done" (user's version preserved)
+    assert "status: done" in dest_md.read_text(encoding="utf-8")
+
+
+def test_e2e_import_source_missing_exits_1(x_path: str, tmp_path: Path):
+    """BDD §todo-import 3: nonexistent source dir → exit 1 + clear error."""
+    code, _, err = _run_x(
+        x_path,
+        ["todo", "import", "--from", "/nonexistent/xavier/todo"],
+        tmp_path,
+    )
+    assert code == 1
+    assert "源目录不存在" in err or "不存在" in err
+
+
+def test_e2e_import_dry_run_does_not_write(x_path: str, tmp_path: Path):
+    """BDD §todo-import 6: --dry-run reports counts but writes nothing."""
+    src = tmp_path / "src"
+    (src / "任务").mkdir(parents=True)
+    (src / "任务" / "would_be_added").mkdir()
+    (src / "任务" / "would_be_added" / "TODO.md").write_text(
+        "---\nid: x\nname: x\nstatus: pending\npriority: low\n---\n",
+        encoding="utf-8",
+    )
+
+    dst = tmp_path / "dst"
+    _run_x(x_path, ["todo", "init", "--dir", str(dst)], tmp_path)
+
+    code, out, _ = _run_x(
+        x_path,
+        ["todo", "import", "--from", str(src), "--to", str(dst), "--dry-run"],
+        tmp_path,
+    )
+    assert code == 0
+    assert "dry-run" in out.lower() or "🔍" in out
+    # Destination unchanged
+    assert not (dst / "任务" / "would_be_added").exists()
+
+
+def test_e2e_default_path_is_independent_from_xavier(
+    x_path: str, tmp_path: Path
+):
+    """BDD §todo-storage: no env var → default NEVER lands under ~/.xavier/.
+
+    We must use a custom env (not ``_run_x``) because that helper always
+    sets ``XAVIER_TODO_DIR``. Here we want to test the **default**
+    path resolution (no env override).
+    """
+    import re
+    env = os.environ.copy()
+    env.pop("XAVIER_TODO_DIR", None)
+
+    proc = subprocess.run(
+        [x_path, "todo", "init"],
+        capture_output=True, text=True, encoding="utf-8", env=env, timeout=15,
+    )
+    assert proc.returncode == 0, f"stderr={proc.stderr!r}"
+
+    # Extract the path from output
+    m = re.search(r"已[存创]在：(.+)", proc.stdout)
+    assert m, f"could not extract path from {proc.stdout!r}"
+    default_path = m.group(1).strip()
+
+    # The path must contain 'x-cli' and must NOT contain a '.xavier' segment
+    parts = Path(default_path).parts
+    assert any(p == "x-cli" for p in parts), (
+        f"default TODO path {default_path!r} missing 'x-cli' segment"
+    )
+    assert ".xavier" not in parts, (
+        f"default TODO path {default_path!r} still lands in xavier system"
+    )
