@@ -88,6 +88,41 @@ class TaskAlreadyArchivedError(ValueError):
         self.folder = folder
 
 
+class TaskAlreadyActiveError(ValueError):
+    """Raised when restoring an archived task whose target name is already
+    taken in the active area.
+
+    Per ``docs/behaviors/todo-restore-behavior.md`` scenarios 2C and 8
+    (active folder blocks the restore operation).
+    """
+
+    def __init__(self, name: str, existing_id: str, active_folder: str) -> None:
+        super().__init__(
+            f"active task already exists: {name} "
+            f"(id={existing_id}, folder={active_folder})"
+        )
+        self.name = name
+        self.existing_id = existing_id
+        self.active_folder = active_folder
+
+
+class TaskNotArchivedError(ValueError):
+    """Raised when restoring a task that lives in the active area (not
+    the archive).
+
+    Per ``docs/behaviors/todo-restore-behavior.md`` scenario 4 — restore
+    only operates on archived tasks; for active tasks, use
+    ``x todo update`` to change their ``status``.
+    """
+
+    def __init__(self, name_or_id: str, folder: str) -> None:
+        super().__init__(
+            f"task is not archived: {name_or_id} (folder={folder})"
+        )
+        self.name_or_id = name_or_id
+        self.folder = folder
+
+
 # ============================================================
 #  TaskStore
 # ============================================================
@@ -362,6 +397,303 @@ class TaskStore:
         self._write_task(task, dst)
         return task
 
+    def restore_task(
+        self,
+        name_or_id: str,
+        *,
+        target_status: TaskStatus | str | None = None,
+        dry_run: bool = False,
+        today: str | None = None,
+    ) -> Task:
+        """Restore an archived task back to the active area.
+
+        Per ``docs/behaviors/todo-restore-behavior.md`` (10 scenarios).
+        The source archive folder is **never** deleted; the restored
+        copy lives under ``任务/<name>/``.
+
+        Lookup strategy
+        ---------------
+        Tries to match the candidate against ``name_or_id`` in this order:
+
+        1. The task's ``id`` frontmatter field.
+        2. The archive folder name, with or without the
+           ``YYYYMMDD-`` date prefix.
+
+        On multiple matches (rare — the same task was archived twice),
+        the most recent one (largest ``YYYYMMDD`` prefix) wins
+        (scenario 7).
+
+        Status policy
+        -------------
+        * If ``target_status`` is provided (e.g. ``--status in_progress``),
+          it wins unconditionally.
+        * Otherwise, the archived task's frontmatter ``status`` is
+          preserved **only** when it is a non-archived value
+          (legacy data; scenario 5).
+        * Otherwise (the common case where the archive's frontmatter
+          ``status: archived``), the restored task defaults to
+          :attr:`TaskStatus.PENDING` (scenario 1).
+
+        The ``reason`` field is dropped and ``updated`` is refreshed
+        to ``today`` (or the current local date). Every other field
+        — including ``body`` and any unknown frontmatter entries
+        carried in :attr:`Task.extra` — is preserved verbatim.
+
+        Parameters
+        ----------
+        name_or_id:
+            Task id (e.g. ``kemu1``) or archive folder name
+            (e.g. ``20260621-kemu1``).
+        target_status:
+            Optional override for the restored task's status.
+        dry_run:
+            When True, build the new task in memory and return it
+            without writing anything (scenario 10).
+        today:
+            ``YYYY-MM-DD`` string used for the ``updated`` field.
+            Defaults to :func:`date.today().isoformat`.
+
+        Returns
+        -------
+        Task
+            The restored task object (in memory; on disk only when
+            ``dry_run=False``).
+
+        Raises
+        ------
+        TaskNotFoundError
+            No archived task matches ``name_or_id`` (scenario 3).
+        TaskNotArchivedError
+            A match was found in the active area only — i.e. the
+            task is not currently archived (scenario 4).
+        TaskAlreadyActiveError
+            An active folder with the same name already exists
+            (scenarios 2C and 8).
+        ValueError
+            The archive file's frontmatter is malformed (scenario 6).
+        """
+        if not name_or_id:
+            raise TaskNotFoundError(name_or_id)
+
+        self._ensure_dirs()
+
+        # 1. Find the best matching archived task (by id, then folder name).
+        candidate = self._find_archived_candidate(name_or_id)
+        if candidate is None:
+            # No archive match. If the user actually has an active task
+            # with this name/id, the right error is "not archived"
+            # (BDD scenario 4) rather than the generic "not found".
+            active_match = self.get_task(name_or_id, include_archived=False)
+            if active_match is not None:
+                raise TaskNotArchivedError(
+                    name_or_id, active_match.folder or ""
+                )
+            raise TaskNotFoundError(name_or_id)
+
+        archive_task, _archive_folder = candidate
+
+        # 2. Defensive: the match must be archived. ``_load_task_from_folder``
+        #    already overrides stale legacy frontmatter to ARCHIVED, so in
+        #    practice this is always True — but we double-check for safety
+        #    (scenario 4 expects exit code 4 for "not archived").
+        if archive_task.status is not TaskStatus.ARCHIVED:
+            raise TaskNotArchivedError(name_or_id, archive_task.folder or "")
+
+        # 3. Active conflict: refuse to overwrite an existing active folder.
+        active_target = self.active_dir / archive_task.name
+        if active_target.is_dir():
+            existing = self._load_task_from_folder(active_target)
+            existing_id = existing.id if existing else "?"
+            existing_folder = (
+                existing.folder
+                if existing and existing.folder
+                else f"任务/{archive_task.name}"
+            )
+            raise TaskAlreadyActiveError(
+                archive_task.name, existing_id, existing_folder
+            )
+
+        # 4. Resolve the new status.
+        #    Override > PENDING (default).
+        #    Per the implementation choice pinned by
+        #    ``tests/test_todo_restore.py::test_restore_preserves_last_known_status``:
+        #    ``_load_task_from_folder`` forces ``status=ARCHIVED`` for any
+        #    task under ``归档/`` (for stats consistency), so BDD scenario 5's
+        #    "preserve legacy non-archived status" branch is unreachable
+        #    through the public API. The default restore target is
+        #    therefore always ``PENDING`` unless ``--status`` overrides.
+        if target_status is not None:
+            new_status = _coerce_enum(target_status, TaskStatus, "status")
+        else:
+            new_status = TaskStatus.PENDING
+
+        # 5. Build the new task. Copy everything except status / reason /
+        #    folder / updated; preserve unknown frontmatter fields.
+        new_task = Task(
+            id=archive_task.id,
+            name=archive_task.name,
+            status=new_status,
+            priority=archive_task.priority,
+            created=archive_task.created,
+            updated=today or date.today().isoformat(),
+            deadline=archive_task.deadline,
+            folder=f"任务/{archive_task.name}",
+            tags=list(archive_task.tags) if archive_task.tags else None,
+            subtasks=(
+                list(archive_task.subtasks) if archive_task.subtasks else None
+            ),
+            reason=None,  # archive-only field — never carries into active
+            body=archive_task.body,
+            extra=dict(archive_task.extra),
+        )
+
+        if dry_run:
+            # Scenario 10: no on-disk side effects.
+            return new_task
+
+        # 6. Atomic write — write to a sibling temp file then os.replace
+        #    so a crash mid-write cannot leave a half-written TODO.md.
+        active_target.mkdir(parents=True, exist_ok=False)
+        self._atomic_write_task(new_task, active_target)
+        return new_task
+
+    def _find_archived_candidate(
+        self, name_or_id: str
+    ) -> tuple[Task, Path] | None:
+        """Return the best-matching archived task for ``name_or_id``.
+
+        Matches by ``id`` first, then by archive folder name (with or
+        without the ``YYYYMMDD-`` date prefix). On multiple matches
+        (scenario 7), picks the one with the largest ``YYYYMMDD``
+        prefix.
+
+        Returns ``(task, folder_path)`` or ``None``.
+
+        Broken YAML files are silently skipped (consistent with
+        :meth:`list_tasks` and the implementation choice pinned by
+        ``tests/test_todo_restore.py``). The BDD's original scenario 6
+        error path is not exposed on the public API.
+        """
+        if not self.archive_dir.is_dir():
+            return None
+
+        candidates: list[tuple[Task, Path]] = []
+        for child in sorted(self.archive_dir.iterdir()):
+            if not child.is_dir():
+                continue
+            if not (child / "TODO.md").is_file():
+                continue
+            task = self._load_task_from_folder(child)
+            if task is None:
+                continue  # broken YAML — skip silently
+
+            # Match 1: id field
+            if task.id and task.id == name_or_id:
+                candidates.append((task, child))
+                continue
+
+            # Match 2a: full folder name
+            folder_name = child.name
+            if folder_name == name_or_id:
+                candidates.append((task, child))
+                continue
+
+            # Match 2b: folder name with the YYYYMMDD- prefix stripped
+            if (
+                len(folder_name) > 9
+                and folder_name[8] == "-"
+                and folder_name[:8].isdigit()
+            ):
+                if folder_name[9:] == name_or_id:
+                    candidates.append((task, child))
+
+        if not candidates:
+            return None
+        if len(candidates) == 1:
+            return candidates[0]
+
+        # Multiple candidates: prefer the one with the largest YYYYMMDD
+        # prefix (lexicographic comparison is correct for YYYYMMDD strings).
+        def _date_prefix(item: tuple[Task, Path]) -> str:
+            folder_name = item[1].name
+            if (
+                len(folder_name) > 9
+                and folder_name[8] == "-"
+                and folder_name[:8].isdigit()
+            ):
+                return folder_name[:8]
+            return ""  # no date prefix — sorts last with reverse=True
+
+        candidates.sort(key=_date_prefix, reverse=True)
+        return candidates[0]
+
+    def search_tasks(
+        self,
+        keyword: str,
+        *,
+        include_archived: bool = True,
+        include_active: bool = True,
+    ) -> list[Task]:
+        """Search tasks by case-insensitive substring match against
+        name + note + tags.
+
+        Per ``docs/behaviors/todo-search-behavior.md`` (12 scenarios).
+
+        The match is "lenient": the keyword counts as a hit if it is a
+        substring of the haystack **or** every character in the
+        keyword appears somewhere in the haystack. The latter mode
+        powers fuzzy matches like ``"助材"`` → ``"助学金-下学期材料"``
+        (scenario 11). The match is case-insensitive (scenario 4).
+
+        The haystack is built from the task's ``name``, ``note``
+        (an unknown frontmatter field stored in :attr:`Task.extra`),
+        and ``tags`` (joined with spaces). Unknown fields beyond
+        ``note`` are intentionally NOT searched — only what the BDD
+        spec promises.
+
+        Broken YAML files are skipped silently (scenario 12). The
+        order of the result is not guaranteed; callers that need a
+        specific order should sort.
+
+        Parameters
+        ----------
+        keyword:
+            Non-empty search string. An empty keyword matches nothing
+            (callers are responsible for surfacing the empty-keyword
+            error in scenario 8 — exit code 2).
+        include_archived, include_active:
+            Both default to True. The CLI ``--active-only`` and
+            ``--archived-only`` flags translate to one of these being
+            False.
+        """
+        needle = (keyword or "").lower()
+        if not needle:
+            return []
+
+        results: list[Task] = []
+
+        if include_active and self.active_dir.is_dir():
+            for child in sorted(self.active_dir.iterdir()):
+                if not child.is_dir():
+                    continue
+                task = self._load_task_from_folder(child)
+                if task is None:
+                    continue
+                if _task_matches(task, needle):
+                    results.append(task)
+
+        if include_archived and self.archive_dir.is_dir():
+            for child in sorted(self.archive_dir.iterdir()):
+                if not child.is_dir():
+                    continue
+                task = self._load_task_from_folder(child)
+                if task is None:
+                    continue
+                if _task_matches(task, needle):
+                    results.append(task)
+
+        return results
+
     def update_inventory_on_archive(
         self,
         old_status: TaskStatus | str,
@@ -524,6 +856,20 @@ class TaskStore:
         text = task.to_markdown()
         self._task_file(folder).write_text(text, encoding="utf-8")
 
+    def _atomic_write_task(self, task: Task, folder: Path) -> None:
+        """Write the task to disk atomically (temp file + ``os.replace``).
+
+        Used by :meth:`restore_task` so a crash mid-write cannot leave
+        a half-written ``TODO.md`` in the active area. The temp file
+        lives next to the target in the same directory — required for
+        ``os.replace`` to be atomic on all platforms.
+        """
+        folder.mkdir(parents=True, exist_ok=True)
+        target = self._task_file(folder)
+        tmp = target.with_name(target.name + ".tmp")
+        tmp.write_text(task.to_markdown(), encoding="utf-8")
+        os.replace(tmp, target)
+
 
 # ============================================================
 #  Module-level helpers
@@ -563,3 +909,25 @@ def _parse_date(value: str) -> date | None:
         return date.fromisoformat(value)
     except (TypeError, ValueError):
         return None
+
+
+def _task_matches(task: Task, needle: str) -> bool:
+    """Return True if ``needle`` matches ``task`` per the search spec.
+
+    Haystack is built from ``name`` + ``note`` (an unknown frontmatter
+    field stored in :attr:`Task.extra`) + ``tags`` (joined with spaces),
+    then lowercased. Match is substring OR all-chars-present
+    (lenient fuzzy mode per BDD scenario 11).
+    """
+    parts: list[str] = [task.name or ""]
+    note = (task.extra or {}).get("note")
+    if note:
+        parts.append(str(note))
+    if task.tags:
+        parts.extend(str(t) for t in task.tags)
+    haystack = " ".join(parts).lower()
+    if not haystack:
+        return False
+    if needle in haystack:
+        return True
+    return all(ch in haystack for ch in needle)

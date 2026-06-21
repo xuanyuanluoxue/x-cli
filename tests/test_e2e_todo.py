@@ -773,3 +773,643 @@ def test_e2e_default_path_is_independent_from_xavier(
     assert ".xavier" not in parts, (
         f"default TODO path {default_path!r} still lands in xavier system"
     )
+
+
+# ============================================================
+#  v0.4.x — x todo restore (归档还原)
+# ============================================================
+
+
+def _seed_archived_task(
+    todo_dir: Path,
+    *,
+    name: str,
+    task: Task,
+    archive_prefix: str | None = None,
+) -> Path:
+    """Drop a Task's TODO.md into ``归档/<prefix>-<name>/TODO.md``.
+
+    Returns the folder path. ``archive_prefix`` defaults to today's date
+    in ``YYYYMMDD`` form (matching the production ``x todo archive``
+    folder-naming convention). Tests that need to seed an older archive
+    (e.g. for BDD §场景 7: multiple archives) can pass an explicit
+    ``archive_prefix`` like ``"20260521"``.
+    """
+    prefix = archive_prefix or date.today().strftime("%Y%m%d")
+    folder = todo_dir / "归档" / f"{prefix}-{name}"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "TODO.md").write_text(task.to_markdown(), encoding="utf-8")
+    return folder
+
+
+def test_e2e_restore_basic_round_trip(x_path: str, todo_dir: Path):
+    """BDD §todo-restore 1: archive then restore, content survives.
+
+    After ``x todo restore kemu1`` the task must be back under
+    ``任务/kemu1/TODO.md`` with ``status: pending`` and ``reason`` removed.
+    The original ``归档/...`` folder stays (audit trail) and the task
+    shows up in ``x todo list`` again.
+    """
+    _seed_archived_task(
+        todo_dir,
+        name="kemu1",
+        task=_make_task(
+            "kemu1",
+            status=TaskStatus.ARCHIVED,
+            priority=Priority.HIGH,
+            deadline="2026-08-31",
+            reason=ArchiveReason.DONE,
+        ),
+    )
+
+    code, out, err = _run_x(x_path, ["todo", "restore", "kemu1"], todo_dir)
+    assert code == 0, f"stderr={err!r}"
+    assert "✅" in out
+    assert "kemu1" in out
+
+    # active task folder exists
+    active_md = todo_dir / "任务" / "kemu1" / "TODO.md"
+    assert active_md.is_file(), f"missing restored file at {active_md}"
+    body = active_md.read_text(encoding="utf-8")
+    assert "status: pending" in body
+    # reason is removed on restore
+    assert "reason: done" not in body
+
+    # list now shows the restored task
+    _, out2, _ = _run_x(x_path, ["todo", "list"], todo_dir)
+    assert "kemu1" in out2
+
+
+def test_e2e_restore_via_archive_name(x_path: str, todo_dir: Path):
+    """BDD §todo-restore 2B: ``x todo restore YYYYMMDD-<name>`` works.
+
+    When the user passes the full archive folder name (with the date
+    prefix), restore must still locate and restore the task. The active
+    folder is created under ``任务/<name>`` (date prefix stripped).
+    """
+    _seed_archived_task(
+        todo_dir,
+        name="kemu1",
+        task=_make_task(
+            "kemu1",
+            status=TaskStatus.ARCHIVED,
+            reason=ArchiveReason.DONE,
+        ),
+    )
+    today_prefix = date.today().strftime("%Y%m%d")
+    archive_name = f"{today_prefix}-kemu1"
+
+    code, out, err = _run_x(
+        x_path, ["todo", "restore", archive_name], todo_dir
+    )
+    assert code == 0, f"stderr={err!r}"
+    assert "✅" in out
+    # Active folder stripped of the date prefix
+    assert (todo_dir / "任务" / "kemu1" / "TODO.md").is_file()
+    # Source archive preserved
+    assert (todo_dir / "归档" / archive_name / "TODO.md").is_file()
+
+
+def test_e2e_restore_active_conflict_exits_3(x_path: str, todo_dir: Path):
+    """BDD §todo-restore 2C + 8: active folder with same name → exit 3.
+
+    If a task is already active AND a same-named archive exists, the
+    user must disambiguate (e.g. use the full archive name). Restoring
+    the bare name must NOT silently overwrite the active copy.
+    """
+    _seed_task(
+        todo_dir,
+        name="kemu1",
+        task=_make_task("kemu1", status=TaskStatus.PENDING,
+                        priority=Priority.HIGH),
+    )
+    _seed_archived_task(
+        todo_dir,
+        name="kemu1",
+        task=_make_task(
+            "kemu1",
+            status=TaskStatus.ARCHIVED,
+            reason=ArchiveReason.DONE,
+        ),
+    )
+
+    code, _, err = _run_x(x_path, ["todo", "restore", "kemu1"], todo_dir)
+    assert code == 3
+    assert "已存在" in err or "kemu1" in err
+    # Active file untouched (still status: pending, no reason)
+    body = (todo_dir / "任务" / "kemu1" / "TODO.md").read_text(encoding="utf-8")
+    assert "status: pending" in body
+    assert "reason" not in body
+
+
+def test_e2e_restore_nonexistent_exits_3(x_path: str, todo_dir: Path):
+    """BDD §todo-restore 3: missing task id → exit 3."""
+    code, _, err = _run_x(
+        x_path, ["todo", "restore", "nonexistent"], todo_dir
+    )
+    assert code == 3
+    assert "不存在" in err
+    assert "nonexistent" in err
+
+
+def test_e2e_restore_active_task_exits_4(x_path: str, todo_dir: Path):
+    """BDD §todo-restore 4: task exists but is not archived → exit 4.
+
+    An active task cannot be "restored" — it's already there. The
+    handler should refuse and tell the user to use ``x todo update``
+    to change status instead.
+    """
+    _seed_task(
+        todo_dir,
+        name="kemu1",
+        task=_make_task("kemu1", status=TaskStatus.PENDING),
+    )
+
+    code, _, err = _run_x(x_path, ["todo", "restore", "kemu1"], todo_dir)
+    assert code == 4
+    assert "未归档" in err or "已存在" in err or "kemu1" in err
+
+
+def test_e2e_restore_defaults_to_pending(x_path: str, todo_dir: Path):
+    """BDD §todo-restore 5 (revised): restore defaults to pending.
+
+    Implementation choice: archive frontmatter always has ``status:
+    archived`` (set during archive), so the loader can't recover the
+    pre-archive "last known" status. Restore forces PENDING unless
+    ``--status`` overrides. See BDD §5 design-choice box.
+    """
+    _seed_archived_task(
+        todo_dir,
+        name="kemu1",
+        task=_make_task(
+            "kemu1",
+            status=TaskStatus.IN_PROGRESS,  # the pre-archive value
+            priority=Priority.HIGH,
+            reason=ArchiveReason.DONE,
+        ),
+    )
+
+    code, out, _ = _run_x(x_path, ["todo", "restore", "kemu1"], todo_dir)
+    assert code == 0, f"stdout={out!r}"
+    body = (todo_dir / "任务" / "kemu1" / "TODO.md").read_text(encoding="utf-8")
+    # Forced to pending (NOT in_progress, NOT the original pre-archive value)
+    assert "status: pending" in body
+    # reason gone
+    assert "reason: done" not in body
+
+
+def test_e2e_restore_broken_yaml_treated_as_not_found(x_path: str, todo_dir: Path):
+    """BDD §todo-restore 6 (revised): broken YAML is silently skipped.
+
+    Implementation choice: ``_load_task_from_folder`` returns None for
+    unparseable frontmatter, consistent with ``list_tasks`` / ``stats``
+    behavior. Restore surfaces as ``TaskNotFoundError`` (exit 3, not 5).
+    See BDD §6 design-choice box.
+    """
+    bad = todo_dir / "归档" / f"{date.today().strftime('%Y%m%d')}-bad"
+    bad.mkdir(parents=True)
+    (bad / "TODO.md").write_text("not valid frontmatter", encoding="utf-8")
+
+    code, _, err = _run_x(x_path, ["todo", "restore", "bad"], todo_dir)
+    # Exit 3 (not found), NOT 5 (data integrity)
+    assert code == 3
+    assert "不存在" in err
+    # No new active file written
+    assert not (todo_dir / "任务" / "bad").exists()
+
+
+def test_e2e_restore_picks_newest_archive(x_path: str, todo_dir: Path):
+    """BDD §todo-restore 7: multiple archives → pick newest by date prefix.
+
+    If a task was archived on two different days, restore must
+    deterministically pick the latest one (so the user gets the most
+    recent state) and leave the older copy as audit history.
+    """
+    # Newer archive (priority changed → mid-flight revision)
+    _seed_archived_task(
+        todo_dir,
+        name="kemu1",
+        task=_make_task(
+            "kemu1",
+            status=TaskStatus.ARCHIVED,
+            priority=Priority.LOW,
+            reason=ArchiveReason.DONE,
+        ),
+        archive_prefix="20260601",
+    )
+    # Older archive (original high-priority state)
+    _seed_archived_task(
+        todo_dir,
+        name="kemu1",
+        task=_make_task(
+            "kemu1",
+            status=TaskStatus.ARCHIVED,
+            priority=Priority.HIGH,
+            reason=ArchiveReason.DONE,
+        ),
+        archive_prefix="20260521",
+    )
+
+    code, out, _ = _run_x(x_path, ["todo", "restore", "kemu1"], todo_dir)
+    assert code == 0, f"stdout={out!r}"
+    # Older archive untouched
+    assert (todo_dir / "归档" / "20260521-kemu1" / "TODO.md").is_file()
+    # Newer archive untouched too
+    assert (todo_dir / "归档" / "20260601-kemu1" / "TODO.md").is_file()
+    # Active folder was created and contains the NEWER archive's content
+    body = (todo_dir / "任务" / "kemu1" / "TODO.md").read_text(encoding="utf-8")
+    assert "priority: low" in body
+
+
+def test_e2e_restore_with_status_override(x_path: str, todo_dir: Path):
+    """BDD §todo-restore 9: ``--status`` overrides archived status.
+
+    The ``--status`` flag lets the user explicitly choose the
+    post-restore status. Other fields (priority, deadline) are kept
+    from the archive.
+    """
+    _seed_archived_task(
+        todo_dir,
+        name="kemu1",
+        task=_make_task(
+            "kemu1",
+            status=TaskStatus.IN_PROGRESS,  # original last status
+            priority=Priority.HIGH,
+            deadline="2026-08-31",
+            reason=ArchiveReason.DONE,
+        ),
+    )
+
+    code, out, _ = _run_x(
+        x_path, ["todo", "restore", "kemu1", "--status", "in_progress"],
+        todo_dir,
+    )
+    assert code == 0, f"stdout={out!r}"
+    body = (todo_dir / "任务" / "kemu1" / "TODO.md").read_text(encoding="utf-8")
+    # status explicitly forced to in_progress
+    assert "status: in_progress" in body
+    # priority preserved
+    assert "priority: high" in body
+    # deadline preserved
+    assert "deadline: 2026-08-31" in body
+
+
+def test_e2e_restore_dry_run_does_not_write(x_path: str, todo_dir: Path):
+    """BDD §todo-restore 10: ``--dry-run`` reports but never writes.
+
+    A dry-run must leave both the archive and (absence of) active
+    folder untouched. Output indicates "would restore" semantics.
+    """
+    _seed_archived_task(
+        todo_dir,
+        name="kemu1",
+        task=_make_task(
+            "kemu1",
+            status=TaskStatus.ARCHIVED,
+            priority=Priority.HIGH,
+            reason=ArchiveReason.DONE,
+        ),
+    )
+
+    code, out, _ = _run_x(
+        x_path, ["todo", "restore", "kemu1", "--dry-run"], todo_dir
+    )
+    assert code == 0
+    assert "🔍" in out or "dry-run" in out.lower()
+    # No active folder created
+    assert not (todo_dir / "任务" / "kemu1").exists()
+    # Archive untouched
+    assert (todo_dir / "归档" / f"{date.today().strftime('%Y%m%d')}-kemu1").is_dir()
+
+
+# ============================================================
+#  v0.4.x — x todo search (跨字段关键词搜索)
+# ============================================================
+
+
+def _write_raw_todo(
+    todo_dir: Path,
+    *,
+    name: str,
+    frontmatter: str,
+    body: str = "",
+    archive: bool = False,
+) -> Path:
+    """Write a hand-crafted TODO.md (used to inject fields like ``note``)."""
+    root = todo_dir / ("归档" if archive else "任务")
+    folder = root / name
+    folder.mkdir(parents=True, exist_ok=True)
+    md = folder / "TODO.md"
+    md.write_text(
+        f"---\n{frontmatter}\n---\n\n{body}",
+        encoding="utf-8",
+    )
+    return md
+
+
+def test_e2e_search_matches_name(x_path: str, todo_dir: Path):
+    """BDD §todo-search 1: substring match on ``name`` field."""
+    _run_x(x_path, ["todo", "add", "kemu1"], todo_dir)
+    _run_x(x_path, ["todo", "add", "zijiashixi"], todo_dir)
+
+    code, out, _ = _run_x(x_path, ["todo", "search", "kemu1"], todo_dir)
+    assert code == 0
+    assert "kemu1" in out
+    # No false match
+    assert "zijiashixi" not in out
+
+
+def test_e2e_search_matches_note(x_path: str, todo_dir: Path):
+    """BDD §todo-search 2: ``note`` field is part of the search corpus."""
+    _write_raw_todo(
+        todo_dir,
+        name="kemu1",
+        frontmatter=(
+            "id: kemu1\n"
+            "name: 驾驶证考取\n"
+            "status: pending\n"
+            "priority: high\n"
+            "note: 跟朋友 AA 分摊"
+        ),
+    )
+
+    code, out, _ = _run_x(x_path, ["todo", "search", "AA"], todo_dir)
+    assert code == 0
+    assert "kemu1" in out or "驾驶证考取" in out
+
+
+def test_e2e_search_matches_tag(x_path: str, todo_dir: Path):
+    """BDD §todo-search 3: tag values are searchable substrings."""
+    _run_x(
+        x_path,
+        ["todo", "add", "kemu1", "--tags", "驾照,暑假"],
+        todo_dir,
+    )
+
+    code, out, _ = _run_x(x_path, ["todo", "search", "驾照"], todo_dir)
+    assert code == 0
+    assert "kemu1" in out
+
+
+def test_e2e_search_is_case_insensitive(x_path: str, todo_dir: Path):
+    """BDD §todo-search 4: search is case-insensitive (ASCII)."""
+    _run_x(x_path, ["todo", "add", "aliyun"], todo_dir)
+
+    code, out, _ = _run_x(x_path, ["todo", "search", "ALIYUN"], todo_dir)
+    assert code == 0
+    assert "aliyun" in out
+
+
+def test_e2e_search_includes_archived_by_default(x_path: str, todo_dir: Path):
+    """BDD §todo-search 5: default search spans active + archived.
+
+    The most common pain point is "I archived it but can't find it" —
+    so search must include archived results unless the user opts out
+    with ``--active-only``.
+    """
+    _run_x(x_path, ["todo", "add", "kemu1"], todo_dir)
+    _run_x(x_path, ["todo", "done", "kemu1"], todo_dir)
+
+    code, out, _ = _run_x(x_path, ["todo", "search", "kemu1"], todo_dir)
+    assert code == 0
+    # Task appears, with archived indicator
+    assert "kemu1" in out
+    assert "archived" in out.lower() or "✅" in out
+
+
+def test_e2e_search_active_only_excludes_archived(x_path: str, todo_dir: Path):
+    """BDD §todo-search 6: ``--active-only`` hides archived matches."""
+    _run_x(x_path, ["todo", "add", "kemu1"], todo_dir)
+    _run_x(x_path, ["todo", "done", "kemu1"], todo_dir)
+
+    code, out, _ = _run_x(
+        x_path, ["todo", "search", "kemu1", "--active-only"], todo_dir
+    )
+    assert code == 0
+    # No match → empty result / mail icon
+    assert "kemu1" not in out or "📭" in out or "没有匹配" in out
+
+
+def test_e2e_search_archived_only(x_path: str, todo_dir: Path):
+    """BDD §todo-search 7: ``--archived-only`` shows archived matches only."""
+    _run_x(x_path, ["todo", "add", "kemu1"], todo_dir)
+    # Archive the task
+    _run_x(x_path, ["todo", "done", "kemu1"], todo_dir)
+
+    code, out, _ = _run_x(
+        x_path, ["todo", "search", "kemu1", "--archived-only"], todo_dir
+    )
+    assert code == 0
+    assert "kemu1" in out
+    assert "archived" in out.lower() or "✅" in out
+
+
+def test_e2e_search_empty_keyword_exits_2(x_path: str, todo_dir: Path):
+    """BDD §todo-search 8: empty keyword → exit 2 (defensive).
+
+    An empty keyword would otherwise dump the whole DB, which mirrors
+    ``x secret search`` behavior (no surprise data leak).
+    """
+    code, _, err = _run_x(x_path, ["todo", "search", ""], todo_dir)
+    assert code == 2
+    assert "不能为空" in err or "required" in err.lower() or "缺少" in err
+
+
+def test_e2e_search_no_match_exits_0(x_path: str, todo_dir: Path):
+    """BDD §todo-search 9: zero matches is exit 0 (not an error)."""
+    code, out, _ = _run_x(
+        x_path, ["todo", "search", "no_match_xyz"], todo_dir
+    )
+    assert code == 0
+    assert "📭" in out or "没有匹配" in out
+
+
+def test_e2e_search_combined_with_status(x_path: str, todo_dir: Path):
+    """BDD §todo-search 10: search + ``--status`` filter (AND)."""
+    _write_raw_todo(
+        todo_dir,
+        name="A",
+        frontmatter="id: A\nname: X-proj-A\nstatus: in_progress\npriority: high",
+    )
+    _write_raw_todo(
+        todo_dir,
+        name="B",
+        frontmatter="id: B\nname: X-proj-B\nstatus: pending\npriority: high",
+    )
+
+    code, out, _ = _run_x(
+        x_path,
+        ["todo", "search", "X", "--status", "in_progress"],
+        todo_dir,
+    )
+    assert code == 0
+    # Only A (pending) shown
+    assert "A" in out and "X-proj-A" in out
+    assert "B" not in out and "X-proj-B" not in out
+
+
+def test_e2e_search_fuzzy_multi_char(x_path: str, todo_dir: Path):
+    """BDD §todo-search 11: multi-char fuzzy (every char present).
+
+    Search accepts a hit when the keyword is a contiguous substring OR
+    every character of the keyword appears in the field. This is a
+    pragmatic middle ground between exact-substring and full fuzzy.
+    """
+    _write_raw_todo(
+        todo_dir,
+        name="zijin",
+        frontmatter="id: zijin\nname: 助学金-下学期材料\nstatus: pending\npriority: medium",
+    )
+
+    code, out, _ = _run_x(x_path, ["todo", "search", "助材"], todo_dir)
+    assert code == 0
+    assert "zijin" in out or "助学金" in out
+
+
+def test_e2e_search_silently_skips_broken_yaml(x_path: str, todo_dir: Path):
+    """BDD §todo-search 12: broken frontmatter is silently skipped.
+
+    A task whose YAML can't parse must not crash the search. The
+    valid tasks are returned normally; broken ones are reported via
+    ``x todo stats`` (not the search output).
+    """
+    _write_raw_todo(
+        todo_dir,
+        name="坏任务",
+        frontmatter="this is: not valid: yaml: :::",
+    )
+    _write_raw_todo(
+        todo_dir,
+        name="good",
+        frontmatter="id: good\nname: goodX\nstatus: pending\npriority: low",
+    )
+
+    code, out, _ = _run_x(x_path, ["todo", "search", "goodX"], todo_dir)
+    # Search must NOT crash (no exit 5)
+    assert code == 0, f"stderr not captured, but exit code was {code}"
+    # Valid task surfaces
+    assert "good" in out
+    # No warning chatter about the broken file
+    assert "坏任务" not in out
+
+
+# ============================================================
+#  v0.4.x — x todo done (语义化快捷归档)
+# ============================================================
+
+
+def test_e2e_done_archives_with_reason_done(x_path: str, todo_dir: Path):
+    """BDD §todo-done 1: ``x todo done <id>`` archives with reason=done.
+
+    Shortcut for the 80% case. The on-disk result must match
+    ``x todo archive <id> --reason done`` byte-for-byte in shape
+    (same frontmatter fields, same folder move to 归档/YYYYMMDD-name/).
+    """
+    _run_x(
+        x_path,
+        ["todo", "add", "kemu1", "--priority", "high"],
+        todo_dir,
+    )
+
+    code, out, _ = _run_x(x_path, ["todo", "done", "kemu1"], todo_dir)
+    assert code == 0
+    assert "✅" in out
+    assert "done" in out.lower()
+
+    # Active folder gone, archive folder exists with today's date
+    assert not (todo_dir / "任务" / "kemu1").exists()
+    archive = todo_dir / "归档" / f"{date.today().strftime('%Y%m%d')}-kemu1"
+    assert archive.is_dir(), f"expected archive folder {archive}"
+    body = (archive / "TODO.md").read_text(encoding="utf-8")
+    assert "status: archived" in body
+    assert "reason: done" in body
+
+    # ``list --all`` still shows the task
+    _, out2, _ = _run_x(x_path, ["todo", "list", "--all"], todo_dir)
+    assert "kemu1" in out2
+
+
+def test_e2e_done_equivalent_to_archive_reason_done(x_path: str, todo_dir: Path):
+    """BDD §todo-done 2: ``done`` and ``archive --reason done`` behave identically.
+
+    The shortcut must be a true alias — same exit code, same on-disk
+    state, same frontmatter fields. We compare the two states after
+    fresh seeding.
+    """
+    # First task: archive via --reason done
+    _run_x(x_path, ["todo", "add", "taskA", "--priority", "medium"], todo_dir)
+    code_a, _, _ = _run_x(
+        x_path, ["todo", "archive", "taskA", "--reason", "done"], todo_dir
+    )
+    assert code_a == 0
+
+    # Second task: via done
+    _run_x(x_path, ["todo", "add", "taskB", "--priority", "medium"], todo_dir)
+    code_b, _, _ = _run_x(x_path, ["todo", "done", "taskB"], todo_dir)
+    assert code_b == 0
+
+    # Both folders exist with same shape
+    prefix = date.today().strftime("%Y%m%d")
+    body_a = (todo_dir / "归档" / f"{prefix}-taskA" / "TODO.md").read_text(
+        encoding="utf-8"
+    )
+    body_b = (todo_dir / "归档" / f"{prefix}-taskB" / "TODO.md").read_text(
+        encoding="utf-8"
+    )
+    # Both must carry the same archived + done markers
+    for marker in ("status: archived", "reason: done"):
+        assert marker in body_a, f"archive --reason done missing {marker!r}"
+        assert marker in body_b, f"done shortcut missing {marker!r}"
+
+
+def test_e2e_done_nonexistent_exits_3(x_path: str, todo_dir: Path):
+    """BDD §todo-done 3: missing id → exit 3."""
+    code, _, err = _run_x(x_path, ["todo", "done", "ghost"], todo_dir)
+    assert code == 3
+    assert "不存在" in err
+    assert "ghost" in err
+
+
+def test_e2e_done_already_archived_exits_4(x_path: str, todo_dir: Path):
+    """BDD §todo-done 4: second done on same id → exit 4.
+
+    Mirrors the archive behavior: once archived, the task is no longer
+    an active target. Restoring it (``x todo restore``) is the only way
+    to re-target it.
+    """
+    _run_x(x_path, ["todo", "add", "kemu1"], todo_dir)
+    code_first, _, _ = _run_x(x_path, ["todo", "done", "kemu1"], todo_dir)
+    assert code_first == 0
+
+    code, _, err = _run_x(x_path, ["todo", "done", "kemu1"], todo_dir)
+    assert code == 4
+    assert "已归档" in err or "kemu1" in err
+
+
+def test_e2e_done_in_help_output(x_path: str, todo_dir: Path):
+    """BDD §todo-done 5/6: ``done`` is advertised in ``x todo`` help.
+
+    The shortcut only saves typing if users discover it. We verify
+    it's listed alongside archive / update etc. in the action table.
+    """
+    code, out, _ = _run_x(x_path, ["todo"], todo_dir)
+    assert code == 0
+    assert "done" in out, f"done action missing from help:\n{out}"
+
+
+def test_e2e_done_does_not_accept_reason_flag(x_path: str, todo_dir: Path):
+    """BDD §todo-done 5/不变量: ``done`` has no ``--reason`` flag.
+
+    The shortcut is opinionated — it's *always* ``reason=done``.
+    Other reasons require ``x todo archive --reason <X>``. The CLI
+    must reject any attempt to pass ``--reason`` to ``done``.
+    """
+    _run_x(x_path, ["todo", "add", "kemu1"], todo_dir)
+    # ``done --reason cancelled`` must fail (argparse unknown flag or
+    # handler error). Either way: non-zero exit.
+    code, _, _ = _run_x(
+        x_path,
+        ["todo", "done", "kemu1", "--reason", "cancelled"],
+        todo_dir,
+    )
+    assert code != 0, "done must reject --reason (semantic opinionation)"

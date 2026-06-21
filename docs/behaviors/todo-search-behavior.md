@@ -220,12 +220,12 @@
 ### 找到多个
 ```
 $ x todo search 暑假
-ID         Name         Status         Priority   Deadline   Updated
-─────────  ───────────  ─────────────  ─────────  ─────────  ──────────
-kemu1      驾驶证考取   ▶ in_progress  🔥 high    2026-08-31  2026-06-20
-zijiashixi 自主实习     ▶ in_progress  🔥 high    2026-07-01  2026-06-15
+ID         Name         Status         Priority   Deadline
+─────────  ───────────  ─────────────  ─────────  ─────────
+kemu1      驾驶证考取   ▶ in_progress  🔥 high    2026-08-31
+zijiashixi 自主实习     ▶ in_progress  🔥 high    2026-07-01
 ```
-（按 `deadline` 升序，与 `x todo list` 一致）
+（与 `x todo list` **完全一致**的 5 列布局；按 `deadline` 升序）
 
 ### 0 个匹配
 ```

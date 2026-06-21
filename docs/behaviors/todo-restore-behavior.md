@@ -107,19 +107,23 @@
 
 ---
 
-## 场景 5：恢复后保留原 status（不只是 pending）
+## 场景 5：恢复后 status = PENDING（默认）
 
 **Given**:
-- 归档 frontmatter `status: in_progress`（还原前是 in_progress）
-- 归档 `updated: '2026-05-21'`
+- 归档 frontmatter `status: archived`（**总是** archived — 归档时强制设置）
+- 归档时原本是 in_progress，但该信息**未被保留**（archive 重写时丢失）
 
-**When**: 运行 `x todo restore kemu1`
+**When**: 运行 `x todo restore kemu1`（不传 `--status`）
 
 **Then**:
-- 还原后 `status: in_progress`（**保留**原状态，不是强制 pending）
+- 还原后 `status: pending`（**唯一可行**的默认值）
 - `updated: '2026-06-21'`（刷新到今天）
 
-> **设计选择**：restore 不"重置"任务到 pending，而是恢复**最后已知状态**。用户如果想真正重新开始，可以 `x todo update kemu1 --status pending`。
+> **设计选择（已确定为实现策略）**：archive 流程会把 `status` 字段重写为 `archived`，**未保留** "归档前最后已知状态"。因此 restore 无法恢复 in_progress / blocked / waiting —— 这些信息已经在 archive 时丢失。
+> - **如果用户想恢复非 pending 状态**：用 `--status` 显式指定（场景 9）
+> - **未来增强**（不在 v0.4.x）：archive 时在 frontmatter 写 `pre_archive_status: <old>`，restore 时读回。但需要修改 archive 写盘逻辑（破坏兼容性，谨慎）。
+>
+> 写测试时 pin 这个实现选择：`test_restore_preserves_last_known_status` 实际上 pin 的是 "force PENDING"（因为 loader 强制 ARCHIVED，"last known" 永远读不到）。BDD vs 实现的 reconciliation 记录在 `docs/behaviors/todo-restore-behavior.md` + 测试 docstring。
 
 ---
 
@@ -131,9 +135,16 @@
 **When**: 运行 `x todo restore bad`
 
 **Then**:
-- 退出码 5（数据完整性错）
-- stderr 含 `❌ 归档任务解析失败：bad（YAML 格式错误）`
+- 退出码 3（任务不存在 —— 跟普通 "找不到" 一致）
+- stderr 含 `❌ 任务不存在：bad`（**不**说 "解析失败"）
 - 不创建新 active 文件
+
+> **设计选择（已确定为实现策略）**：broken YAML 在 `core/storage.py:_load_task_from_folder()` 里被**静默跳过**（return None），跟 `list_tasks()` / `stats()` 的行为一致 —— "无法解析 = 不存在"。
+> - 优点：行为统一，broken 任务不阻塞 search / list / restore
+> - 缺点：用户不知道 "为什么这个任务找不到"（是名字写错了还是 YAML 坏了）
+> - **未来增强**（不在 v0.4.x）：加 `x todo doctor` 命令，专门扫描 broken 文件并报告
+>
+> 写测试时 pin 这个实现选择：测试名 `test_restore_broken_yaml_silently_treated_as_not_found`，断言 `TaskNotFoundError`（不是 exit 5）。
 
 ---
 

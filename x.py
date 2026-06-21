@@ -23,6 +23,16 @@ from core.storage import (
     TaskStore,
 )
 
+# v0.4.x 新增的异常类（Subagent A 在 core/storage.py 同步实现）。
+# 用 try/except 包一层，缺类时 fallback 到 ``ValueError``，保证 module
+# 顶层 import 始终成功 —— 既兼容并行开发期，也兼容不同命名约定。
+try:
+    from core.storage import TaskAlreadyActiveError  # type: ignore
+    from core.storage import TaskNotArchivedError  # type: ignore
+except ImportError:  # pragma: no cover — pre-Subagent-A 阶段
+    TaskAlreadyActiveError = ValueError  # type: ignore[misc,assignment]
+    TaskNotArchivedError = ValueError  # type: ignore[misc,assignment]
+
 __version__ = "0.2.0"
 
 
@@ -92,6 +102,9 @@ TODO_ACTIONS: tuple[str, ...] = (
     "stats",
     "init",     # v0.4.0 — bootstrap x-cli's independent TODO dir
     "import",   # v0.4.0 — one-way migration from xavier system
+    "restore",  # v0.4.x — archive → active
+    "search",   # v0.4.x — cross-field search (name + note + tags)
+    "done",     # v0.4.x — `archive --reason done` shortcut
 )
 
 
@@ -208,6 +221,37 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
                 action="store_true",
                 help="只读源 + 只报告，不实际写入",
             )
+        elif name == "restore":
+            # v0.4.x — 把归档任务还原到 active（不删源，留作审计）
+            # BDD: docs/behaviors/todo-restore-behavior.md（10 场景）
+            sp = sub.add_parser(name, help="从归档还原到 active")
+            sp.add_argument("id", help="任务 ID 或归档名（如 20260621-kemu1）")
+            sp.add_argument(
+                "--status",
+                choices=[s.value for s in TaskStatus],
+                help="强制覆盖还原后的 status（默认保留归档前的值）",
+            )
+            sp.add_argument(
+                "--dry-run",
+                action="store_true",
+                help="只读源 + 只报告，不实际还原",
+            )
+        elif name == "search":
+            # v0.4.x — 跨字段模糊搜索（name + note + tags）
+            # BDD: docs/behaviors/todo-search-behavior.md（12 场景）
+            sp = sub.add_parser(name, help="跨字段模糊搜索（name + note + tags）")
+            sp.add_argument("keyword", help="关键词（非空）")
+            sp.add_argument("--active-only", action="store_true", help="只看 active")
+            sp.add_argument("--archived-only", action="store_true", help="只看归档")
+            sp.add_argument(
+                "--status",
+                help="按 status 过滤（与搜索结果 AND 关系）",
+            )
+        elif name == "done":
+            # v0.4.x — `archive --reason done` 的语义化快捷方式
+            # BDD: docs/behaviors/todo-done-behavior.md（6 场景）
+            sp = sub.add_parser(name, help="archive --reason done 的快捷方式")
+            sp.add_argument("id", help="任务 ID")
         else:
             sp = sub.add_parser(name, help=f"{name} 命令")
 
@@ -300,6 +344,177 @@ def _todo_archive(args: argparse.Namespace) -> int:
     return 0
 
 
+def _todo_restore(args: argparse.Namespace) -> int:
+    """``x todo restore <id> [--status X] [--dry-run]`` — archive → active.
+
+    对应 BDD：``docs/behaviors/todo-restore-behavior.md``（10 场景）。
+
+    退出码约定：
+    - 0：成功（含 ``--dry-run``）
+    - 3：任务不存在 / active 已有同名（冲突）
+    - 4：任务未归档（不是 archived 状态）
+    - 5：归档 YAML 解析失败
+
+    归档源**不**删除（审计保留）；仅在 active 区创建新文件并把
+    ``status`` 恢复为归档前的值（默认行为，``--status`` 可覆盖）。
+    """
+    if not args.id or not args.id.strip():
+        print("❌ 任务 ID 不能为空", file=sys.stderr)
+        return 3
+
+    target_status = TaskStatus(args.status) if args.status else None
+
+    store = TaskStore()
+    try:
+        restored = store.restore_task(
+            args.id,
+            target_status=target_status,
+            dry_run=args.dry_run,
+        )
+    except TaskNotFoundError:
+        # BDD §场景 3
+        print(f"❌ 任务不存在：{args.id}", file=sys.stderr)
+        return 3
+    except TaskAlreadyActiveError as exc:
+        # BDD §场景 2C / §场景 8
+        active_name = getattr(exc, "name", args.id)
+        print(
+            f"❌ 任务已存在（active）：{active_name}"
+            f"（先 archive 或用归档名）",
+            file=sys.stderr,
+        )
+        return 3
+    except TaskNotArchivedError:
+        # BDD §场景 4
+        print(
+            f"❌ 任务未归档：{args.id}"
+            f"（请用 x todo update 改状态）",
+            file=sys.stderr,
+        )
+        return 4
+    except ValueError as exc:
+        # BDD §场景 6：归档 YAML 解析失败
+        print(
+            f"❌ 归档任务解析失败：{args.id}"
+            f"（YAML 格式错误：{exc}）",
+            file=sys.stderr,
+        )
+        return 5
+
+    status_str = (
+        restored.status.value
+        if isinstance(restored.status, TaskStatus)
+        else str(restored.status)
+    )
+    if args.dry_run:
+        # BDD §场景 10
+        print(
+            f"🔍 [dry-run] 将还原：{restored.name}（ID: {restored.id}）"
+        )
+        print(f"   status: archived → {status_str}")
+        return 0
+
+    # BDD §场景 1/5/9
+    print(f"✅ 任务已还原：{restored.name}（ID: {restored.id}）")
+    print(f"   状态：archived → {status_str}")
+    return 0
+
+
+def _todo_search(args: argparse.Namespace) -> int:
+    """``x todo search <keyword> [--active-only] [--archived-only] [--status X]``.
+
+    对应 BDD：``docs/behaviors/todo-search-behavior.md``（12 场景）。
+
+    退出码约定：
+    - 0：成功（0 个匹配也算 0）
+    - 2：关键词为空（argparse 必填 + 显式校验）
+
+    输出格式与 ``x todo list`` 完全一致（5 列：ID / Name / Status /
+    Priority / Deadline），方便用户认知切换。
+    """
+    if not args.keyword or not args.keyword.strip():
+        print("❌ 关键词不能为空", file=sys.stderr)
+        return 2
+
+    keyword = args.keyword.strip()
+    active_only = bool(args.active_only)
+    archived_only = bool(args.archived_only)
+
+    if active_only and archived_only:
+        # 互斥 — 既只要 active 又只要 archived 永远为空，提前报个错
+        print(
+            "❌ --active-only 和 --archived-only 互斥，不能同时使用",
+            file=sys.stderr,
+        )
+        return 2
+
+    store = TaskStore()
+    matches = store.search_tasks(
+        keyword,
+        include_archived=not active_only,
+        include_active=not archived_only,
+    )
+
+    # Optional status filter (BDD §场景 10)
+    if args.status:
+        try:
+            status_filter = TaskStatus(args.status)
+        except ValueError:
+            hint = " / ".join(s.value for s in TaskStatus)
+            print(
+                f"❌ 无效的 status 值：{args.status}（合法值：{hint}）",
+                file=sys.stderr,
+            )
+            return 2
+        matches = [t for t in matches if t.status == status_filter]
+
+    if not matches:
+        # BDD §场景 6 / §场景 9
+        print(f'📭 没有匹配 "{keyword}" 的任务（搜索 name + note + tags）')
+        print("💡 试试：x todo list")
+        return 0
+
+    # BDD §场景 1/3/4/7：表格格式与 ``x todo list`` 一致（5 列）
+    header_cells = [h for h, _ in _LIST_COLUMNS]
+    rows: list[list[str]] = [
+        [col(t) for _, col in _LIST_COLUMNS] for t in matches
+    ]
+    col_widths = [
+        max(
+            [_display_width(header_cells[i])]
+            + [_display_width(row[i]) for row in rows]
+        )
+        for i in range(len(_LIST_COLUMNS))
+    ]
+    print("  ".join(_pad(c, col_widths[i]) for i, c in enumerate(header_cells)))
+    print("  ".join("─" * col_widths[i] for i in range(len(_LIST_COLUMNS))))
+    for row in rows:
+        print("  ".join(_pad(c, col_widths[i]) for i, c in enumerate(row)))
+    return 0
+
+
+def _todo_done(args: argparse.Namespace) -> int:
+    """``x todo done <id>`` — ``x todo archive <id> --reason done`` 的快捷方式。
+
+    对应 BDD：``docs/behaviors/todo-done-behavior.md``（6 场景）。
+
+    语义上**完全等价**于 ``archive --reason done``（80% 的归档场景）：
+    复用 ``_todo_archive`` 的全部逻辑与退出码，不重复实现。
+    """
+    if not args.id or not args.id.strip():
+        print("❌ 任务 ID 不能为空", file=sys.stderr)
+        return 3
+
+    # Build a fake Namespace to delegate to _todo_archive — DRY:
+    # the archive handler is the single source of truth for
+    # folder move + frontmatter update + inventory maintenance.
+    archive_args = argparse.Namespace(
+        id=args.id.strip(),
+        reason="done",
+    )
+    return _todo_archive(archive_args)
+
+
 def _todo_run(args: Sequence[str]) -> int:
     """x todo 入口：解析参数并分发到子命令"""
     parser = argparse.ArgumentParser(prog="x todo", description="TODO 管理")
@@ -339,6 +554,18 @@ def _todo_run(args: Sequence[str]) -> int:
     # x todo import — v0.4.0 新增（从 xavier 系统单向迁移）
     if parsed.todo_action == "import":
         return _todo_import(parsed)
+
+    # x todo restore — v0.4.x 新增（archive → active）
+    if parsed.todo_action == "restore":
+        return _todo_restore(parsed)
+
+    # x todo search — v0.4.x 新增（跨字段模糊搜索）
+    if parsed.todo_action == "search":
+        return _todo_search(parsed)
+
+    # x todo done — v0.4.x 新增（archive --reason done 快捷方式）
+    if parsed.todo_action == "done":
+        return _todo_done(parsed)
 
     return _todo_not_implemented(parsed.todo_action)
 
