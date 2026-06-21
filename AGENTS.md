@@ -76,7 +76,14 @@ x-cli/
 ├── CHANGELOG.md       ← 版本历史
 ├── .gitignore
 ├── pyproject.toml     ← Python 项目配置（setuptools + pytest）
-├── x.py               ← 主入口 + 5 个 x todo action（inline，731 行）
+├── x.py               ← 主入口（约 180 行，Phase 4 拆完后）
+├── core/              ← 核心逻辑（被 x.py + plugins/ 引用）
+│   ├── formatting.py  ← CJK-aware display helpers（Phase 4 拆出）
+│   ├── ...            ← models / parser / slug / paths / storage / secrets / config / logging
+├── plugins/           ← 子命令插件（Phase 4 已实装：todo + secret）
+│   ├── __init__.py    ← package docstring + plugin contract 说明
+│   ├── todo.py        ← x todo 子命令族（10 actions）
+│   └── secret.py      ← x secret 子命令族（8 actions）
 ├── core/              ← 核心逻辑（被 x.py 引用）
 │   ├── __init__.py
 │   ├── models.py      ← 数据模型（Task / TaskStatus / Priority / ArchiveReason）
@@ -110,7 +117,7 @@ x-cli/
 ```
 
 **关键约束**：
-- `plugins/` MVP 阶段只放占位 `__init__.py`，**所有 todo action 都在 x.py 里**
+- `plugins/` **Phase 4 已实装**（v0.4.y 后）：每个子命令一个文件（`todo.py` / `secret.py`），约定 `register(parser)` + `run(args)`。`x.py` 通过 `SUBCOMMAND_HANDLERS` 字典分发。**加新子命令 = 加 1 个 `plugins/<name>.py` + 1 行字典条目**。
 - `core/` 只能放核心逻辑代码（可被多个命令共享）
 - `tests/` 只能放测试代码
 - `docs/behaviors/` 只能放 BDD 行为规格（Given-When-Then 格式）
@@ -123,7 +130,7 @@ x-cli/
 | 组件 | 技术 | 备注 |
 |---|---|---|
 | CLI 框架 | `argparse`（stdlib，支持子命令） | 不用 click（避免过度依赖）|
-| 插件机制 | `importlib` 动态加载 | **MVP 阶段未启用**（todo inline 在 x.py，SUBCOMMAND_HANDLERS 字典分发）|
+| 插件机制 | importlib 动态加载 | ✅ **Phase 4 已实装**（`plugins/todo.py` + `plugins/secret.py`，`SUBCOMMAND_HANDLERS` 字典分发）|
 | 数据格式 | **YAML frontmatter**（兼容现有） | **手写 parser**（不引 PyYAML；未知字段 round-trip 不丢）|
 | 数据存储 | 文件系统（同现有：`<xcli_todo_dir>/`） | 不引入 DB |
 | Slug 生成 | `unicodedata` + 硬编码拼音表 | **MVP 阶段不引 pypinyin/jieba**（保持 stdlib-only）|
@@ -434,7 +441,7 @@ handler = importlib.import_module(f"plugins.{subcommand}").run
 - ❌ 不要引入不必要的依赖（"能少即少"原则）— 当前 `dependencies = []`
 - ❌ 不要修改现有 YAML frontmatter 格式（兼容性原则）
 - ❌ 不要创建同名的空目录
-- ❌ **不要在 x.py 单文件里无限堆代码** — MVP 阶段已超 500 行（实际 731 行），Phase 4 拆 `plugins/todo.py` 时必须迁出 5 个 `_todo_*` handler
+- ❌ **不要在 x.py 单文件里无限堆代码** — Phase 4 已拆完（x.py ~180 行 + `plugins/todo.py` 1220 行 + `plugins/secret.py` 430 行）。新加 handler 必须放进对应 plugin 文件，不回到 x.py。
 - ❌ 不要在没有单元测试和行为规格的情况下提交核心逻辑代码
 - ❌ 不要跳过 BDD 阶段直接写测试
 - ❌ 不要跳过 TDD 阶段直接写实现
