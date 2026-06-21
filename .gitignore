@@ -42,3 +42,6 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+
+# Mavis (plan state, sessions, runtime data — not project source)
+.mavis/
