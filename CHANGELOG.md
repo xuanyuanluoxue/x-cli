@@ -10,7 +10,16 @@
 ## [Unreleased]
 
 ### Added
-- 无
+- **`x todo` 自动归档（opt-in）**：查询类命令（`list` / `stats` / `search`）进入时检查并归档 `deadline < today()` 且状态为 active 的任务，归档 `reason=expired`，stdout 顶部打摘要行 `⏰ 自动归档 N 个逾期任务：id1 / id2`。**默认关闭**——不破坏现有用户
+  - **启用方式 A**：配置文件 `<xcli_data_dir>/config.yaml` 加嵌套 `todo.auto_archive: true`
+  - **启用方式 B**：环境变量 `XCLI_TODO_AUTO_ARCHIVE=1`（优先级最高，OR 关系）
+  - **逾期判定**：`deadline < today()`（严格小于）+ status ∈ {pending, in_progress, blocked, waiting} + 未归档；`deadline == today` 不算逾期
+  - **触发命令**：`x todo list` / `x todo stats` / `x todo search`（handler 第一步检查）；`add` / `update` / `archive` 等写命令**不**触发
+  - **search leak 防护**：auto-archive 触发 search 时，强制 `include_archived=False`（除非用户显式 `--archived-only`），刚归档的任务不会 leak 到搜索结果表
+  - **副作用收敛**：单个 task 归档失败（race / broken file）不影响后续 task；fall-through 到下一个 overdue
+  - 实现：`core/config.py:is_auto_archive_enabled()` + `core/storage.py:TaskStore.find_overdue_tasks()` + `plugins/todo.py:_auto_archive_overdue()` + `_render_auto_archive_summary()`
+  - BDD：新增 6 场景 `docs/behaviors/todo-auto-archive-behavior.md`
+  - Tests：新增 8 用例 `tests/test_todo_auto_archive.py`
 
 ### Changed
 - 无

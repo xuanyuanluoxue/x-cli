@@ -395,6 +395,89 @@ class TaskStore:
         self._write_task(task, dst)
         return task
 
+    def find_overdue_tasks(
+        self, today: date | str | None = None
+    ) -> list[Task]:
+        """Return active tasks whose deadline is strictly before ``today``.
+
+        对应 BDD: ``docs/behaviors/todo-auto-archive-behavior.md`` §设计要点.
+
+        "Overdue" criteria — **all** must hold:
+
+        1. ``task.deadline`` is not ``None`` (tasks without a deadline
+           never become overdue).
+        2. ``task.deadline < today`` (strictly less-than; a task whose
+           deadline is *today* is **not** overdue).
+        3. ``task.status`` is one of ``pending`` / ``in_progress`` /
+           ``blocked`` / ``waiting`` — i.e. the active statuses.
+           ``archived`` tasks are excluded so we never re-archive them.
+        4. The task physically lives under ``任务/`` (the folder-based
+           truth that the rest of the store relies on).
+
+        The returned list is sorted by ``(deadline, name)`` so the
+        auto-archive summary line at the top of the user's output is
+        deterministic.
+
+        Parameters
+        ----------
+        today:
+            Either a :class:`datetime.date` or a ``YYYY-MM-DD`` string.
+            Defaults to :func:`date.today` (the local date), which
+            matches the on-disk ``updated`` field that ``archive_task``
+            writes — so a fresh run of ``x todo list`` will archive
+            anything whose deadline is in the past relative to the
+            user's wall clock.
+
+        Returns
+        -------
+        list[Task]
+            Tasks that satisfy the overdue criteria. Empty list is a
+            valid result (and signals the caller to skip the summary
+            line entirely).
+        """
+        if today is None:
+            today_date = date.today()
+        elif isinstance(today, str):
+            parsed = _parse_date(today)
+            today_date = parsed if parsed is not None else date.today()
+        else:
+            today_date = today
+
+        active_statuses = {
+            TaskStatus.PENDING,
+            TaskStatus.IN_PROGRESS,
+            TaskStatus.BLOCKED,
+            TaskStatus.WAITING,
+        }
+
+        overdue: list[Task] = []
+        for task in self.list_tasks(include_archived=False):
+            # Skip tasks with no deadline
+            if not task.deadline:
+                continue
+            # Skip non-active statuses (defensive — list_tasks above
+            # already filters out archived, but a legacy in-memory
+            # status could still slip through if the on-disk frontmatter
+            # disagrees with the folder)
+            if task.status not in active_statuses:
+                continue
+            deadline_date = _parse_date(task.deadline)
+            if deadline_date is None:
+                # Garbled deadline string — treat as "no deadline" so we
+                # never try to archive something whose date we can't parse.
+                continue
+            if deadline_date < today_date:
+                overdue.append(task)
+
+        # Deterministic order: earliest deadline first, then by name.
+        overdue.sort(
+            key=lambda t: (
+                _parse_date(t.deadline) or date.max,
+                t.name or "",
+            )
+        )
+        return overdue
+
     def restore_task(
         self,
         name_or_id: str,
