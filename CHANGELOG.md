@@ -10,7 +10,11 @@
 ## [Unreleased]
 
 ### Added
-- 无
+- **`x secret` 分组增强**：`x secret list --category <c>` 按 category 过滤（大小写不敏感）；`x secret update <name> --category <c>` 修改分组（与 `--value` / `--note` 互不冲突，至少传一个）
+  - 实现：`core/secrets.py:SecretStore.list(category=...)`；`plugins/secret.py` 暴露 CLI 参数
+  - BDD：新增场景 §1.5 / §1.6 / §8.5 / §8.6 `docs/behaviors/secret-behavior.md`
+  - 测试：新增 7 个单元测试 + 4 个 E2E 子进程测试
+  - 向后兼容：`--category` 不传 = 不过滤（之前所有调用不变）
 
 ### Changed
 - 无

@@ -63,6 +63,38 @@
 
 ---
 
+## 场景 1.5：list --category 按分组过滤
+
+**Given**:
+- 测试 DB 含 3 个条目：
+  - minimax（category = `接口密钥`）
+  - openai（category = `接口密钥`）
+  - aliyun_ssh（category = `服务器`）
+
+**When**:
+- `x secret list --category 接口密钥`
+
+**Then**:
+- 退出码 0
+- stdout 表格只含 minimax 和 openai（2 数据行）
+- 不含 aliyun_ssh
+
+---
+
+## 场景 1.6：list --category 无匹配
+
+**Given**:
+- 测试 DB 含 1 个条目（minimax，category = `接口密钥`）
+
+**When**:
+- `x secret list --category 不存在的分组`
+
+**Then**:
+- 退出码 0
+- stdout 含 `📭 暂无密钥` 提示
+
+---
+
 ## 场景 2：get <name> 输出 value
 
 **Given**:
@@ -179,6 +211,35 @@
 - 退出码 0
 - stdout 含 `✅ 密钥已更新：minimax`
 - DB 中 minimax.value = `sk-new`，updated_at = 今天
+
+---
+
+## 场景 8.5：update <name> --category 修改分组
+
+**Given**:
+- DB 含 `minimax`，category = `default`
+
+**When**:
+- `x secret update minimax --category 接口密钥`
+
+**Then**:
+- 退出码 0
+- stdout 含 `✅ 密钥已更新：minimax`
+- DB 中 minimax.category = `接口密钥`，updated_at = 今天
+
+---
+
+## 场景 8.6：update <name> 同时修改 value + category
+
+**Given**:
+- DB 含 `minimax`，value = `sk-old`，category = `default`
+
+**When**:
+- `x secret update minimax --value sk-new --category 接口密钥`
+
+**Then**:
+- 退出码 0
+- DB 中 minimax.value = `sk-new`，minimax.category = `接口密钥`
 
 ---
 
@@ -335,7 +396,7 @@
 - ❌ 加密（master password / Fernet）
 - ❌ 子命令缩写（`x s l`）
 - ❌ TUI（rich / textual）
-- ❌ 标签 / 分组（用 `category` 替代）
+- ❌ 标签（用 `category` 分组替代）
 - ❌ 自动备份到云端（用 `export` 手动备份）
 
 ---

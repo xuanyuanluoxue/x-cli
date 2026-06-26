@@ -300,10 +300,21 @@ class SecretStore:
     #  Read paths
     # --------------------------------------------------------
 
-    def list(self) -> list[SecretEntry]:
-        """Return all entries, sorted by ``name`` (case-insensitive)."""
+    def list(self, category: str | None = None) -> list[SecretEntry]:
+        """Return all entries, sorted by ``name`` (case-insensitive).
+
+        Parameters
+        ----------
+        category:
+            When provided, only return entries whose ``category``
+            matches (case-insensitive). When ``None`` (the default),
+            return all entries.
+        """
         raw = self._load()
         entries = [SecretEntry.from_dict(d) for d in raw]
+        if category is not None:
+            needle = category.casefold()
+            entries = [e for e in entries if e.category.casefold() == needle]
         entries.sort(key=lambda e: e.name.casefold())
         return entries
 

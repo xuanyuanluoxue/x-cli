@@ -53,8 +53,13 @@ def register(parser: argparse.ArgumentParser) -> None:
         dest="secret_action", required=False, metavar="ACTION"
     )
 
-    # list — 无参数
-    sub.add_parser("list", help="列出所有密钥（不显示 value）")
+    # list [--category <c>]
+    sp = sub.add_parser("list", help="列出所有密钥（不显示 value）")
+    sp.add_argument(
+        "--category",
+        dest="category",
+        help="按分组过滤（只显示指定 category 的条目）",
+    )
 
     # get <name> [--full]
     sp = sub.add_parser("get", help="取一个 value（默认复制到剪贴板 + 输出到 stdout）")
@@ -84,13 +89,17 @@ def register(parser: argparse.ArgumentParser) -> None:
     )
     sp.add_argument("--note", default="", help="备注")
 
-    # update <name> [--value <v>] [--note <n>]
-    sp = sub.add_parser("update", help="修改 value / note")
+    # update <name> [--value <v>] [--note <n>] [--category <c>]
+    sp = sub.add_parser("update", help="修改 value / note / category")
     sp.add_argument("name", help="密钥名")
     sp.add_argument("--value", help="新 value（不传则不改）")
     sp.add_argument(
         "--note",
         help="新 note（不传则不改；传空字符串会清空）",
+    )
+    sp.add_argument(
+        "--category",
+        help="新 category（不传则不改）",
     )
 
     # rm <name>
@@ -230,15 +239,16 @@ def _extract_first_key(value: str) -> str | None:
 
 
 def _secret_list(args: argparse.Namespace) -> int:
-    """``x secret list`` — 列出所有密钥（不显示 value）。
+    """``x secret list [--category <c>]`` — 列出所有密钥（不显示 value）。
 
-    对应 BDD：§场景 1。按 name 字典序升序，永不显示 value（硬性约束）。
+    对应 BDD：§场景 1, 1.5, 1.6。按 name 字典序升序，永不显示 value（硬性约束）。
+    ``--category`` 过滤：只返回匹配的条目（大小写不敏感）。
     退出码 0（包含空仓库）。
     """
     from core.secrets import SecretStore  # lazy import
 
     store = SecretStore()
-    entries = sorted(store.list(), key=lambda e: e.name)
+    entries = store.list(category=args.category)
     sys.stdout.write(_render_secret_table(entries))
     return 0
 
@@ -383,16 +393,16 @@ def _secret_set(args: argparse.Namespace) -> int:
 
 
 def _secret_update(args: argparse.Namespace) -> int:
-    """``x secret update <name> [--value <v>] [--note <n>]`` — 修改 value / note。
+    """``x secret update <name> [--value <v>] [--note <n>] [--category <c>]`` — 修改 value / note / category。
 
-    对应 BDD：§场景 8-9。
-    - 至少要指定 ``--value`` 或 ``--note`` 之一（否则退码 2）
+    对应 BDD：§场景 8-9, 8.5, 8.6。
+    - 至少要指定 ``--value`` 或 ``--note`` 或 ``--category`` 之一（否则退码 2）
     - ``--note ""`` 显式传空串表示清空 note
     - 找不到 → 退出码 3
     """
-    if args.value is None and args.note is None:
+    if args.value is None and args.note is None and args.category is None:
         print(
-            "❌ 至少要指定 --value 或 --note 之一",
+            "❌ 至少要指定 --value / --note / --category 之一",
             file=sys.stderr,
         )
         return 2
@@ -401,7 +411,9 @@ def _secret_update(args: argparse.Namespace) -> int:
 
     store = SecretStore()
     try:
-        entry = store.update(args.name, value=args.value, note=args.note)
+        entry = store.update(
+            args.name, value=args.value, note=args.note, category=args.category
+        )
     except SecretNotFoundError:
         print(f"❌ 密钥不存在：{args.name}", file=sys.stderr)
         return 3

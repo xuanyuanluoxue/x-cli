@@ -2,7 +2,7 @@
 
 > **目标读者**：使用 x-cli 的人类（包括未来的你）
 > **说明**：本文档列出所有命令的完整参考
-> **状态**：v0.2.0 MVP 实际实现（2026-06-21）
+> **状态**：v0.5.0 实际实现（2026-06-21，含 2026-06-26 的 `x secret` --category 增强）
 
 ---
 
@@ -318,7 +318,79 @@ x todo stats
 
 ---
 
-## 3. `x skill` — 技能管理（**未实现**）
+## 3. `x secret` — 密钥管理（独立 JSON DB）
+
+### 3.1 子命令概览
+
+| 子命令 | 状态 | 说明 |
+|--------|------|------|
+| `x secret list` | ✅ | 列出条目 | `--category` |
+| `x secret get <name>` | ✅ | 取 value（自动复制到剪贴板） | `--full` / `--no-clipboard` / `--no-stdout` |
+| `x secret set <name>` | ✅ | 新增条目 | `--value` / `--category` / `--note` |
+| `x secret update <name>` | ✅ | 修改 value / note / category | `--value` / `--note` / `--category` |
+| `x secret rm <name>` | ✅ | 删除条目 | — |
+| `x secret search <关键词>` | ✅ | 按 name/note 模糊搜（不搜 value） | — |
+| `x secret import` | ✅ | 从 `<legacy-credentials-dir>/*.md` 迁移 | `--from` |
+| `x secret export` | ✅ | JSON 备份 | `--to` |
+
+存储：`%LOCALAPPDATA%\x-cli\secrets.json`（Win）/ `~/.local/share/x-cli/secrets.json`（Unix）。
+覆盖：`XCLI_SECRETS_DIR` 环境变量指向 JSON 文件。
+
+---
+
+### 3.2 `x secret list [--category <c>]` — 列出条目
+
+**用法**：
+```bash
+x secret list [--category <分组>]
+```
+
+**选项**：
+
+| 选项 | 说明 |
+|------|------|
+| `--category <分组>` | 按 category 过滤（**大小写不敏感**）；不传 = 不过滤 |
+
+> 排序：按 `name` 字典序升序；**绝不**显示 value（硬性约束，避免 `> log.txt` 泄露）。
+
+**示例**：
+```bash
+x secret list
+x secret list --category 接口密钥
+```
+
+---
+
+### 3.3 `x secret update <name>` — 修改条目
+
+**用法**：
+```bash
+x secret update <name> [--value <v>] [--note <n>] [--category <c>]
+```
+
+**选项**（**至少要传一个**）：
+
+| 选项 | 说明 |
+|------|------|
+| `--value <v>` | 新 value |
+| `--note <n>` | 新 note（传 `""` 显式清空）|
+| `--category <c>` | 新 category（覆盖原分组）|
+
+**示例**：
+```bash
+x secret update minimax --value sk-new
+x secret update minimax --category 接口密钥
+x secret update minimax --value sk-new --category 接口密钥
+```
+
+**退出码**：
+- 0：成功
+- 2：未传任何 `--value` / `--note` / `--category`
+- 3：密钥不存在
+
+---
+
+## 4. `x skill` — 技能管理（**未实现**）
 
 ### 3.1 子命令概览
 
@@ -333,7 +405,7 @@ x todo stats
 
 ---
 
-## 4. `x system` — 系统工具（**未实现**）
+## 5. `x system` — 系统工具（**未实现**）
 
 ### 4.1 子命令概览
 
@@ -346,16 +418,16 @@ x todo stats
 
 ---
 
-## 5. 退出码速查表
+## 6. 退出码速查表
 
 | 退出码 | 含义 | 触发场景 |
 |--------|------|---------|
 | 0 | 成功 | 所有 action 正常完成 |
 | 1 | 通用错误 | 未知子命令 / 占位 action |
-| 2 | 参数错误 | 非法 status/priority/reason/deadline / 缺必填参数 / 缺 --xxx |
-| 3 | 任务不存在 | list / update / archive 找不到任务 |
-| 4 | 任务已归档 | 重复 archive / 对已归档任务 update |
-| 5 | 数据完整性 | YAML 解析失败 / 归档目标碰撞 |
+| 2 | 参数错误 | 非法 status/priority/reason/deadline / 缺必填参数 / 缺 --xxx / secret update 无 --value/--note/--category |
+| 3 | 任务/密钥不存在 | list / update / archive 找不到任务 / secret get/update/rm 找不到密钥 |
+| 4 | 已存在/已归档 | 重复 archive / 对已归档任务 update / secret set 已存在 |
+| 5 | 数据完整性 | YAML 解析失败 / 归档目标碰撞 / secret import 源目录不存在 / JSON 损坏 |
 
 ---
 
@@ -424,10 +496,11 @@ x todo add --<TAB><TAB>
 | `x todo update` | [todo-update-behavior.md](behaviors/todo-update-behavior.md) | 8 |
 | `x todo archive` | [todo-archive-behavior.md](behaviors/todo-archive-behavior.md) | 8 |
 | `x todo stats` | [todo-stats-behavior.md](behaviors/todo-stats-behavior.md) | 7 |
-| **合计** | — | **39 场景** |
+| `x secret *` | [secret-behavior.md](behaviors/secret-behavior.md) | 19（含 1.5/1.6/2.5/8.5/8.6 增强场景） |
+| **合计** | — | **58 场景** |
 
-每个 BDD 场景都有对应的 pytest 用例（在 `tests/test_todo_*.py`）。
+每个 BDD 场景都有对应的 pytest 用例（在 `tests/test_todo_*.py` + `tests/test_secrets.py` + `tests/test_e2e_*.py`）。
 
 ---
 
-*本文档是活文档，随命令集扩展更新。MVP 实际状态时间：2026-06-21。*
+*本文档是活文档，随命令集扩展更新。最后更新：2026-06-26（新增 x secret 子命令 + --category 增强）。*
