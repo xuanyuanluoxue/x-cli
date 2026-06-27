@@ -38,6 +38,7 @@ from typing import Any
 from core.parser import parse_yaml
 from core.paths import (
     xcli_config_path,
+    xcli_data_dir,
     xcli_log_path,
     xcli_secrets_path,
     xcli_todo_dir,
@@ -276,6 +277,109 @@ class AppConfig:
         )
         lines.append("")
         return "\n".join(lines)
+
+
+# ============================================================
+#  Auto-archive (opt-in)
+# ============================================================
+
+
+# Env-var truthy spellings (case-insensitive). Anything else → disabled
+# (or for the "non-empty non-truthy" branch in :func:`is_auto_archive_enabled`,
+# we treat non-empty as enabled to be permissive — see docstring).
+_AUTO_ARCHIVE_TRUTHY: frozenset[str] = frozenset(
+    {"1", "true", "yes", "on"}
+)
+
+
+def is_auto_archive_enabled(env: dict[str, str] | None = None) -> bool:
+    """Return ``True`` iff the ``x todo`` auto-archive feature is enabled.
+
+    对应 BDD: ``docs/behaviors/todo-auto-archive-behavior.md`` §设计要点.
+
+    Resolution order (any one enabled → enabled, OR relation):
+
+    1. ``$XCLI_TODO_AUTO_ARCHIVE`` env var — any non-empty value whose
+       lower-cased form is in ``{"1", "true", "yes", "on"}`` (and a
+       permissive catch-all for any other non-empty value, to match the
+       spirit of "set it to anything truthy and it works").
+    2. ``<xcli_data_dir>/config.yaml`` with ``todo.auto_archive: true``.
+
+    Note: this helper does **not** consult ``$XCLI_CONFIG`` or the
+    ``--config <path>`` CLI flag — those paths require constructing a
+    full :class:`AppConfig` and are intentionally out of scope for the
+    fast-path check inside ``x todo list`` / ``stats`` / ``search``.
+
+    Parameters
+    ----------
+    env:
+        Optional env-var override dict for testability. Defaults to
+        :data:`os.environ` when ``None``. The shape mirrors
+        :data:`os.environ` (a ``str → str`` mapping).
+    """
+    env_map = env if env is not None else os.environ
+
+    # 1. Env var (highest priority — matches the BDD env-var beats YAML spec).
+    raw = env_map.get("XCLI_TODO_AUTO_ARCHIVE", "")
+    raw = raw.strip().lower() if isinstance(raw, str) else ""
+    if raw:
+        if raw in _AUTO_ARCHIVE_TRUTHY:
+            return True
+        # Permissive catch-all: any other non-empty value (e.g. "enabled",
+        # " 1 ", "ON") also enables. Reject only the explicit-falsy set.
+        if raw not in {"0", "false", "no", "off", ""}:
+            return True
+
+    # 2. Default config file under <xcli_data_dir>/config.yaml.
+    try:
+        cfg_path = xcli_data_dir() / "config.yaml"
+    except OSError:
+        # xcli_data_dir() can fail in pathological envs (no home dir, no
+        # LOCALAPPDATA). Treat as "no config" — feature stays disabled.
+        return False
+    if not cfg_path.is_file():
+        return False
+    try:
+        text = cfg_path.read_text(encoding="utf-8")
+        parsed = parse_yaml(text)
+    except (OSError, ValueError):
+        # Broken config / unreadable file → fall back to disabled.
+        # Surfacing the error here would spam the user every time they
+        # run ``x todo list``, which is the wrong trade-off. Users who
+        # want to debug config errors can run ``x --config init``.
+        return False
+    if not isinstance(parsed, dict):
+        return False
+    todo_section = parsed.get("todo")
+    if not isinstance(todo_section, dict):
+        return False
+    return _coerce_bool(todo_section.get("auto_archive"), default=False)
+
+
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    """Coerce a YAML scalar to ``bool``.
+
+    Accepts the canonical YAML boolean spellings (``true`` / ``false`` /
+    ``yes`` / ``no`` / ``on`` / ``off`` / ``null``) and the integers
+    ``0`` and ``1``. Anything else (e.g. a string that isn't recognised)
+    falls back to ``default`` — we **don't** raise, because the
+    auto-archive feature is opt-in and we don't want a typo in
+    ``config.yaml`` to surface on every ``x todo list`` invocation.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int):
+        # 0 → False, anything else → True (matches Python's bool() of int)
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in _AUTO_ARCHIVE_TRUTHY:
+            return True
+        if lowered in {"0", "false", "no", "off", ""}:
+            return False
+    return default
 
 
 # ============================================================

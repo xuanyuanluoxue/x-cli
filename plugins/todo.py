@@ -24,6 +24,7 @@ from pathlib import Path
 from typing import Any, Callable, Sequence
 
 from core.formatting import display_width, pad
+from core.config import is_auto_archive_enabled
 from core.models import ArchiveReason, Priority, Task, TaskStatus
 from core.parser import parse_frontmatter
 from core.slug import parse_tags, unique_slug, validate_deadline
@@ -505,10 +506,28 @@ def _todo_search(args: argparse.Namespace) -> int:
         return 2
 
     store = TaskStore()
+
+    # Auto-archive hook (opt-in). Per BDD §场景 5 the search result
+    # table must NOT contain the just-archived overdue tasks. The
+    # default ``search_tasks`` includes both active + archived, so
+    # without intervention the freshly-archived tasks would leak into
+    # the result. Fix: when auto-archive just fired, force
+    # ``include_archived=False`` UNLESS the user explicitly asked for
+    # ``--archived-only`` (in which case the summary line is still
+    # useful as a hint, and the user clearly wants to see archived).
+    archived = _auto_archive_overdue(store)
+    sys.stdout.write(_render_auto_archive_summary(archived))
+
+    auto_archived = bool(archived)
+    include_archived_effective = archived_only or (
+        not active_only and not auto_archived
+    )
+    include_active_effective = not archived_only
+
     matches = store.search_tasks(
         keyword,
-        include_archived=not active_only,
-        include_active=not archived_only,
+        include_archived=include_archived_effective,
+        include_active=include_active_effective,
     )
 
     # Optional status filter (BDD §场景 10)
@@ -762,6 +781,93 @@ def _matches_list_filters(task, *, status, priority, tag) -> bool:
     return True
 
 
+# ============================================================
+#  Auto-archive hook (opt-in, shared by list / stats / search)
+# ============================================================
+
+
+def _auto_archive_overdue(store: TaskStore) -> list[Task]:
+    """If auto-archive is enabled, archive overdue tasks and return them.
+
+    对应 BDD: ``docs/behaviors/todo-auto-archive-behavior.md``.
+
+    Behaviour:
+
+    * **Default disabled** — when :func:`core.config.is_auto_archive_enabled`
+      returns ``False`` (no env var, no config flag), this is a no-op
+      and returns ``[]``. BDD §场景 3 (the "must not break existing users"
+      invariant) depends on this branch.
+    * **Archive + inventory update** — for each overdue task, call
+      :meth:`TaskStore.archive_task` with ``reason="expired"`` and
+      refresh the top-level ``TODO.md`` inventory via
+      :meth:`TaskStore.update_inventory_on_archive`. Identical to the
+      manual ``x todo archive <id> --reason expired`` path.
+    * **Defensive** — a single broken file / race condition does not
+      poison the whole list/stats/search call. Failures are logged to
+      ``stderr`` and the loop continues with the next overdue task.
+    * **Deterministic ordering** — the returned list is sorted by
+      ``(deadline, name)`` ascending, matching the order in
+      :meth:`TaskStore.find_overdue_tasks` so the summary line the
+      caller renders is stable.
+
+    The caller is responsible for rendering the summary line on
+    ``stdout`` (use :func:`_render_auto_archive_summary`). This
+    function only does side-effects.
+    """
+    if not is_auto_archive_enabled():
+        return []
+
+    overdue = store.find_overdue_tasks()
+    if not overdue:
+        return []
+
+    archived: list[Task] = []
+    for task in overdue:
+        old_status = task.status
+        try:
+            moved = store.archive_task(task.id, reason="expired")
+        except (
+            TaskNotFoundError,
+            TaskAlreadyArchivedError,
+            FileExistsError,
+        ) as exc:
+            # Race / collision / already archived — log and move on so a
+            # single bad task doesn't kill the user's list/stats/search
+            # call. Mirror the manual archive handler's error suppression
+            # for consistency.
+            print(
+                f"⚠️ 自动归档失败：{task.name}（{exc}）",
+                file=sys.stderr,
+            )
+            continue
+        except Exception as exc:  # noqa: BLE001 — defensive, see above
+            print(
+                f"⚠️ 自动归档失败：{task.name}（{exc}）",
+                file=sys.stderr,
+            )
+            continue
+        archived.append(moved)
+        # Maintain inventory (same best-effort pattern as _todo_archive).
+        try:
+            store.update_inventory_on_archive(old_status)
+        except Exception:  # noqa: BLE001 — defensive
+            pass
+
+    return archived
+
+
+def _render_auto_archive_summary(archived: list[Task]) -> str:
+    """Render the one-line summary printed at the top of stdout.
+
+    Returns an empty string when ``archived`` is empty (BDD §场景 2: 0
+    tasks → no summary line, don't pollute the user's output).
+    """
+    if not archived:
+        return ""
+    ids = " / ".join(t.id for t in archived)
+    return f"⏰ 自动归档 {len(archived)} 个逾期任务：{ids}\n"
+
+
 def _todo_list(args: argparse.Namespace) -> int:
     """``x todo list [选项]`` — 列出任务表格（已被 run 解析过）。
 
@@ -787,8 +893,18 @@ def _todo_list(args: argparse.Namespace) -> int:
     tag: str | None = args.tag
     include_archived: bool = bool(getattr(args, "include_archived", False))
 
-    # 2. 取任务列表（默认不含归档；--all 包含）
+    # 0. Auto-archive hook (opt-in, default disabled).
+    #    Per BDD §场景 1 — first step on entry. We do this AFTER
+    #    validation because a user-supplied --status invalid shouldn't
+    #    silently trigger an archive; but the archive itself runs once
+    #    per list invocation so a follow-up --all or --status filter
+    #    call sees the cleaned store. Note: archive errors are already
+    #    swallowed inside _auto_archive_overdue.
     store = TaskStore()
+    archived = _auto_archive_overdue(store)
+    sys.stdout.write(_render_auto_archive_summary(archived))
+
+    # 2. 取任务列表（默认不含归档；--all 包含）
     tasks = store.list_tasks(include_archived=include_archived)
 
     # 3. 应用过滤（AND 关系，BDD §场景 7）
@@ -1025,6 +1141,11 @@ def _todo_stats(args: Sequence[str]) -> int:
     4. If any broken files were found, print error lines to stderr and
        return exit code ``5`` (custom error code for "data integrity
        issues"); otherwise return ``0``.
+
+    Plus (v0.5.x, opt-in): if auto-archive is enabled, run the hook
+    before computing stats — the user-facing numbers then reflect the
+    archived state. See
+    ``docs/behaviors/todo-auto-archive-behavior.md`` §场景 4.
     """
     parser = argparse.ArgumentParser(
         prog="x todo stats",
@@ -1033,6 +1154,13 @@ def _todo_stats(args: Sequence[str]) -> int:
     parser.parse_args(list(args))  # 当前不接受额外参数
 
     store = TaskStore()
+
+    # Auto-archive hook (opt-in). Summary goes to stdout BEFORE the
+    # stats block so the user sees "you archived 3, here's the
+    # updated stats" in one screen.
+    archived = _auto_archive_overdue(store)
+    sys.stdout.write(_render_auto_archive_summary(archived))
+
     broken = _find_broken_tasks(store.todo_dir)
 
     stats = store.stats()

@@ -58,6 +58,7 @@ XCLI_TODO_DIR=/tmp/test python x.py todo list
 | `x todo update <id>` | ✅ | 更新任务 | `--status` / `--priority` / `--deadline` / `--tags` |
 | `x todo archive <id>` | ✅ | 归档任务 | `--reason` |
 | `x todo stats` | ✅ | 统计信息 | 无 |
+| `x todo search <keyword>` | ✅ | 跨字段模糊搜索 | `--active-only` / `--archived-only` / `--status` |
 | `x todo init` | ❌ | 初始化 TODO 目录 | — |
 | `x todo restore` | ❌ | 从归档还原 | — |
 
@@ -109,6 +110,15 @@ zimeiti-geren-ip        自媒体-个人IP      pending      medium      -
 ```
 
 > 归档任务的 Status 列会附 reason：`archived (done)`
+
+**自动归档（opt-in）**：
+
+当配置文件 `<xcli_data_dir>/config.yaml` 设 `todo.auto_archive: true`，或环境变量 `XCLI_TODO_AUTO_ARCHIVE=1`（非零非空字符串）时，本命令进入时会**先**扫描活动任务，自动归档 `deadline < today()` 的任务（`reason=expired`），再输出表格。
+
+- stdout **顶部**打印一行摘要：`⏰ 自动归档 N 个逾期任务：id1 / id2 / ...`
+- 0 个逾期任务时**不**打印摘要（不污染输出）
+- 仅影响 `list` / `stats` / `search` 三个查询类命令；`add` / `update` / `archive` 等写命令不触发
+- 详细 BDD：[docs/behaviors/todo-auto-archive-behavior.md](behaviors/todo-auto-archive-behavior.md)
 
 **退出码**：
 - 0：成功（包括空仓库/无匹配，输出 `📭 没有任务`）
@@ -312,9 +322,51 @@ x todo stats
 - `🔥 高优先级`：只算 active 的 high（pending + in_progress）
 - 详细 BDD：`docs/behaviors/todo-stats-behavior.md`
 
+**自动归档（opt-in）**：
+
+当配置文件 `<xcli_data_dir>/config.yaml` 设 `todo.auto_archive: true`，或环境变量 `XCLI_TODO_AUTO_ARCHIVE=1` 时，本命令进入时**先**归档所有 `deadline < today()` 的活动任务（`reason=expired`），再计算统计数字。这意味着：
+
+- stdout **顶部**会先打印一行摘要：`⏰ 自动归档 N 个逾期任务：id1 / id2 / ...`
+- 紧接其后才是统计输出（`archived` 计数已包含刚归档的任务）
+- 0 个逾期任务时**不**打印摘要
+- 详细 BDD：[docs/behaviors/todo-auto-archive-behavior.md](behaviors/todo-auto-archive-behavior.md)
+
 **退出码**：
 - 0：成功（无 broken 文件）
 - 5：检测到 YAML 解析失败的文件（stderr 输出每条错误，stdout 仍打印统计）
+
+---
+
+### 2.7 `x todo search <keyword>` — 跨字段模糊搜索
+
+**用法**：
+```bash
+x todo search <关键词> [选项]
+```
+
+**选项**：
+
+| 选项 | 说明 |
+|------|------|
+| `--active-only` | 只搜活动任务（默认搜全部） |
+| `--archived-only` | 只搜归档任务（与 `--active-only` 互斥） |
+| `--status <状态>` | 按 status 过滤（与搜索结果 AND 关系） |
+
+搜索范围：跨字段模糊匹配 `name` + `note` + `tags`（不区分大小写；逐字符宽松匹配）。
+
+**自动归档（opt-in）**：
+
+当配置文件 `<xcli_data_dir>/config.yaml` 设 `todo.auto_archive: true`，或环境变量 `XCLI_TODO_AUTO_ARCHIVE=1` 时，本命令进入时**先**归档所有 `deadline < today()` 的活动任务（`reason=expired`），再执行搜索。
+
+- stdout **顶部**先打印一行摘要：`⏰ 自动归档 N 个逾期任务：id1 / id2 / ...`
+- 紧接其后才是搜索结果表
+- **搜索 leak 防护**：auto-archive 触发 search 时，**默认**强制 `include_archived=False`（刚归档的逾期任务**不会**出现在结果表里）。如果用户显式传 `--archived-only`，则保留 `include_archived=True`（用户明确想要归档搜索）
+- 0 个逾期任务时**不**打印摘要
+- 详细 BDD：[docs/behaviors/todo-auto-archive-behavior.md](behaviors/todo-auto-archive-behavior.md)
+
+**退出码**：
+- 0：成功（0 匹配也算 0）
+- 2：关键词为空 / `--active-only` 与 `--archived-only` 同时使用 / 非法 `--status` 值
 
 ---
 
@@ -392,7 +444,7 @@ x secret update minimax --value sk-new --category 接口密钥
 
 ## 4. `x skill` — 技能管理（**未实现**）
 
-### 3.1 子命令概览
+### 4.1 子命令概览
 
 | 子命令 | 状态 | 说明 |
 |--------|------|------|
@@ -407,7 +459,7 @@ x secret update minimax --value sk-new --category 接口密钥
 
 ## 5. `x system` — 系统工具（**未实现**）
 
-### 4.1 子命令概览
+### 5.1 子命令概览
 
 | 子命令 | 状态 | 说明 |
 |--------|------|------|
@@ -431,9 +483,9 @@ x secret update minimax --value sk-new --category 接口密钥
 
 ---
 
-## 6. 缩写支持（**未实现**）
+## 7. 缩写支持（**未实现**）
 
-### 6.1 子命令缩写
+### 7.1 子命令缩写
 
 **MVP 阶段**：不支持缩写（保持简单）。
 
@@ -446,15 +498,15 @@ x todo list
 x t l
 ```
 
-### 6.2 自动缩写（**无计划**）
+### 7.2 自动缩写（**无计划**）
 
 > 不计划实现 — argparse 不原生支持，argcomplete Tab 补全更直接。
 
 ---
 
-## 7. Tab 补全（**未实现**）
+## 8. Tab 补全（**未实现**）
 
-### 7.1 启用 Tab 补全（计划）
+### 8.1 启用 Tab 补全（计划）
 
 **bash**：
 ```bash
@@ -468,7 +520,7 @@ eval "$(register-python-argcomplete x)"
 eval "$(register-python-argcomplete x)"
 ```
 
-### 7.2 补全示例（计划）
+### 8.2 补全示例（计划）
 
 ```bash
 x <TAB><TAB>
@@ -485,7 +537,7 @@ x todo add --<TAB><TAB>
 
 ---
 
-## 8. BDD 行为规格索引
+## 9. BDD 行为规格索引
 
 每个 action 都有完整的 Given-When-Then 场景文档：
 
@@ -496,11 +548,13 @@ x todo add --<TAB><TAB>
 | `x todo update` | [todo-update-behavior.md](behaviors/todo-update-behavior.md) | 8 |
 | `x todo archive` | [todo-archive-behavior.md](behaviors/todo-archive-behavior.md) | 8 |
 | `x todo stats` | [todo-stats-behavior.md](behaviors/todo-stats-behavior.md) | 7 |
+| `x todo search` | [todo-list-behavior.md](behaviors/todo-list-behavior.md) | （合并在 list） |
+| `x todo auto-archive` | [todo-auto-archive-behavior.md](behaviors/todo-auto-archive-behavior.md) | 6 |
 | `x secret *` | [secret-behavior.md](behaviors/secret-behavior.md) | 19（含 1.5/1.6/2.5/8.5/8.6 增强场景） |
-| **合计** | — | **58 场景** |
+| **合计** | — | **64 场景** |
 
-每个 BDD 场景都有对应的 pytest 用例（在 `tests/test_todo_*.py` + `tests/test_secrets.py` + `tests/test_e2e_*.py`）。
+每个 BDD 场景都有对应的 pytest 用例（在 `tests/test_todo_*.py` + `tests/test_secrets.py` + `tests/test_todo_auto_archive.py` + `tests/test_e2e_*.py`）。
 
 ---
 
-*本文档是活文档，随命令集扩展更新。最后更新：2026-06-26（新增 x secret 子命令 + --category 增强）。*
+*本文档是活文档，随命令集扩展更新。最后更新：2026-06-26（merge: secret --category + todo auto-archive）。*
