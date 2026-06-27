@@ -10,6 +10,25 @@
 ## [Unreleased]
 
 ### Added
+- 无
+
+### Changed
+- 无
+
+### Deprecated
+- 无
+
+### Removed
+- 无
+
+### Fixed
+- 无
+
+---
+
+## [0.6.0] - 2026-06-27 — secret --category + todo auto-archive
+
+### Added
 - **`x secret` 分组增强**：`x secret list --category <c>` 按 category 过滤（大小写不敏感）；`x secret update <name> --category <c>` 修改分组（与 `--value` / `--note` 互不冲突，至少传一个）
   - 实现：`core/secrets.py:SecretStore.list(category=...)`；`plugins/secret.py` 暴露 CLI 参数
   - BDD：新增场景 §1.5 / §1.6 / §8.5 / §8.6 `docs/behaviors/secret-behavior.md`
@@ -20,11 +39,12 @@
   - **启用方式 B**：环境变量 `XCLI_TODO_AUTO_ARCHIVE=1`（优先级最高，OR 关系）
   - **逾期判定**：`deadline < today()`（严格小于）+ status ∈ {pending, in_progress, blocked, waiting} + 未归档；`deadline == today` 不算逾期
   - **触发命令**：`x todo list` / `x todo stats` / `x todo search`（handler 第一步检查）；`add` / `update` / `archive` 等写命令**不**触发
-  - **search leak 防护**：auto-archive 触发 search 时，强制 `include_archived=False`（除非用户显式 `--archived-only`），刚归档的任务不会 leak 到搜索结果表
+  - **search leak 防护**：auto-archive 触发 search 时，强制 `include_archived=False`（除非用户显式 `--archived-only`），刚归档的逾期任务**不会**出现在结果表里
   - **副作用收敛**：单个 task 归档失败（race / broken file）不影响后续 task；fall-through 到下一个 overdue
   - 实现：`core/config.py:is_auto_archive_enabled()` + `core/storage.py:TaskStore.find_overdue_tasks()` + `plugins/todo.py:_auto_archive_overdue()` + `_render_auto_archive_summary()`
   - BDD：新增 6 场景 `docs/behaviors/todo-auto-archive-behavior.md`
   - Tests：新增 8 用例 `tests/test_todo_auto_archive.py`
+- **`AGENTS.md §4.4` Git 分支策略**：每个功能在 `feature/<name>` 分支开发、测试通过后 `--no-ff` 合并到 dev；为后续多人团队开发铺路
 
 ### Changed
 - 无
@@ -40,6 +60,7 @@
   - 实现：`plugins/secret.py:_extract_first_key()` + `_KEY_LINE_RE`
   - BDD：新增场景 §2.5 `docs/behaviors/secret-behavior.md`
   - 测试：新增 `test_e2e_get_extracts_api_key_from_multiline_value` + 11/11 regex unit checks
+- **修复 12 个 date-sensitive flaky test**：3 个 `test_todo_update.py` 测试（`test_update_status_changes_only_status` / `test_update_multi_fields_replaces_tags_and_others` / `test_update_clear_deadline_via_empty_string`）硬编码 `updated = "2026-06-21"`，9 个 `test_todo_auto_archive.py` 测试硬编码 archive 文件夹名 `"20260626-*"`。全部改为 `date.today().isoformat()` / `_TODAY_YMD`，未来不会再因日期漂移 fail
 
 ---
 
@@ -200,6 +221,8 @@
 
 ---
 
-[Unreleased]: https://github.com/x-cli/x-cli/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/x-cli/x-cli/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/x-cli/x-cli/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/x-cli/x-cli/compare/v0.2.0...v0.5.0
 [0.2.0]: https://github.com/x-cli/x-cli/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/x-cli/x-cli/releases/tag/v0.1.0
