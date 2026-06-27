@@ -130,7 +130,7 @@ def test_update_status_changes_only_status(store: TaskStore) -> None:
     assert metadata["priority"] == "high"
     assert metadata["deadline"] == "2026-08-31"
     assert metadata["created"] == "2026-03-27"
-    assert metadata["updated"] == "2026-06-21"  # auto-set
+    assert metadata["updated"] == date.today().isoformat()  # auto-set
     assert metadata["folder"] == "任务/科目一模拟考"  # 未变（不移动）
 
 
@@ -161,7 +161,7 @@ def test_update_multi_fields_replaces_tags_and_others(store: TaskStore) -> None:
     assert metadata["priority"] == "medium"
     assert metadata["deadline"] == "2026-07-15"
     assert metadata["tags"] == ["驾照"]
-    assert metadata["updated"] == "2026-06-21"
+    assert metadata["updated"] == date.today().isoformat()
 
 
 # ============================================================
@@ -236,7 +236,7 @@ def test_update_clear_deadline_via_empty_string(store: TaskStore) -> None:
     on_disk = (store.active_dir / "kemu1" / "TODO.md").read_text(encoding="utf-8")
     metadata, _ = parse_frontmatter(on_disk)
     assert "deadline" not in metadata
-    assert metadata["updated"] == "2026-06-21"
+    assert metadata["updated"] == date.today().isoformat()
 
 
 # ============================================================

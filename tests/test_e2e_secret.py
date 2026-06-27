@@ -121,6 +121,48 @@ def test_e2e_set_then_list(x_path, secrets_dir):
     assert "sk-test1234" not in out2
 
 
+def test_e2e_list_by_category_filters(x_path, secrets_dir):
+    """BDD scenario 1.5: list --category filters by category."""
+    _run_x(
+        x_path,
+        ["secret", "set", "minimax", "--value", "sk-1", "--category", "接口密钥"],
+        secrets_dir,
+    )
+    _run_x(
+        x_path,
+        ["secret", "set", "openai", "--value", "sk-2", "--category", "接口密钥"],
+        secrets_dir,
+    )
+    _run_x(
+        x_path,
+        ["secret", "set", "aliyun_ssh", "--value", "ssh-3", "--category", "服务器"],
+        secrets_dir,
+    )
+
+    code, out, _ = _run_x(
+        x_path, ["secret", "list", "--category", "接口密钥"], secrets_dir
+    )
+    assert code == 0
+    assert "minimax" in out
+    assert "openai" in out
+    assert "aliyun_ssh" not in out
+
+
+def test_e2e_list_by_category_no_match(x_path, secrets_dir):
+    """BDD scenario 1.6: list --category with no match shows empty message."""
+    _run_x(
+        x_path,
+        ["secret", "set", "minimax", "--value", "sk-1", "--category", "接口密钥"],
+        secrets_dir,
+    )
+
+    code, out, _ = _run_x(
+        x_path, ["secret", "list", "--category", "不存在的分组"], secrets_dir
+    )
+    assert code == 0
+    assert "📭" in out or "暂无" in out
+
+
 # ============================================================
 #  BDD scenario 2: get prints value to stdout + warning to stderr
 # ============================================================
@@ -294,6 +336,45 @@ def test_e2e_update_changes_value(x_path, secrets_dir):
     _, out2, _ = _run_x(x_path, ["secret", "get", "minimax"], secrets_dir)
     assert "sk-new" in out2
     assert "sk-old" not in out2
+
+
+def test_e2e_update_changes_category(x_path, secrets_dir):
+    """BDD scenario 8.5: update --category changes the category."""
+    _run_x(
+        x_path,
+        ["secret", "set", "minimax", "--value", "sk-x", "--category", "default"],
+        secrets_dir,
+    )
+    code, out, _ = _run_x(
+        x_path,
+        ["secret", "update", "minimax", "--category", "接口密钥"],
+        secrets_dir,
+    )
+    assert code == 0
+    assert "✅" in out
+
+    # Verify via get --full
+    _, out2, _ = _run_x(x_path, ["secret", "get", "minimax", "--full"], secrets_dir)
+    assert "接口密钥" in out2
+
+
+def test_e2e_update_value_and_category(x_path, secrets_dir):
+    """BDD scenario 8.6: update --value + --category together."""
+    _run_x(
+        x_path,
+        ["secret", "set", "minimax", "--value", "sk-old", "--category", "default"],
+        secrets_dir,
+    )
+    code, out, _ = _run_x(
+        x_path,
+        ["secret", "update", "minimax", "--value", "sk-new", "--category", "接口密钥"],
+        secrets_dir,
+    )
+    assert code == 0
+    assert "✅" in out
+
+    _, out2, _ = _run_x(x_path, ["secret", "get", "minimax"], secrets_dir)
+    assert "sk-new" in out2
 
 
 def test_e2e_update_nonexistent_exits_3(x_path, secrets_dir):

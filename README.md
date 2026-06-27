@@ -202,3 +202,75 @@ This tool is small and personal. Bug reports and PRs are welcome —
 please open an issue first if you're planning a non-trivial change so
 we can discuss the design before code is written. AI agents reading
 this repo **must** start by reading [AGENTS.md](AGENTS.md).
+
+---
+
+## 协作开发规范
+
+为确保代码质量和项目管理规范，所有协作者必须遵守以下规则：
+
+### 🔒 分支权限规则
+
+1. **禁止直接提交到 main 分支**
+   - 所有协作者禁止直接向 `main` 主分支提交代码
+   - 禁止向 `main` 分支发起合并请求（Pull Request）
+   - `main` 分支仅用于正式版本发布
+
+2. **基于 dev 分支开发**
+   - 所有功能开发、问题修复，必须基于公共 `dev` 分支创建个人功能分支
+   - 分支命名规范：`feature/功能描述` 或 `fix/问题描述`
+   - 示例：`feature/add-note-parameter`、`fix/secret-list-bug`
+
+3. **禁止直接推送到 dev 分支**
+   - 开发完成后，仅允许向公共 `dev` 分支提交 Pull Request (PR)
+   - 禁止以任何方式直接推送代码到 `dev` 分支
+   - 所有 PR 必须经过代码审查流程
+
+4. **PR 审查规则**
+   - 所有合入 `dev` 分支的 PR，必须经仓库管理员审核通过后方可合并
+   - 至少 1 名管理员 Approve 才能合并
+   - PR 必须关联相关的 Issue（如适用）
+
+5. **main 分支发布规则**
+   - `main` 分支仅用于正式版本发布
+   - 由管理员统一从验证通过的 `dev` 分支合入
+   - 普通协作者无操作权限
+
+### 📋 开发流程
+
+1. **Fork 仓库**（如适用）
+   - Fork 整个仓库到个人账号
+   - 设置个人仓库的默认分支为 `dev`
+
+2. **创建功能分支**
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/x-cli.git
+   cd x-cli
+   git checkout dev
+   git pull upstream dev
+   git checkout -b feature/your-feature-name
+   ```
+
+3. **开发和提交**
+   - 遵循现有代码规范
+   - 为新功能添加测试
+   - 更新相关文档
+   - 提交信息遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范
+
+4. **提交 PR**
+   - 推送到个人 Fork 的 `dev` 分支
+   - 创建 PR，目标分支设置为上游仓库的 `dev`
+   - 填写完整的 PR 描述
+   - 等待管理员审查
+
+### ⚠️ 违规处理
+
+- 违反上述规则的 PR 将被直接关闭
+- 多次违规的协作者可能被限制仓库访问权限
+- 如有特殊需求，请先与管理员沟通
+
+---
+
+**管理员联系方式**：[xavier.pen@example.com](mailto:xavier.pen@example.com)
+
+感谢您的配合！🙏

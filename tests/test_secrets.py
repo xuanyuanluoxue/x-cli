@@ -90,6 +90,33 @@ def test_list_returns_secret_entry_instances(store: SecretStore) -> None:
     assert isinstance(entries[0], SecretEntry)
 
 
+def test_list_by_category_filters_entries(store: SecretStore) -> None:
+    """``list(category=...)`` only returns entries matching the category (BDD scenario 1.5)."""
+    store.set("minimax", value="x", category="接口密钥")
+    store.set("openai", value="y", category="接口密钥")
+    store.set("aliyun_ssh", value="z", category="服务器")
+
+    api_entries = store.list(category="接口密钥")
+    names = [e.name for e in api_entries]
+    assert "minimax" in names
+    assert "openai" in names
+    assert "aliyun_ssh" not in names
+
+
+def test_list_by_category_no_match_returns_empty(store: SecretStore) -> None:
+    """``list(category=...)`` with no match returns empty list (BDD scenario 1.6)."""
+    store.set("minimax", value="x", category="接口密钥")
+    assert store.list(category="不存在的分组") == []
+
+
+def test_list_by_category_case_insensitive(store: SecretStore) -> None:
+    """Category filter is case-insensitive."""
+    store.set("minimax", value="x", category="API")
+    entries = store.list(category="api")
+    assert len(entries) == 1
+    assert entries[0].name == "minimax"
+
+
 # ============================================================
 #  BDD scenario 2: get returns exact match
 # ============================================================
@@ -220,6 +247,30 @@ def test_update_note_only(store: SecretStore) -> None:
     assert e.note == "n2"
     assert e.value == "x"  # unchanged
     assert e.category == "keep"  # not touched by update
+
+
+def test_update_category_only(store: SecretStore) -> None:
+    """``update`` with ``category`` changes the category (BDD scenario 8.5)."""
+    store.set("minimax", value="x", category="default")
+    e = store.update("minimax", category="接口密钥")
+    assert e.category == "接口密钥"
+    assert e.value == "x"
+
+
+def test_update_value_and_category(store: SecretStore) -> None:
+    """``update`` with both ``value`` and ``category`` (BDD scenario 8.6)."""
+    store.set("minimax", value="sk-old", category="default")
+    e = store.update("minimax", value="sk-new", category="接口密钥")
+    assert e.value == "sk-new"
+    assert e.category == "接口密钥"
+
+
+def test_update_category_persists_to_disk(store: SecretStore) -> None:
+    """Category change via ``update`` is persisted to disk."""
+    store.set("minimax", value="x", category="default")
+    store.update("minimax", category="接口密钥")
+    reloaded = SecretStore(db_path=store.db_path)
+    assert reloaded.get("minimax").category == "接口密钥"
 
 
 def test_update_persists_to_disk(store: SecretStore) -> None:
