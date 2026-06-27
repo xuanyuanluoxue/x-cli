@@ -52,3 +52,6 @@ htmlcov/
 
 # Mavis (plan state, sessions, runtime data — not project source)
 .mavis/
+
+# Subagent test artifacts (created by parallel subagent test runs)
+.arts/
