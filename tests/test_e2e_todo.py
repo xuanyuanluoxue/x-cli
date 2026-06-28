@@ -1413,3 +1413,134 @@ def test_e2e_done_does_not_accept_reason_flag(x_path: str, todo_dir: Path):
         todo_dir,
     )
     assert code != 0, "done must reject --reason (semantic opinionation)"
+
+
+# ============================================================
+#  x todo tag — v0.6.0 P1
+# ============================================================
+#
+# 端到端验证 ``x todo tag`` 通过子进程路径（pyproject.toml entry
+# → x.exe → x.main → SUBCOMMAND_HANDLERS → plugins.todo._todo_tag）。
+# 对应 ``docs/behaviors/todo-tag-behavior.md`` 的 17 场景。
+#
+# 选 8 个最关键的 e2e 场景（避免跟 in-process test 重复）：
+#   - 场景 1：添加单个 tag（真子进程）
+#   - 场景 2：一次性添加多个 tag
+#   - 场景 4/6：--remove 移除
+#   - 场景 7：--clear 清空（验证 frontmatter tags 字段被删）
+#   - 场景 10：任务不存在（exit 3）
+#   - 场景 11：已归档（exit 4）
+#   - 场景 8：互斥 --remove 与 --clear（exit 2）
+#   - help：x todo help 列出 tag
+
+
+def test_e2e_tag_adds_single_tag(x_path: str, todo_dir: Path):
+    """BDD §todo-tag 1: x todo tag <id> <tag> 真子进程追加 tag。"""
+    _run_x(x_path, ["todo", "add", "kemu1"], todo_dir)
+
+    code, out, err = _run_x(
+        x_path, ["todo", "tag", "kemu1", "冲刺"], todo_dir
+    )
+    assert code == 0, f"stderr={err!r}"
+    assert "✅" in out
+    assert "冲刺" in out
+
+    # 读 TODO.md 验证 frontmatter 真的写进去
+    # （list 命令默认不显示 tags 列 —— 看 _todo_list 实现）
+    todo_md = (todo_dir / "任务" / "kemu1" / "TODO.md").read_text(
+        encoding="utf-8"
+    )
+    assert "tags:" in todo_md
+    assert "冲刺" in todo_md
+
+
+def test_e2e_tag_adds_multiple_tags(x_path: str, todo_dir: Path):
+    """BDD §todo-tag 2: 一次性添加多个 tag。"""
+    _run_x(x_path, ["todo", "add", "kemu1"], todo_dir)
+
+    code, out, err = _run_x(
+        x_path,
+        ["todo", "tag", "kemu1", "暑假", "冲刺", "高频错题"],
+        todo_dir,
+    )
+    assert code == 0, f"stderr={err!r}"
+    assert "3" in out  # 报告添加 3 个
+
+
+def test_e2e_tag_remove(x_path: str, todo_dir: Path):
+    """BDD §todo-tag 4/6: --remove 移除 tag。"""
+    _run_x(x_path, ["todo", "add", "kemu1"], todo_dir)
+    _run_x(x_path, ["todo", "tag", "kemu1", "暑假", "冲刺"], todo_dir)
+
+    code, out, err = _run_x(
+        x_path, ["todo", "tag", "--remove", "kemu1", "暑假"], todo_dir
+    )
+    assert code == 0, f"stderr={err!r}"
+    assert "暑假" in out  # 单 tag 移除用名字
+
+
+def test_e2e_tag_clear(x_path: str, todo_dir: Path):
+    """BDD §todo-tag 7: --clear 删 tags 字段（不写 tags: []）。
+
+    验证方式：直接读磁盘上的 TODO.md，看 frontmatter 是否完全
+    没有 tags 字段（即使空 list 也不写）。
+    """
+    _run_x(x_path, ["todo", "add", "kemu1"], todo_dir)
+    _run_x(x_path, ["todo", "tag", "kemu1", "暑假", "冲刺"], todo_dir)
+
+    code, out, err = _run_x(
+        x_path, ["todo", "tag", "--clear", "kemu1"], todo_dir
+    )
+    assert code == 0, f"stderr={err!r}"
+    assert "清空" in out
+
+    # 读磁盘上的 TODO.md 验证 frontmatter
+    todo_md = (todo_dir / "任务" / "kemu1" / "TODO.md").read_text(
+        encoding="utf-8"
+    )
+    # 字段应该完全消失（不是 tags: []）
+    assert "tags:" not in todo_md, f"tags 字段未清空：\n{todo_md}"
+
+
+def test_e2e_tag_nonexistent_task(x_path: str, todo_dir: Path):
+    """BDD §todo-tag 10: 任务不存在 → exit 3。"""
+    code, _, err = _run_x(
+        x_path, ["todo", "tag", "nonexistent-id", "冲刺"], todo_dir
+    )
+    assert code == 3
+    assert "不存在" in err
+    assert "nonexistent-id" in err
+
+
+def test_e2e_tag_archived_task(x_path: str, todo_dir: Path):
+    """BDD §todo-tag 11: 已归档任务 → exit 4 + 提示 restore。"""
+    _run_x(x_path, ["todo", "add", "kemu1"], todo_dir)
+    _run_x(x_path, ["todo", "done", "kemu1"], todo_dir)
+
+    code, _, err = _run_x(
+        x_path, ["todo", "tag", "kemu1", "新标签"], todo_dir
+    )
+    assert code == 4
+    assert "已归档" in err
+    assert "restore" in err.lower()
+
+
+def test_e2e_tag_remove_and_clear_mutex(x_path: str, todo_dir: Path):
+    """BDD §todo-tag 8: --remove 与 --clear 互斥 → exit 2。"""
+    _run_x(x_path, ["todo", "add", "kemu1"], todo_dir)
+    _run_x(x_path, ["todo", "tag", "kemu1", "暑假"], todo_dir)
+
+    code, _, err = _run_x(
+        x_path,
+        ["todo", "tag", "--remove", "--clear", "kemu1", "暑假"],
+        todo_dir,
+    )
+    assert code == 2
+    assert "互斥" in err
+
+
+def test_e2e_tag_in_help(x_path: str, todo_dir: Path):
+    """``tag`` 必须出现在 ``x todo`` help 列表里。"""
+    code, out, _ = _run_x(x_path, ["todo"], todo_dir)
+    assert code == 0
+    assert "tag" in out, f"tag action missing from help:\n{out}"
