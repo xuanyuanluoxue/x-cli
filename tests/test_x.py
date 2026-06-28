@@ -142,3 +142,42 @@ def test_build_parser_does_not_crash():
 # 但 ``list`` 已被 action-list task 实现并接受 ``--status``，该用例不再适用。
 # 真正的未知-flag 用法错误测试由各 action 的子命令测试覆盖（见
 # ``tests/test_todo_*.py``）。
+
+# ============================================================
+#  x web 子命令注册（v0.6.0 收尾 — 解锁 plugins/web.py）
+# ============================================================
+# 背景：``plugins/web.py``（HTTP server + REST API + token auth）自
+# v0.6.0 就在位，但 ``x.py:SUBCOMMAND_HANDLERS`` 没注册 ``"web"``，导致
+# ``x web`` 命令行报"未知子命令"。本测试组固定该契约 —— 只要 web plugin
+# 在 SUBCOMMAND_HANDLERS 里，下面两个 assertion 就保证：
+#   1. ``x web`` 不会再触发"未知子命令"分支（exit code 1）
+#   2. ``x``（无参数）帮助里能看见 ``web``
+
+def test_web_subcommand_is_registered():
+    """x web 子命令必须在 SUBCOMMAND_HANDLERS 字典里注册"""
+    from x import SUBCOMMAND_HANDLERS
+    assert "web" in SUBCOMMAND_HANDLERS
+    # 同时确认指向 plugins.web.run（不是 None / 占位）
+    from plugins import web as _web_plugin
+    assert SUBCOMMAND_HANDLERS["web"] is _web_plugin.run
+
+
+def test_web_appears_in_main_help():
+    """x（无参数）的帮助文本里必须列出 web 子命令"""
+    out = io.StringIO()
+    with redirect_stdout(out):
+        exit_code = main([])
+    assert exit_code == 0
+    output = out.getvalue()
+    assert "web" in output
+    # 确认是 SUBCOMMAND_HELP 区域而不是无关的 web 字符串
+    assert "SUBCOMMAND" in output  # 来自 parser.add_argument(metavar="SUBCOMMAND")
+
+
+def test_web_unknown_subcommand_still_errors():
+    """回归测试：注册 web 后，未知子命令仍报 exit code 1（不被误判为 web）"""
+    err = io.StringIO()
+    with redirect_stderr(err):
+        exit_code = main(["nonexistent-web-xyz"])
+    assert exit_code == 1
+    assert "未知子命令" in err.getvalue()

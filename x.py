@@ -23,6 +23,7 @@ from core.logging import get_logger, setup_logging
 # Plugin handlers (Phase 4 split — see AGENTS.md "Phase 4 plugin split")
 from plugins import todo as _todo_plugin
 from plugins import secret as _secret_plugin
+from plugins import web as _web_plugin
 
 __version__ = "0.6.0"
 
@@ -37,6 +38,7 @@ __version__ = "0.6.0"
 SUBCOMMAND_HANDLERS: dict[str, Callable[[Sequence[str]], int]] = {
     "todo": _todo_plugin.run,
     "secret": _secret_plugin.run,
+    "web": _web_plugin.run,
 }
 
 
