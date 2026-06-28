@@ -1,41 +1,43 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="zh-CN">
 <head>
   <meta charset="UTF-8">
-  <title>x web — 前端占位</title>
-  <style>
-    body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; max-width: 600px; margin: 80px auto; padding: 0 20px; color: #333; }
-    h1 { color: #2c3e50; }
-    code { background: #f4f4f4; padding: 2px 6px; border-radius: 3px; font-family: monospace; }
-    .note { background: #fff8dc; border-left: 4px solid #ffd700; padding: 12px 16px; margin: 20px 0; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>x web</title>
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/tasks.css">
+  <link rel="stylesheet" href="css/secrets.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%93%EF%B8%8F%3C/text%3E%3C/svg%3E">
 </head>
 <body>
-  <h1>🌐 x web</h1>
-  <p><strong>后端已就绪，前端未实装。</strong></p>
 
-  <div class="note">
-    <strong>📝 说明</strong><br>
-    这是 <code>feature/web-backend</code> 分支的占位首页。<br>
-    前端将在 <code>feature/web-frontend</code> 分支实装，参见
-    <code>docs/web-frontend-plan.md</code>。
-  </div>
+  <!-- 顶部 nav（登录后才显示） -->
+  <nav id="topbar" aria-label="主导航">
+    <div class="brand">
+      <span class="dot"></span>
+      <span>x web</span>
+    </div>
+    <div class="nav-links">
+      <a class="nav-link" data-route="#tasks" href="#tasks">📋 任务</a>
+      <a class="nav-link" data-route="#secrets" href="#secrets">🔐 密钥</a>
+      <a class="nav-link" data-route="#stats" href="#stats">📊 统计</a>
+    </div>
+    <div class="nav-actions">
+      <button class="icon-btn" aria-label="退出登录" title="退出登录">⎋</button>
+    </div>
+  </nav>
 
-  <h2>当前可用的 API（用 curl 测试）</h2>
-  <pre style="background: #f4f4f4; padding: 12px; border-radius: 4px; overflow-x: auto;">
-# 健康检查（无需 token）
-curl http://127.0.0.1:8421/api/health
+  <!-- view 容器 -->
+  <main id="main"></main>
 
-# 列出任务（需要 X-Web-Token header）
-curl -H "X-Web-Token: YOUR_TOKEN" http://127.0.0.1:8421/api/tasks
+  <!-- toast 容器（fixed 定位） -->
+  <div id="toast-container" aria-live="polite"></div>
 
-# 创建任务
-curl -X POST -H "X-Web-Token: YOUR_TOKEN" -H "Content-Type: application/json" \
-  -d '{"name":"测试任务","priority":"high"}' \
-  http://127.0.0.1:8421/api/tasks
-  </pre>
+  <!-- modal 容器（fixed 定位） -->
+  <div id="modal-container"></div>
 
-  <p>完整 API 规格：<code>docs/web-api.md</code></p>
-  <p>前端开发计划：<code>docs/web-frontend-plan.md</code></p>
+  <script type="module" src="js/router.js"></script>
 </body>
 </html>
