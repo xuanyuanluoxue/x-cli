@@ -576,7 +576,7 @@ def test_e2e_version_flag(x_path: str, todo_dir: Path):
     """Scenario 18: `x --version` prints the version string."""
     code, out, err = _run_x(x_path, ["--version"], todo_dir)
     assert code == 0
-    assert out.strip() == "x 0.5.0", f"got {out!r}"
+    assert out.strip() == "x 0.6.0", f"got {out!r}"
     assert err == ""
 
 
