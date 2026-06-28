@@ -252,8 +252,13 @@ def test_tag_remove_and_clear_mutex(store: TaskStore) -> None:
 
 
 def test_tag_missing_id_errors(store: TaskStore) -> None:
-    """对应 BDD 场景 12：x todo tag <tag> 缺 id → exit 2。"""
-    exit_code, _stdout, stderr = _invoke("冲刺")
+    """对应 BDD 场景 12：x todo tag（完全无参数）→ exit 2 + 缺 id 提示。
+
+    注：argparse 用 ``nargs="?"`` 让 id 可选，所以 ``x todo tag 冲刺``
+    会被解释成 ``id="冲刺", tags=[]``，触发"缺 tag"分支（场景 13）。
+    本测试覆盖"完全无参数"的场景。
+    """
+    exit_code, _stdout, stderr = _invoke()
 
     assert exit_code == 2
     assert "缺少任务 ID" in stderr

@@ -86,6 +86,7 @@ TODO_ACTIONS: tuple[str, ...] = (
     "restore",  # v0.4.x — archive → active
     "search",   # v0.4.x — cross-field search (name + note + tags)
     "done",     # v0.4.x — `archive --reason done` shortcut
+    "tag",      # v0.6.0 P1 — add/remove/clear tags (separate from update)
 )
 
 
@@ -233,6 +234,31 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
             # BDD: docs/behaviors/todo-done-behavior.md（6 场景）
             sp = sub.add_parser(name, help="archive --reason done 的快捷方式")
             sp.add_argument("id", help="任务 ID")
+        elif name == "tag":
+            # v0.6.0 P1 — 单独管理 tags（不重写整个任务）
+            # BDD: docs/behaviors/todo-tag-behavior.md（17 场景）
+            sp = sub.add_parser(name, help="添加 / 移除 / 清空 tags")
+            sp.add_argument(
+                "id",
+                nargs="?",
+                help="任务 ID（或 active 状态下的任务名）",
+            )
+            sp.add_argument(
+                "tags",
+                nargs="*",
+                metavar="TAG",
+                help="要添加（或配合 --remove 时移除）的 tag 字符串",
+            )
+            sp.add_argument(
+                "--remove",
+                action="store_true",
+                help="移除模式：把 tags 当作要移除的目标",
+            )
+            sp.add_argument(
+                "--clear",
+                action="store_true",
+                help="清空模式：删除 frontmatter 的 tags 字段（不写 tags: []）",
+            )
         else:
             sp = sub.add_parser(name, help=f"{name} 命令")
 
@@ -294,6 +320,10 @@ def run(args: Sequence[str]) -> int:
     # x todo done — v0.4.x 新增（archive --reason done 快捷方式）
     if parsed.todo_action == "done":
         return _todo_done(parsed)
+
+    # x todo tag — v0.6.0 P1（add/remove/clear tags）
+    if parsed.todo_action == "tag":
+        return _todo_tag(parsed)
 
     return _todo_not_implemented(parsed.todo_action)
 
@@ -593,6 +623,164 @@ def _todo_done(args: argparse.Namespace) -> int:
         reason="done",
     )
     return _todo_archive(archive_args)
+
+
+# ============================================================
+#  x todo tag
+# ============================================================
+
+
+def _todo_tag(args: argparse.Namespace) -> int:
+    """``x todo tag <id> [<tag>...] [--remove] [--clear]`` — 单独管理 tags。
+
+    对应 BDD：``docs/behaviors/todo-tag-behavior.md``（17 场景）。
+
+    退出码约定：
+    - 0：成功（添加 / 移除 / 清空）
+    - 2：参数错（缺 id / --remove 与 --clear 互斥 / --clear 带 tag 参数 /
+      添加模式缺 tag / --remove 模式缺 tag）
+    - 3：任务不存在
+    - 4：任务已归档
+
+    设计要点（与 ``x todo update --tags`` 行为差异）：
+    - 添加模式不去重（同名 tag 已有则跳过，报告"1 个"）—— 跟 update 不同
+    - 移除模式报告"实际移除数 0"（幂等）—— 跟 update 不同
+    - ``--clear`` 完全删除 frontmatter 的 ``tags`` 字段（不写 ``tags: []``）
+
+    复用 ``TaskStore.update_task`` 写入路径，所以未知字段（``description`` /
+    ``paused_at`` / ``pause_reason``）自动保留（手写 parser round-trip）。
+    """
+    from datetime import date  # local import to keep module load cheap
+
+    # BDD 场景 12：缺任务 ID。argparse 必填的话这里通常不会触发（sp.add_argument("id")
+    # 默认 required=True），但保险起见给个友好提示。
+    task_id = (args.id or "").strip()
+    if not task_id:
+        print("❌ 缺少任务 ID（用法：x todo tag <id> <tag...>）", file=sys.stderr)
+        print(
+            "💡 用法：x todo tag <id> <tag...> [--remove] [--clear]",
+            file=sys.stderr,
+        )
+        return 2
+
+    # BDD 场景 8：--remove 与 --clear 互斥
+    if args.remove and args.clear:
+        print("❌ --remove 与 --clear 互斥，不能同时使用", file=sys.stderr)
+        return 2
+
+    # BDD 场景 9：--clear 模式下不能带 tag 参数
+    if args.clear and args.tags:
+        print(
+            "❌ --clear 模式下不能指定 tag 参数（用 'x todo tag <id> <tag...>' 添加）",
+            file=sys.stderr,
+        )
+        return 2
+
+    # BDD 场景 13/14：缺 tag 参数
+    if not args.clear and not args.tags:
+        if args.remove:
+            print("❌ --remove 模式至少指定一个 tag", file=sys.stderr)
+        else:
+            print("❌ 至少指定一个 tag", file=sys.stderr)
+        print(
+            "💡 用法：x todo tag <id> <tag...>  或  x todo tag --clear <id>",
+            file=sys.stderr,
+        )
+        return 2
+
+    # 读当前任务（要读 tags 才能做添加 / 移除）
+    store = TaskStore()
+    try:
+        task = store.get_task(task_id, include_archived=True)
+    except TaskNotFoundError:
+        # BDD 场景 10
+        print(f"❌ 任务不存在：{task_id}", file=sys.stderr)
+        print("💡 提示：运行 'x todo list' 查看现有任务 ID", file=sys.stderr)
+        return 3
+
+    if task is None:
+        print(f"❌ 任务不存在：{task_id}", file=sys.stderr)
+        print("💡 提示：运行 'x todo list' 查看现有任务 ID", file=sys.stderr)
+        return 3
+
+    # BDD 场景 11：已归档
+    if task.status is TaskStatus.ARCHIVED:
+        print(f"❌ 任务已归档：{task.name}（ID: {task.id}）", file=sys.stderr)
+        print("💡 提示：用 'x todo restore <id>' 还原后再操作", file=sys.stderr)
+        return 4
+
+    # 计算 new_tags
+    current: list[str] = list(task.tags or [])
+    requested: list[str] = list(args.tags)
+
+    if args.clear:
+        new_tags: list[str] = []
+        removed_count = len(current)
+        added_count = 0
+    elif args.remove:
+        requested_set = set(requested)
+        new_tags = [t for t in current if t not in requested_set]
+        removed_count = len(current) - len(new_tags)
+        added_count = 0
+    else:
+        # 添加模式：保留原顺序 + 去重
+        seen = set(current)
+        new_tags = list(current)
+        added_count = 0
+        for t in requested:
+            if t not in seen:
+                new_tags.append(t)
+                seen.add(t)
+                added_count += 1
+        removed_count = 0
+
+    # 写回：复用 TaskStore.update_task 走相同的存储路径
+    try:
+        updated = store.update_task(
+            task_id,
+            tags=new_tags,
+            today=date.today().isoformat(),
+        )
+    except TaskNotFoundError:
+        # 极端：get_task 后被外部删除
+        print(f"❌ 任务不存在：{task_id}", file=sys.stderr)
+        return 3
+    except TaskAlreadyArchivedError:
+        # 极端：get_task 后被外部归档
+        print(f"❌ 任务已归档：{task_id}", file=sys.stderr)
+        return 4
+
+    # 输出（按 BDD 设计：单 tag 名 / 多 tag 数字）
+    if args.clear:
+        print(f"✅ 已清空 tags：{updated.name}（ID: {updated.id}）")
+    elif args.remove:
+        if removed_count == 1:
+            # BDD 场景 4：单 tag 移除用名字
+            removed_name = next(
+                t for t in requested if t in set(current)
+            )
+            print(
+                f"✅ 已移除 tag '{removed_name}'：{updated.name}（ID: {updated.id}）"
+            )
+        else:
+            # BDD 场景 5/6：0 / N 个用数字
+            print(
+                f"✅ 已移除 {removed_count} 个 tags：{updated.name}（ID: {updated.id}）"
+            )
+    else:
+        if added_count == 1:
+            tag_name = next(
+                t for t in requested if t not in set(current)
+            )
+            print(
+                f"✅ 已添加 tag '{tag_name}'：{updated.name}（ID: {updated.id}）"
+            )
+        else:
+            print(
+                f"✅ 已添加 {added_count} 个 tags：{updated.name}（ID: {updated.id}）"
+            )
+
+    return 0
 
 
 # ============================================================
