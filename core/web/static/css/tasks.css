@@ -1,0 +1,150 @@
+/* tasks.css — 任务列表 + 任务编辑
+ *
+ * 列表：toolbar 过滤 + 表格行可点
+ * 编辑：单卡片表单 + 底部 actions
+ * 详情：name 只读 + 字段可改
+ */
+
+/* ---- 列表行内的小元素 ---- */
+
+.task-row .name-cell {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.task-row .name-cell .task-id {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  margin-left: 4px;
+}
+
+.task-row .deadline {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+}
+
+.task-row .deadline.overdue {
+  color: var(--danger);
+  font-weight: 600;
+}
+
+.task-row .deadline.soon {
+  color: var(--warning);
+  font-weight: 500;
+}
+
+.task-row .actions-cell {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.task-row .actions-cell .btn {
+  padding: 4px 8px;
+  font-size: var(--text-xs);
+}
+
+.task-row .tags-cell {
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-row .status-cell,
+.task-row .priority-cell {
+  white-space: nowrap;
+}
+
+/* ---- 编辑表单 ---- */
+
+.task-edit-card {
+  max-width: 560px;
+  margin: 0 auto;
+}
+
+.task-edit-card .readonly-name {
+  padding: 8px 10px;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  font-weight: 500;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.task-edit-card .readonly-name .task-id {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--text-tertiary);
+  font-weight: 400;
+}
+
+.task-edit-card .form-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.task-edit-card .form-actions .right {
+  display: flex;
+  gap: var(--space-2);
+}
+
+/* ---- 归档确认 modal 特殊样式 ---- */
+
+.archive-confirm .reason-options {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-2);
+  margin: var(--space-3) 0 var(--space-5);
+}
+
+.archive-confirm .reason-option {
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--bg-primary);
+  cursor: pointer;
+  text-align: left;
+  font-size: var(--text-sm);
+  transition: border-color var(--transition-fast), background var(--transition-fast);
+}
+
+.archive-confirm .reason-option:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.archive-confirm .reason-option.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 500;
+}
+
+/* ---- 任务列表表格的 hover 反馈 ---- */
+
+table.data tbody tr.task-row {
+  cursor: pointer;
+}
+
+table.data tbody tr.task-row .actions-cell .btn {
+  pointer-events: auto;
+}
+
+/* 响应式：< 720px 把表转卡片式太复杂，先让表格横向滚动 */
+@media (max-width: 720px) {
+  .table-wrap { overflow-x: auto; }
+  table.data { min-width: 600px; }
+}
