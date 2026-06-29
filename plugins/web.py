@@ -65,6 +65,34 @@ def register(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _open_browser(url: str, token: str, auto_token_url: bool) -> None:
+    """Open the browser with the right URL (with or without ?token=).
+
+    v0.6.0 抽出来以便 unit test（plugins/web.py:run 阻塞 Ctrl+C 死循环，
+    难直接测；抽成纯函数后用 mock webbrowser.open 直接测）。
+
+    Args:
+        url: server base URL (e.g. ``http://127.0.0.1:8421``)
+        token: 当前会话 token（用户手动输入或 URL 自动填用同一个）
+        auto_token_url: opt-in flag。True → URL 拼 ?token=xxx
+
+    Side effects:
+        - 调 ``webbrowser.open(open_url)``（失败静默）
+        - 当 ``auto_token_url=True`` 时额外打印一行 ⚡ 提示
+    """
+    try:
+        open_url = f"{url}?token={token}" if auto_token_url else url
+        if auto_token_url:
+            print(
+                f"   ⚡ auto-token-url：URL 含 ?token=...（浏览器自动填后清 URL）",
+                file=sys.stderr,
+            )
+        webbrowser.open(open_url)
+    except Exception:  # noqa: BLE001
+        # 静默：开浏览器失败不致命（用户可手动访问 URL）
+        pass
+
+
 def run(args: Sequence[str]) -> int:
     """Start the web server and block until Ctrl+C."""
     parser = argparse.ArgumentParser(prog="x web", description="x-cli Web UI (REST API + frontend)")
@@ -89,11 +117,20 @@ def run(args: Sequence[str]) -> int:
     print(f"", file=sys.stderr)
     print(f"🔐 请在浏览器输入上面的 Token（首次访问会提示）", file=sys.stderr)
 
+    # opt-in：检测 --no-browser + --auto-token-url 冲突，给友好警告
+    # （不动用户意图，只教育）
+    if parsed.no_browser and parsed.auto_token_url:
+        print(
+            f"⚠️  --auto-token-url 在 --no-browser 模式下静默无效",
+            file=sys.stderr,
+        )
+        print(
+            f"   （不开浏览器 = URL 注入无意义；要生效请去掉 --no-browser）",
+            file=sys.stderr,
+        )
+
     if not parsed.no_browser:
-        try:
-            webbrowser.open(url)
-        except Exception:  # noqa: BLE001
-            pass
+        _open_browser(url, token, parsed.auto_token_url)
 
     try:
         # Block until Ctrl+C

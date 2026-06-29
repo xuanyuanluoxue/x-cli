@@ -210,6 +210,23 @@ def test_e2e_x_web_with_auto_token_url_in_help(x_path, todo_dir):
 | Token 失效（server 重启） | 低 | 前端 catch → clearToken + fallback 输入框 |
 | 用户误开 --auto-token-url | 低 | help 文本明确"⚠️ opt-in" |
 | 与同事的 frontend worktree 冲突 | 低 | login.js 改动最小化（仅加 ~10 行） |
+| `--no-browser` + `--auto-token-url` 同时给（v0.6.0 addendum）| 低 | 启动时 stderr 警告（不强制） |
+
+### 4.1 Addendum（2026-06-28 用户反馈后加）
+
+**问题**：`x web --no-browser --auto-token-url` 时 `--auto-token-url` 静默无效（不开浏览器 = URL 注入无意义）。用户开两个 flag 后**没看到任何提示**，困惑。
+
+**解决**（选 A 方案：stderr 警告，不动用户意图）：
+
+- `plugins/web.py:run()` 检测到 `--no-browser` + `--auto-token-url` 同时给时，打印 2 行 stderr 提示
+- 实现：`if parsed.no_browser and parsed.auto_token_url: print(...)` 在 `if not parsed.no_browser` 块之前
+- 消息：
+  ```
+  ⚠️  --auto-token-url 在 --no-browser 模式下静默无效
+     （不开浏览器 = URL 注入无意义；要生效请去掉 --no-browser）
+  ```
+- 不退出 / 不报错（保留用户选择 + 尊重 `--no-browser` 意图）
+- 测：3 个 `_open_browser` helper test（test_open_browser_*），覆盖默认 / 自动 / 异常静默
 
 ---
 
