@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import socket
+import argparse
 from contextlib import contextmanager
 from http.client import HTTPConnection
 from pathlib import Path
@@ -432,3 +433,59 @@ def test_is_valid_token_wrong():
 def test_is_valid_token_none():
     """None provided returns False (no exception)."""
     assert is_valid_token(None, "abc") is False
+
+
+# ============================================================
+#  x web --auto-token-url  (v0.6.0+ opt-in UX improvement)
+# ============================================================
+#
+# 设计（docs/superpowers/specs/2026-06-28-web-auto-token-url-design.md）：
+# - 默认 False（不传 flag = 现状，手动复制粘贴 token）
+# - 加 --auto-token-url / -A → webbrowser.open(url + "?token=xxx")
+# - 前端（login.js）解析 ?token= → setToken → history.replaceState 清 URL
+# - 测试 register 暴露了 flag + 默认 False 行为
+
+from plugins import web as _web_plugin  # noqa: E402
+
+
+def _build_web_parser() -> argparse.ArgumentParser:
+    """Build a fresh ``x web`` parser (don't reuse module-level state)."""
+    parser = argparse.ArgumentParser(prog="x web")
+    _web_plugin.register(parser)
+    return parser
+
+
+def test_auto_token_url_flag_in_register() -> None:
+    """``register()`` must expose --auto-token-url / -A as a store_true flag."""
+    parser = _build_web_parser()
+    # 用 namespace 反向检查（-A / --auto-token-url 都应映射到 auto_token_url）
+    ns = parser.parse_args([])
+    assert hasattr(ns, "auto_token_url")
+    assert ns.auto_token_url is False, "default must be False (opt-in)"
+
+    ns_on = parser.parse_args(["--auto-token-url"])
+    assert ns_on.auto_token_url is True
+
+    ns_short = parser.parse_args(["-A"])
+    assert ns_short.auto_token_url is True
+
+
+def test_auto_token_url_help_text_mentions_optin() -> None:
+    """Help 文本必须明确 'opt-in' / '默认关闭'，避免用户误启用。"""
+    parser = _build_web_parser()
+    # 通过 parser._actions 找 --auto-token-url 的 help 字符串
+    for action in parser._actions:
+        if "--auto-token-url" in (action.option_strings or []):
+            assert "opt-in" in action.help
+            assert "默认" in action.help
+            return
+    pytest.fail("--auto-token-url flag not found in parser actions")
+
+
+def test_auto_token_url_default_is_false() -> None:
+    """不传 flag 时 auto_token_url 必须为 False（防止默认开启泄露 URL）。"""
+    parser = _build_web_parser()
+    ns = parser.parse_args([])
+    assert ns.auto_token_url is False
+    # 同时确认 no_browser 也是默认 False（与现有行为一致）
+    assert ns.no_browser is False
