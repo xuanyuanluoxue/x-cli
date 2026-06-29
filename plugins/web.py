@@ -52,6 +52,17 @@ def register(parser: argparse.ArgumentParser) -> None:
         action="store_true",
         help="不自动打开浏览器",
     )
+    parser.add_argument(
+        "--auto-token-url",
+        "-A",
+        action="store_true",
+        help=(
+            "自动把 token 注入到浏览器 URL（?token=xxx），"
+            "前端自动填 + 立即清 URL。"
+            "⚠️ opt-in：默认关闭（防 URL 泄露到浏览器历史/同步）。"
+            "需要 --browser（默认）才生效；--no-browser 模式下无效。"
+        ),
+    )
 
 
 def run(args: Sequence[str]) -> int:
