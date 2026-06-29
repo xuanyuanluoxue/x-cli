@@ -57,6 +57,30 @@ export function render() {
 
 export async function afterMount() {
   // 如果已经有 token 但用户在登录页，直接尝试一次验证
+  // opt-in: CLI 启动时若带 --auto-token-url，URL 含 ?token=xxx。
+  // 这里取一次 → 存 localStorage → 立即清掉 URL（防浏览器历史/同步泄露）→ 验证。
+  const urlToken = new URLSearchParams(window.location.search).get("token");
+  if (urlToken) {
+    setToken(urlToken);
+    // 关键：URL 里的 token 立刻清掉（history.replaceState 不进 history）
+    const cleanSearch = window.location.search
+      .replace(/[?&]token=[^&]*/g, "")
+      .replace(/^&/, "?");
+    const cleanUrl =
+      window.location.pathname +
+      (cleanSearch && cleanSearch !== "?" ? cleanSearch : "") +
+      window.location.hash;
+    window.history.replaceState({}, document.title, cleanUrl);
+    try {
+      await api.listTasks();
+      window.location.hash = "#tasks";
+      return;
+    } catch (e) {
+      // token 失效（server 重启）→ 清掉，让用户重新输入
+      clearToken();
+    }
+  }
+
   if (getToken()) {
     try {
       await api.listTasks();
