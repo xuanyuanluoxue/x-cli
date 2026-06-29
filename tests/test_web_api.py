@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import socket
 import argparse
+import webbrowser
 from contextlib import contextmanager
 from http.client import HTTPConnection
 from pathlib import Path
@@ -489,3 +490,49 @@ def test_auto_token_url_default_is_false() -> None:
     assert ns.auto_token_url is False
     # 同时确认 no_browser 也是默认 False（与现有行为一致）
     assert ns.no_browser is False
+
+
+# --- _open_browser helper (v0.6.0 抽出来测真实行为) -----------------------
+
+
+def test_open_browser_default_url() -> None:
+    """_open_browser 默认 (auto_token_url=False) → webbrowser.open(url 原样)。"""
+    captured: list[str] = []
+    _original_open = webbrowser.open
+    webbrowser.open = lambda u: captured.append(u)  # type: ignore[assignment]
+    try:
+        _web_plugin._open_browser("http://127.0.0.1:8421", "abc", False)
+    finally:
+        webbrowser.open = _original_open  # type: ignore[assignment]
+    assert captured == ["http://127.0.0.1:8421"], (
+        f"expected plain URL, got {captured!r}"
+    )
+
+
+def test_open_browser_with_auto_token_url() -> None:
+    """_open_browser + auto_token_url=True → webbrowser.open(url?token=xxx)。"""
+    captured: list[str] = []
+    _original_open = webbrowser.open
+    webbrowser.open = lambda u: captured.append(u)  # type: ignore[assignment]
+    try:
+        _web_plugin._open_browser("http://127.0.0.1:8421", "tok-XYZ", True)
+    finally:
+        webbrowser.open = _original_open  # type: ignore[assignment]
+    assert captured == ["http://127.0.0.1:8421?token=tok-XYZ"], (
+        f"expected URL with ?token=, got {captured!r}"
+    )
+
+
+def test_open_browser_swallows_exceptions() -> None:
+    """_open_browser 失败时静默（不致命；用户可手动访问 URL）。"""
+    _original_open = webbrowser.open
+
+    def _raise(_url: str) -> None:
+        raise OSError("no default browser")
+
+    webbrowser.open = _raise  # type: ignore[assignment]
+    try:
+        # 不应抛异常
+        _web_plugin._open_browser("http://127.0.0.1:8421", "tok", True)
+    finally:
+        webbrowser.open = _original_open  # type: ignore[assignment]
