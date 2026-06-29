@@ -175,6 +175,39 @@ x-cli/
 - 覆盖率目标：≥ 80%
 - **BDD+TDD 强制要求**：见 §5
 
+### 4.4 Git 分支策略（v0.6.0 起强制）
+
+> 多人直接 push 模式（**不是 fork 模式**）。详见 [CONTRIBUTING.md](../CONTRIBUTING.md)（这是给**人**读的完整规范）。
+> 本节是给 **AI agent** 看的简明版，**必须遵守**。
+
+- **`main`**：受保护，**禁止直接 push**。所有变更必须经 `dev` merge 进来。
+- **`dev`**：`origin/HEAD`（默认分支），**所有 PR 的 merge 目标**。
+- **`feature/<name>` / `fix/<name>` / `hotfix/<name>` / `refactor/<name>` / `docs/<name>`**：个人分支，**从 `dev` 拉**，做完 merge 回 `dev`。
+- **多方向分支命名**：
+  - 前端：`feature/web-frontend` 或 `feature/<feature>-frontend`
+  - 后端：`feature/web-backend` 或 `feature/<feature>-backend`
+  - 规范：`docs/<scope>` 或 `feature/collab-<scope>`
+  - **互不冲突的范围**（详见 CONTRIBUTING.md §2.3）
+
+**铁律**：
+
+1. ❌ **禁止 PR base = `main`**（永远 base = `dev`）
+2. ❌ **禁止直接 push `main`**（任何情况，包括 hotfix）
+3. ❌ **禁止 `--force` 推到 `dev` / `main`**
+4. ❌ **禁止直接 commit 到 `dev`**（用 feature 分支 + PR）
+5. ✅ **新功能必须 `feature/<name>` 分支开发**，commit 完推 + 开 PR
+6. ✅ **`x.py:SUBCOMMAND_HANDLERS` 是 plugin 接入单一接入点**——加新 plugin 必加条目（否则"未知子命令"）
+
+**AI agent 起步清单**（接到任务时）：
+
+1. 读 `COMMANDS.md`（user-only 命令清单）
+2. 读 `AGENTS.md`（本文件）
+3. 读 `CONTRIBUTING.md`（多人协作规范 — 第 1、6、7、8 节必读）
+4. 读 `docs/architecture.md`（架构设计）
+5. 读 `docs/plugin-dev.md`（后端规范）或 §6（前端规范）
+6. 按 §5 BDD + TDD 流程实现
+7. 在 `feature/<scope>-<short-desc>` 分支开发（**不要直接动 `dev` / `main`**）
+
 ---
 
 ## 5. 开发方法论（BDD + TDD）
