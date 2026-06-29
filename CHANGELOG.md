@@ -9,8 +9,35 @@
 
 ## [Unreleased]
 
+> **多 PR 并行说明**：当前 Unreleased 含 **2 个并行分支**的合并内容：
+> 1. `feature/backend-polish`（11 个 commit，0.6.0 后端收口）
+> 2. `feature/collab-docs`（2 个 commit，多人开发规范）
+>
+> 二者独立可合并。建议 backend-polish 先合（解锁 web + tag + PyInstaller），collab-docs 后合（不影响功能）。
+
 ### Added
-- 无
+- **`x todo tag` 命令**（COMMANDS.md ⏳ P1 第 2 项，feature/backend-polish）：单独管理 tags（不重写整个任务）
+  - `x todo tag <id> <tag>...`  添加 tag（幂等：已存在则跳过）
+  - `x todo tag --remove <id> <tag>...`  移除 tag（幂等：不存在的 tag 报 0 移除）
+  - `x todo tag --clear <id>`  清空 tags（删除 frontmatter 字段，不写 `tags: []`）
+  - 单 tag 用名字（"已添加 tag 'X'"），0/多 用数字（"已添加 3 个 tags"）
+  - 退出码：0 成功 / 2 参数错 / 3 不存在 / 4 已归档
+  - 复用 `TaskStore.update_task` 写入路径，未知字段（description / paused_at 等）自动保留
+  - BDD：`docs/behaviors/todo-tag-behavior.md`（17 场景）
+  - Tests：14 个单元测试 + 8 个 E2E 子进程测试
+- **PyInstaller 打包脚本** `release/build.py`（feature/backend-polish）：包装 PyInstaller，输出到 `<xcli_data_dir>/bin/x{.exe}`（不污染仓库）
+  - 接受 `--clean`（清缓存）和 `--platform {win,mac,linux,current}`（target 提示，不支持交叉编译）
+  - 自检：找 pyinstaller + 检查 x.py 入口 + 友好中文错误
+  - 文档：`docs/release.md`（6 节，含跨平台 + 故障排查 7 项 + 替代方案）
+- **3 份新文档**（feature/backend-polish，AGENTS.md §0 "未创建" 收口）：
+  - `docs/testing.md` — 597 用例 / 20 文件 / 3 层测试（单测 / BDD / e2e）总览
+  - `docs/plugin-dev.md` — 插件契约 + 6 步 checklist + 3 个真实插件演进案例
+  - `docs/release.md` — PyInstaller 打包（见上）
+- **多人开发规范文档**（feature/collab-docs，v0.6.0 起正式启用多人直接 push 模式）：
+  - `CONTRIBUTING.md` 重写（原 v0.4.x fork 模式 → 多人直接 push 到 `dev`）— 10 节覆盖项目模式 / 分支策略 / commit / PR / 冲突 / 前端规范 / 后端规范 / 强约束清单 / FAQ
+  - `AGENTS.md §4.4` 同步简明 Git 分支策略给 AI agent（always_applied）— 6 条铁律 + 7 步起步清单
+  - **前端 / 后端方向隔离**：前端 agent 只动 `.design/` / `core/web/static/` / `docs/prompts/`；后端 agent 只动 `plugins/` / `core/` / `tests/`
+  - **merge 顺序**：前端 / 后端并行时**后端先合**，前端再合（前端依赖后端 API 稳定）
 
 ### Changed
 - 无
@@ -22,7 +49,11 @@
 - 无
 
 ### Fixed
-- 无
+- **`x web` 子命令注册 bug**（v0.6.0 收口，feature/backend-polish）：`plugins/web.py` 自 v0.6.0 在位（HTTP server + REST API + token auth），但 `x.py:SUBCOMMAND_HANDLERS` 字典没注册 `"web"` 条目，导致命令行 `x web` 报"未知子命令"。本 PR 修这个：
+  - `x.py:24` 区域加 `from plugins import web as _web_plugin`
+  - `x.py:38` SUBCOMMAND_HANDLERS 字典加 `"web": _web_plugin.run`
+  - `tests/test_x.py` 加 3 个 test 固定该契约（注册 + 出现在帮助 + 未知子命令回归）
+  - 已知问题来源：`docs/prompts/web-frontend-handoff.md` "不在你修复范围内" 标记
 
 ---
 
