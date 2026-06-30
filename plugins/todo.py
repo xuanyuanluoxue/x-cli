@@ -136,7 +136,12 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
             )
             sp.add_argument(
                 "--duration",
-                help='持续时间（如 90 / 90m / 1.5h；与 --end-time 互斥）',
+                help='新持续时间（"" 清除）',
+            )
+            # v0.5 Phase B — subtask parent
+            sp.add_argument(
+                "--parent",
+                help='父任务 ID（"" 清除 parent 字段）',
             )
         elif name == "list":
             # BDD: docs/behaviors/todo-list-behavior.md §场景 1-8
@@ -158,6 +163,12 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
                 action="store_true",
                 dest="include_archived",
                 help="显示所有任务（含已归档）",
+            )
+            # v0.5 Phase B — explicit tree view (auto-enabled when any task has parent)
+            sp.add_argument(
+                "--tree",
+                action="store_true",
+                help="强制树形展示子任务",
             )
         elif name == "add":
             # BDD: docs/behaviors/todo-add-behavior.md §场景 1-8
@@ -192,6 +203,11 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
             sp.add_argument(
                 "--duration",
                 help="持续时间（90 / 90m / 1.5h；与 --end-time 互斥）",
+            )
+            # v0.5 Phase B — subtask parent
+            sp.add_argument(
+                "--parent",
+                help="父任务 ID（创建子任务；最多 2 层）",
             )
         elif name == "stats":
             sp = sub.add_parser(name, help="📊 统计信息")
@@ -340,6 +356,9 @@ def _todo_archive(args: argparse.Namespace) -> int:
 
     对应 BDD: docs/behaviors/todo-archive-behavior.md §场景 1-8
 
+    v0.5 Phase B: 当 archive 的任务有 parent 引用（子任务），
+    或有任务以本任务为 parent（父任务场景），永远级联。
+
     退出码约定：
     - 0：成功
     - 2：非法 reason
@@ -381,12 +400,17 @@ def _todo_archive(args: argparse.Namespace) -> int:
 
     old_status = existing.status
 
-    # 3. Perform the actual archive (folder move + frontmatter update)
+    # 3. v0.5 Phase B — 永远级联：找到所有以本任务为祖先的后代，一起归档
+    from core.storage import find_descendants
+    all_active = store.list_tasks(include_archived=False)
+    descendants = find_descendants(existing.id or "", all_active)
+
+    # 4. Perform the actual archive (parent first, then descendants)
+    archived_set: list[Task] = []
     try:
         archived = store.archive_task(name_or_id, reason=reason_str)
+        archived_set.append(archived)
     except TaskNotFoundError:
-        # Race: someone else moved/deleted the file between our lookup
-        # and the archive call. Treat the same as "not found".
         print(f"❌ 任务不存在：{name_or_id}", file=sys.stderr)
         return 3
     except TaskAlreadyArchivedError as exc:
@@ -396,24 +420,42 @@ def _todo_archive(args: argparse.Namespace) -> int:
         )
         return 4
     except FileExistsError as exc:
-        # Storage layer raises when a folder with the target
-        # ``YYYYMMDD-<name>`` already exists. Surface a clear error.
         print(f"❌ {exc}", file=sys.stderr)
         return 5
 
-    # 4. Update the top-level TODO.md inventory (BDD §场景 8).
-    #    Best-effort: a missing or broken index is not an error —
-    #    the user can regenerate it later with regen-index.ps1.
+    # Cascade archive to descendants (only active ones)
+    for desc in descendants:
+        try:
+            archived_desc = store.archive_task(desc.id or "", reason=reason_str)
+            archived_set.append(archived_desc)
+        except (TaskNotFoundError, TaskAlreadyArchivedError, FileExistsError):
+            # If a descendant vanished between our scan and the archive
+            # call, skip silently — the parent archive already succeeded.
+            continue
+
+    # 5. Update the top-level TODO.md inventory (BDD §场景 8).
     try:
         store.update_inventory_on_archive(old_status)
-    except Exception:  # noqa: BLE001 — defensive, see comment above
+        for desc in archived_set[1:]:
+            try:
+                store.update_inventory_on_archive(desc.status)
+            except Exception:  # noqa: BLE001
+                pass
+    except Exception:  # noqa: BLE001
         pass
 
-    # 5. Success (BDD §场景 1-3)
-    print(
-        f"✅ 任务已归档：{archived.name}"
-        f"（ID: {archived.id}，reason={archived.reason.value}）"
-    )
+    # 6. Success message
+    if len(archived_set) == 1:
+        print(
+            f"✅ 任务已归档：{archived.name}"
+            f"（ID: {archived.id}，reason={archived.reason.value}）"
+        )
+    else:
+        ids = ", ".join(t.id or t.name for t in archived_set)
+        print(
+            f"✅ 已级联归档 {len(archived_set)} 个任务：{ids}"
+            f"（reason={reason_str}）"
+        )
     return 0
 
 
@@ -652,6 +694,7 @@ def _todo_update(args: argparse.Namespace) -> int:
         and args.time is None
         and args.end_time is None
         and args.duration is None
+        and args.parent is None
     ):
         # Rebuild a parser so we can use parser.error() for consistent
         # argparse-style output ("usage: ..." + "prog: error: ...").
@@ -664,9 +707,10 @@ def _todo_update(args: argparse.Namespace) -> int:
         parser.add_argument("--time", help="新开始时间（HH:MM）")
         parser.add_argument("--end-time", help='新结束时间（"" 清除）')
         parser.add_argument("--duration", help='新持续时间（"" 清除）')
+        parser.add_argument("--parent", help='父任务 ID（"" 清除）')
         parser.error(
             "at least one of --status / --priority / --deadline / --tags "
-            "/ --time / --end-time / --duration is required"
+            "/ --time / --end-time / --duration / --parent is required"
         )
         return 2  # unreachable; parser.error() raises SystemExit(2)
 
@@ -732,24 +776,78 @@ def _todo_update(args: argparse.Namespace) -> int:
             print(str(exc), file=sys.stderr)
             return 2
 
+    # v0.5 Phase B — --parent 校验（BDD §场景 3, 4, 14）
+    new_parent: str | None | type(...) = None  # sentinel
+    clear_parent = args.parent is not None and args.parent == ""
+    if args.parent is not None and not clear_parent:
+        new_parent_value = args.parent
+        store_for_check = TaskStore()
+        # Cannot set parent to self
+        if new_parent_value == args.id:
+            print(
+                f"❌ 不能把 parent 设为自己的后代：{new_parent_value}",
+                file=sys.stderr,
+            )
+            return 2
+        parent_task = store_for_check.get_task(new_parent_value, include_archived=False)
+        if parent_task is None:
+            print(
+                f"❌ 父任务不存在：{new_parent_value}",
+                file=sys.stderr,
+            )
+            return 3
+        # Depth check: parent must be at depth ≤ 1
+        depth = 0
+        current = parent_task
+        visited: set[str] = set()
+        while current and current.parent:
+            if current.id in visited:
+                break
+            visited.add(current.id)
+            depth += 1
+            current = store_for_check.get_task(current.parent, include_archived=False)
+        if depth >= 2:
+            print(
+                f"❌ 子任务最多 2 层：{new_parent_value} 已经是孙任务",
+                file=sys.stderr,
+            )
+            return 2
+        # Cycle check: cannot set parent to one of our own descendants
+        from core.storage import find_descendants
+        all_active = store_for_check.list_tasks(include_archived=False)
+        descendants = find_descendants(args.id, all_active)
+        if any(d.id == new_parent_value for d in descendants):
+            print(
+                f"❌ 不能把 parent 设为自己的后代：{new_parent_value}",
+                file=sys.stderr,
+            )
+            return 2
+        new_parent = new_parent_value
+    elif clear_parent:
+        new_parent = None  # explicit None = clear
+    # If args.parent is None (not passed), leave new_parent as sentinel → no change
+
     # 写盘
     store = TaskStore()
+    update_kwargs: dict = dict(
+        status=TaskStatus(args.status) if args.status else None,
+        priority=Priority(args.priority) if args.priority else None,
+        deadline=new_deadline,
+        tags=new_tags,
+        clear_deadline=clear_deadline,
+        time=new_time,
+        end_time=new_end_time,
+        duration_min=new_duration_min,
+        clear_time=clear_time,
+        clear_end_time=clear_end_time,
+        clear_duration_min=clear_duration,
+        today=date.today().isoformat(),
+    )
+    if new_parent is not None or clear_parent:
+        update_kwargs["parent"] = new_parent if not clear_parent else None
+        update_kwargs["clear_parent"] = clear_parent
     try:
-        task = store.update_task(
-            args.id,
-            status=TaskStatus(args.status) if args.status else None,
-            priority=Priority(args.priority) if args.priority else None,
-            deadline=new_deadline,
-            tags=new_tags,
-            clear_deadline=clear_deadline,
-            time=new_time,
-            end_time=new_end_time,
-            duration_min=new_duration_min,
-            clear_time=clear_time,
-            clear_end_time=clear_end_time,
-            clear_duration_min=clear_duration,
-            today=date.today().isoformat(),
-        )
+        task = store.update_task(args.id, **update_kwargs)
     except TaskNotFoundError:
         # BDD 场景 3
         print(f"❌ 任务不存在：{args.id}", file=sys.stderr)
@@ -959,10 +1057,51 @@ def _render_auto_archive_summary(archived: list[Task]) -> str:
     return f"⏰ 自动归档 {len(archived)} 个逾期任务：{ids}\n"
 
 
+def _compute_tree_indent(tasks: list) -> dict[str, str]:
+    """Return a mapping ``task_id → indent_prefix`` for tree display.
+
+    Children get ``"  └ "`` (2 spaces + └ + space); grandchildren get
+    ``"    └ "``. Tasks without a parent (or whose parent is not in the
+    list) get an empty string. Indent is per-depth only — we don't try
+    to draw ascii branches between siblings.
+    """
+    by_id = {t.id: t for t in tasks if t.id}
+    depth: dict[str, int] = {}
+
+    def get_depth(tid: str | None, _seen: set | None = None) -> int:
+        if not tid or tid not in by_id:
+            return 0
+        if _seen is None:
+            _seen = set()
+        if tid in _seen:
+            return 0  # avoid cycle; treat as root
+        _seen.add(tid)
+        if tid in depth:
+            return depth[tid]
+        parent = by_id[tid].parent
+        if not parent or parent not in by_id:
+            depth[tid] = 0
+        else:
+            depth[tid] = get_depth(parent, _seen) + 1
+        return depth[tid]
+
+    out: dict[str, str] = {}
+    for t in tasks:
+        d = get_depth(t.id)
+        if d == 0:
+            out[t.id or ""] = ""
+        elif d == 1:
+            out[t.id or ""] = "  └ "
+        else:
+            out[t.id or ""] = "    └ "
+    return out
+
+
 def _todo_list(args: argparse.Namespace) -> int:
     """``x todo list [选项]`` — 列出任务表格（已被 run 解析过）。
 
     对应 BDD：`docs/behaviors/todo-list-behavior.md`（8 个场景）。
+    v0.5 Phase B: 增加 `--tree` 显式树形展示（自动启用 if 存在 parent）。
 
     退出码：
     - 0：成功（包括空仓库/无匹配）
@@ -983,14 +1122,9 @@ def _todo_list(args: argparse.Namespace) -> int:
 
     tag: str | None = args.tag
     include_archived: bool = bool(getattr(args, "include_archived", False))
+    explicit_tree: bool = bool(getattr(args, "tree", False))
 
     # 0. Auto-archive hook (opt-in, default disabled).
-    #    Per BDD §场景 1 — first step on entry. We do this AFTER
-    #    validation because a user-supplied --status invalid shouldn't
-    #    silently trigger an archive; but the archive itself runs once
-    #    per list invocation so a follow-up --all or --status filter
-    #    call sees the cleaned store. Note: archive errors are already
-    #    swallowed inside _auto_archive_overdue.
     store = TaskStore()
     archived = _auto_archive_overdue(store)
     sys.stdout.write(_render_auto_archive_summary(archived))
@@ -1011,6 +1145,11 @@ def _todo_list(args: argparse.Namespace) -> int:
         print("📭 没有任务（试试 x todo add \"任务名\" 创建第一个）")
         return 0
 
+    # v0.5 Phase B — 自动树形 / 显式树形
+    has_parent = any(t.parent for t in tasks)
+    use_tree = explicit_tree or has_parent
+    indent_map: dict[str, str] = _compute_tree_indent(tasks) if use_tree else {}
+
     # 计算每列的显示宽度（取表头与所有数据行的最大值），
     # 用 display-width 而非字符数，CJK 字符按 2 宽算，确保对齐
     header_cells = [h for h, _ in _LIST_COLUMNS]
@@ -1029,9 +1168,10 @@ def _todo_list(args: argparse.Namespace) -> int:
     print("  ".join(pad(c, col_widths[i]) for i, c in enumerate(header_cells)))
     # 分隔线（用 ─ 增强可视化）
     print("  ".join("─" * col_widths[i] for i in range(len(_LIST_COLUMNS))))
-    # 数据行
-    for row in rows:
-        print("  ".join(pad(c, col_widths[i]) for i, c in enumerate(row)))
+    # 数据行（树形模式下前缀 indent 加在整行最前）
+    for i, row in enumerate(rows):
+        prefix = indent_map.get(tasks[i].id or "", "") if use_tree else ""
+        print(prefix + "  ".join(pad(c, col_widths[j]) for j, c in enumerate(row)))
     return 0
 
 
@@ -1133,6 +1273,39 @@ def _todo_add(args: argparse.Namespace) -> int:
             )
             return 2
 
+    # v0.5 Phase B — --parent 校验（BDD §场景 3, 4）
+    parent_id: str | None = None
+    if args.parent is not None and args.parent != "":
+        parent_id = args.parent
+        # Existence + depth check
+        store_for_check = TaskStore()
+        parent_task = store_for_check.get_task(parent_id, include_archived=False)
+        if parent_task is None:
+            print(
+                f"❌ 父任务不存在：{parent_id}",
+                file=sys.stderr,
+            )
+            return 3
+        # Depth check: parent must be at depth ≤ 1 (root=0 or child=1).
+        # Allowed chain: root → child → grandchild (new) = depth 2.
+        # Reject if parent is itself a grandchild (depth 2), which would make new task great-grandchild (depth 3).
+        # Compute parent depth by walking the chain.
+        depth = 0
+        current = parent_task
+        visited: set[str] = set()
+        while current and current.parent:
+            if current.id in visited:
+                break  # cycle, treat as depth 0
+            visited.add(current.id)
+            depth += 1
+            current = store_for_check.get_task(current.parent, include_archived=False)
+        if depth >= 2:
+            print(
+                f"❌ 子任务最多 2 层：{parent_id} 已经是孙任务",
+                file=sys.stderr,
+            )
+            return 2
+
     # 写入日期：created/updated 同为今天（YYYY-MM-DD 本地日期）。
     today = date.today().isoformat()
 
@@ -1152,6 +1325,7 @@ def _todo_add(args: argparse.Namespace) -> int:
         time=time_str,
         end_time=end_time_str,
         duration_min=duration_min,
+        parent=parent_id,
         folder=f"任务/{name}",
         tags=tags,
     )

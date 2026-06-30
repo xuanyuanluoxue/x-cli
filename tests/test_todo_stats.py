@@ -680,9 +680,10 @@ def test_update_legacy_archived_task_is_blocked(store):
         priority="low",
         deadline=None,
         tags=None,
-        time=None,        # v0.5
-        end_time=None,    # v0.5
-        duration=None,    # v0.5
+        time=None,        # v0.5 Phase A
+        end_time=None,    # v0.5 Phase A
+        duration=None,    # v0.5 Phase A
+        parent=None,      # v0.5 Phase B
     )
     out = io.StringIO()
     err = io.StringIO()

@@ -73,6 +73,8 @@ _KNOWN_FIELDS: frozenset[str] = frozenset(
         "time",          # "HH:MM" 24h
         "end_time",      # "HH:MM" 24h
         "duration_min",  # int, minutes
+        # v0.5 Phase B — subtask parent reference (id of parent task, optional)
+        "parent",
     }
 )
 
@@ -120,6 +122,9 @@ class Task:
         Optional integer duration in minutes. Mutually exclusive with
         :attr:`end_time`. End time is derived at display time via
         ``compute_end_time(time, duration_min)`` and not written back.
+    parent:
+        Optional ``id`` of the parent task (v0.5 Phase B). Max chain
+        depth is 2 (root → child → grandchild). Enforced at CLI layer.
     body:
         Markdown body text (everything after the ``---`` delimiter).
     extra:
@@ -141,6 +146,7 @@ class Task:
     time: str | None = None  # v0.5 Phase A
     end_time: str | None = None  # v0.5 Phase A
     duration_min: int | None = None  # v0.5 Phase A
+    parent: str | None = None  # v0.5 Phase B (kebab-case id of parent task)
     body: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -205,6 +211,7 @@ class Task:
             "time",
             "end_time",
             "duration_min",
+            "parent",  # v0.5 Phase B
             "folder",
             "tags",
             "subtasks",

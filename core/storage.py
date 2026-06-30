@@ -312,6 +312,8 @@ class TaskStore:
         clear_time: bool = False,
         clear_end_time: bool = False,
         clear_duration_min: bool = False,
+        parent: str | None = None,
+        clear_parent: bool = False,
         today: str | None = None,
         **extra: Any,
     ) -> Task:
@@ -326,6 +328,10 @@ class TaskStore:
         new values; ``clear_*`` flags remove the field entirely (per
         BDD §场景 8). Mutex between ``end_time`` and ``duration_min``
         is enforced by the CLI layer.
+
+        v0.5 Phase B: ``parent`` accepts a task id; ``clear_parent=True``
+        removes the parent reference. CLI layer enforces depth ≤ 2 and
+        no-cycles invariants.
         """
         # Look in the archive too so we can give a precise "already
         # archived" error rather than a generic "not found".
@@ -360,6 +366,11 @@ class TaskStore:
             task.duration_min = None
         elif duration_min is not None:
             task.duration_min = duration_min
+        # v0.5 Phase B — subtask parent
+        if clear_parent:
+            task.parent = None
+        elif parent is not None:
+            task.parent = parent
         # Pass through anything else into extra (defensive: callers can
         # pass arbitrary fields that we don't model explicitly).
         for k, v in extra.items():
@@ -986,6 +997,35 @@ def _sort_key(task: Task) -> tuple:
     is_archived = 1 if task.status is TaskStatus.ARCHIVED else 0
     deadline = task.deadline or "9999-99-99"
     return (is_archived, deadline, task.name)
+
+
+def find_descendants(parent_id: str, all_tasks: list[Task]) -> list[Task]:
+    """Return all transitive descendants of ``parent_id`` (depth 1 + 2).
+
+    Walks ``task.parent`` chains through ``all_tasks`` and collects every
+    task whose root ancestor is ``parent_id``. Includes both direct
+    children and grandchildren. Returns an empty list if no descendants
+    exist or the parent has no children.
+
+    Used by v0.5 Phase B cascade logic (archive / remove a parent →
+    also archive / remove its descendants).
+    """
+    if not parent_id:
+        return []
+    by_id = {t.id: t for t in all_tasks if t.id}
+    out: list[Task] = []
+    # Direct children
+    for t in all_tasks:
+        if t.parent == parent_id and t not in out:
+            out.append(t)
+    # Grandchildren (children of direct children)
+    direct_child_ids = {t.id for t in out if t.id}
+    for t in all_tasks:
+        if t.parent in direct_child_ids and t not in out:
+            out.append(t)
+    # Sanity: never include parent itself
+    out = [t for t in out if t.id != parent_id]
+    return out
 
 
 def _coerce_enum(value: Any, enum_cls: type, field_name: str) -> Any:
