@@ -1,11 +1,11 @@
 # PLAN-v0.5 — TODO 增强 + 数据导出 路线图
 
-> **状态**：🚧 实现中（Phase A ✅ / Phase B ✅ / Phase C ⏳ / Phase D ⏳ / Phase E ⏳）
+> **状态**：🚧 实现中（Phase A ✅ / Phase B ✅ / Phase C ✅ / Phase D ⏳ / Phase E ⏳）
 > **来源**：用户桌面 `x-cli功能建议.md`（v1.0，2026-06-30）+ COMMANDS.md ⏳ 区既有承诺
 > **作者**：Xavier（决策）+ AI（起草 / 实现）
 > **版本**：v0.5.0（接续 v0.4.y）
 > **范围**：TODO 子系统增强 + 数据导出（secret 子系统不在本规划内）
-> **最后更新**：2026-06-30（Phase B 完成后）
+> **最后更新**：2026-06-30（Phase C 完成后）
 
 ### 阶段状态
 
@@ -14,12 +14,12 @@
 | — | 规划（PLAN-v0.5.md）| ✅ | `4473013` |
 | A | P0 时间精度（--time / --end-time / --duration）| ✅ | `ef9ce68` `f2c6732` `88f5dfd` |
 | B | P1 子任务（--parent / 2 层 / 永远级联）| ✅ | `7b4bf30` `e7c54d9` `0075401` |
-| C | P1 提醒只读 + list --reminding + stats 统计 | ⏳ | — |
+| C | P1 提醒只读 + list --reminding + stats 统计 | ✅ | `34b85a9` `13ef32c` `2b9a032` |
 | D | P2 重复 / 批量 / 排序 / urgent / 回收站 | ⏳ | — |
 | E | P3 模板 / 依赖 / 导出 | ⏳ | — |
-| — | 附加修复（date-fragile test）| ✅ | （待提交） |
+| — | 附加修复（date-fragile test + pytest tmpdir workaround）| ✅ | `3a76f17` |
 
-**累计新增**：30 用例 + 1 修复，全部 PASS。全量 606/607（修复后 607/607）。
+**累计新增**：43 用例 + 1 修复 + 1 workaround，全部 PASS。全量 619/620。
 
 ---
 
@@ -408,17 +408,22 @@ class Priority(str, Enum):
 5. **提交**: `7b4bf30` (BDD) / `e7c54d9` (Tests) / `0075401` (Impl)
 6. **注**: 原计划的 `test_todo_tree.py` 合并进 `test_todo_parent.py`（parent 与 tree 是同一概念）
 
-### Phase C — P1 提醒（**v0.5 不触发通知**，预计 +10 用例）
+### Phase C — P1 提醒只读（13 用例） ✅ 完成
 
-1. **BDD**: `docs/behaviors/todo-remind-behavior.md`（只覆盖：字段存储 / list 展示 / clear 子命令 / --reminding 筛选）
-2. **TDD**: `tests/test_todo_remind.py`
-3. **实现**:
-   - 字段存储（`remind: [...]` 数组）
-   - `x todo reminder list` 只读展示
-   - `x todo reminder clear <id...>` 清字段
-   - `x todo list --reminding` 筛选
-   - `x todo stats` 加「⏰ 有提醒任务数」统计
-4. **v0.5 不做**: daemon 进程 / 系统调度器注册 / 通知触发（推到 v0.6+ 打包 exe 后）
+1. **BDD**: `docs/behaviors/todo-remind-behavior.md` ✅（12 场景）
+2. **TDD**: `tests/test_todo_remind.py` ✅（13/13 Red）
+3. **实现**: `core/models.py` + `core/slug.py` + `core/storage.py` + `plugins/todo.py` ✅
+4. **验收**: 13/13 Green ✅
+5. **提交**: `34b85a9` (BDD) / `13ef32c` (Tests) / `2b9a032` (Impl)
+6. **超出预期**: BDD 写的是 12 场景，测试多加了 1 个（`--remind ""` 空字符串省略字段），覆盖 add + update 两端
+
+**v0.5 不做**：daemon 进程 / 系统调度器注册 / 通知触发（推到 v0.6+ 打包 exe 后）
+
+**实现期发现**：
+- `parse_duration` 原只支持 `Nh/Nm`，remind 需要 `Nd`，扩展 regex + 单位换算
+- `parse_remind` 复用 `parse_duration` 但报错信息需明确说「remind」而非「duration」（避免误导用户）
+- `TODO_ACTIONS` tuple 加 `reminder` 后才能被子命令 dispatch
+- 每次 Phase 加新字段（如 Phase B `parent`、Phase C `remind`）都需同步更新 `tests/test_todo_stats.py` 里手搓 Namespace 的 `test_update_legacy_archived_task_is_blocked`
 
 ### Phase D — P2 重复 + 批量 + 排序 + urgent + 回收站（4 个 spec，预计 +30 用例）
 
