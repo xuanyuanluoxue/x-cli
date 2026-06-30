@@ -69,6 +69,10 @@ _KNOWN_FIELDS: frozenset[str] = frozenset(
         "tags",
         "subtasks",
         "reason",  # only valid when status == archived
+        # v0.5 Phase A — time precision (all optional, see BDD §场景 12)
+        "time",          # "HH:MM" 24h
+        "end_time",      # "HH:MM" 24h
+        "duration_min",  # int, minutes
     }
 )
 
@@ -107,6 +111,15 @@ class Task:
         imposing a schema we do not yet need).
     reason:
         Archive reason — only meaningful when ``status == archived``.
+    time:
+        Optional ``HH:MM`` 24h start time (v0.5 Phase A).
+    end_time:
+        Optional ``HH:MM`` 24h end time. Mutually exclusive with
+        :attr:`duration_min` (enforced at the CLI layer).
+    duration_min:
+        Optional integer duration in minutes. Mutually exclusive with
+        :attr:`end_time`. End time is derived at display time via
+        ``compute_end_time(time, duration_min)`` and not written back.
     body:
         Markdown body text (everything after the ``---`` delimiter).
     extra:
@@ -125,6 +138,9 @@ class Task:
     tags: list[str] | None = None
     subtasks: list[dict[str, Any]] | None = None
     reason: ArchiveReason | None = None
+    time: str | None = None  # v0.5 Phase A
+    end_time: str | None = None  # v0.5 Phase A
+    duration_min: int | None = None  # v0.5 Phase A
     body: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -186,6 +202,9 @@ class Task:
             "created",
             "updated",
             "deadline",
+            "time",
+            "end_time",
+            "duration_min",
             "folder",
             "tags",
             "subtasks",

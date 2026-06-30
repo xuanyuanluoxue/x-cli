@@ -311,13 +311,17 @@ def test_update_no_options_errors() -> None:
 def test_update_no_options_error_message_via_capsys(
     store: TaskStore, capsys: pytest.CaptureFixture
 ) -> None:
-    """对应 BDD 场景 8：标准错误里要出现「至少一个选项」的提示文本。"""
+    """对应 BDD 场景 8：标准错误里要出现「至少一个选项」的提示文本。
+
+    v0.5 起 error message 也包含 --time / --end-time / --duration。
+    """
     _write_task(store, "kemu1")
     with pytest.raises(SystemExit) as exc_info:
         main(["todo", "update", "kemu1"])
     assert exc_info.value.code == 2
     captured = capsys.readouterr()
-    assert "at least one of --status / --priority / --deadline / --tags is required" in captured.err
+    assert "at least one of" in captured.err
+    assert "--time" in captured.err and "--end-time" in captured.err and "--duration" in captured.err
 
 
 # ============================================================

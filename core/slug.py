@@ -200,6 +200,106 @@ def validate_deadline(value: str) -> str:
     return value
 
 
+# ============================================================
+#  Time / duration validation (v0.5 Phase A)
+# ============================================================
+
+
+_TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+# Allow optional leading minus so we can distinguish format-error
+# (e.g. ``abc``) from sign-error (e.g. ``-5m``).
+_DURATION_RE = re.compile(r"^(-?)(\d+(?:\.\d+)?)([hm])?$")
+
+
+def validate_time(value: str) -> str:
+    """Validate a ``HH:MM`` time string (24h).
+
+    Returns the input string unchanged on success. Raises ``ValueError``
+    with a human-readable message (per BDD §场景 9) on failure.
+
+    Examples::
+
+        >>> validate_time("08:20")
+        '08:20'
+        >>> validate_time("23:59")
+        '23:59'
+        >>> validate_time("25:00")  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ValueError: ...
+    """
+    if not isinstance(value, str) or not _TIME_RE.match(value):
+        raise ValueError(
+            f"❌ time 格式错误：{value}（必须为 HH:MM，如 08:20）"
+        )
+    return value
+
+
+def _time_to_minutes(hhmm: str) -> int:
+    """Convert ``HH:MM`` to total minutes since midnight (00:00 = 0)."""
+    h, m = hhmm.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _minutes_to_time(total: int) -> str:
+    """Convert minutes since midnight back to ``HH:MM``."""
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
+def parse_duration(raw: str) -> int:
+    """Parse a duration string into an integer number of minutes.
+
+    Supported formats (per BDD §场景 4):
+        - ``N``         → N minutes (default unit = minutes)
+        - ``Nm``        → N minutes
+        - ``Nh``        → N hours (decimal allowed, e.g. ``1.5h`` = 90)
+
+    Raises ``ValueError`` on invalid format or non-positive value
+    (per BDD §场景 10 — ``-5m`` yields a distinct "must be positive"
+    error, ``abc`` yields a format error).
+
+    Examples::
+
+        >>> parse_duration("90")
+        90
+        >>> parse_duration("90m")
+        90
+        >>> parse_duration("1.5h")
+        90
+        >>> parse_duration("2h")
+        120
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError(
+            f"❌ duration 格式错误：{raw!r}（合法：N / Nm / Nh，支持小数）"
+        )
+    m = _DURATION_RE.match(raw.strip())
+    if not m:
+        raise ValueError(
+            f"❌ duration 格式错误：{raw}（合法：N / Nm / Nh，支持小数）"
+        )
+    sign = -1 if m.group(1) == "-" else 1
+    number = float(m.group(2))
+    unit = m.group(3) or "m"  # default = minutes
+    minutes = sign * number * 60 if unit == "h" else sign * number
+    if minutes <= 0:
+        raise ValueError(
+            f"❌ duration 必须为正数：{raw}"
+        )
+    return int(minutes)
+
+
+def compute_end_time(time_str: str, duration_min: int) -> str:
+    """Given a ``HH:MM`` start time and duration in minutes, return ``HH:MM`` end time.
+
+    End time wraps around midnight if the duration exceeds 24h
+    (modulo 24h, since tasks are daily). Per BDD §场景 14 we display
+    the wrapped result, e.g. ``23:30 + 60m → 00:30``.
+    """
+    start = _time_to_minutes(time_str)
+    end = (start + duration_min) % (24 * 60)
+    return _minutes_to_time(end)
+
+
 def parse_tags(raw: str) -> list[str]:
     """Split a comma-separated tag string into a clean list.
 
@@ -213,5 +313,8 @@ __all__ = [
     "slugify",
     "unique_slug",
     "validate_deadline",
+    "validate_time",
+    "parse_duration",
+    "compute_end_time",
     "parse_tags",
 ]

@@ -193,20 +193,21 @@ def test_bdd_scenario_1_default_lists_only_active(store):
     assert err == ""
 
     header, data = _parse_list_output(out)
-    # 表头与 BDD 一致
-    assert header == ["ID", "Name", "Status", "Priority", "Deadline"]
+    # 表头与 BDD 一致（v0.5 加 Time 列）
+    assert header == ["ID", "Name", "Status", "Priority", "Deadline", "Time"]
     # 数据行：3 个未归档任务（按 deadline 升序，None 在末尾）
     data_ids = [row[0] for row in data]
     assert data_ids == ["kemu1", "zizhushixi", "laodongjiaoyu3"]
     # 归档任务 20260521-xiangjifanmai 不应出现
     assert "20260521-xiangjifanmai" not in out
-    # 验证列顺序与表头一致
+    # 验证列顺序与表头一致（v0.5 加 Time 列）
     assert data[0] == [
         "kemu1",
         "kemu1",  # name (folder name same as id)
         "⏳ pending",
         "🔥 high",
         "2026-07-15",
+        "-",  # Time column (no time field)
     ]
 
 
@@ -457,7 +458,7 @@ def test_main_dispatches_todo_list_with_unknown_flag(monkeypatch, tmp_path):
 
 
 def test_table_header_matches_bdd_columns(store):
-    """表头列与 BDD 一致：ID / Name / Status / Priority / Deadline。
+    """表头列与 BDD 一致：ID / Name / Status / Priority / Deadline / Time（v0.5）。
 
     列与列之间用 2 空格分隔（CJK 对齐后的格式）；不再用 tab。
     """
@@ -465,13 +466,14 @@ def test_table_header_matches_bdd_columns(store):
     _, out, _ = _run_list_handler([], store)
     first_line = out.splitlines()[0]
     header_cells = [c.strip() for c in first_line.split("  ") if c.strip()]
-    assert header_cells == ["ID", "Name", "Status", "Priority", "Deadline"]
+    assert header_cells == ["ID", "Name", "Status", "Priority", "Deadline", "Time"]
 
 
 def test_table_columns_separated_by_two_spaces(store):
     """表格用 2 空格对齐（CJK 友好）。
 
     第 2 行是 ─── 分隔线，要跳过。
+    v0.5 起有 6 列（含 Time）。
     """
     make_task(store, "kemu1", deadline="2026-08-31")
     _, out, _ = _run_list_handler([], store)
@@ -479,7 +481,7 @@ def test_table_columns_separated_by_two_spaces(store):
     data_lines = [l for l in lines if not l.lstrip().startswith("─")]
     for line in data_lines:
         cells = [c.strip() for c in line.split("  ") if c.strip()]
-        assert len(cells) == 5, f"line {line!r} has {len(cells)} cells, expected 5"
+        assert len(cells) == 6, f"line {line!r} has {len(cells)} cells, expected 6"
 
 
 if __name__ == "__main__":

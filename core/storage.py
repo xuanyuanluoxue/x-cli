@@ -306,6 +306,12 @@ class TaskStore:
         tags: list[str] | None = None,
         name: str | None = None,
         clear_deadline: bool = False,
+        time: str | None = None,
+        end_time: str | None = None,
+        duration_min: int | None = None,
+        clear_time: bool = False,
+        clear_end_time: bool = False,
+        clear_duration_min: bool = False,
         today: str | None = None,
         **extra: Any,
     ) -> Task:
@@ -315,6 +321,11 @@ class TaskStore:
         ``todo-update-behavior.md`` scenario 5). ``today`` defaults to
         the current local date as ``YYYY-MM-DD`` and is used to refresh
         the ``updated`` field.
+
+        v0.5 Phase A: ``time`` / ``end_time`` / ``duration_min`` accept
+        new values; ``clear_*`` flags remove the field entirely (per
+        BDD §场景 8). Mutex between ``end_time`` and ``duration_min``
+        is enforced by the CLI layer.
         """
         # Look in the archive too so we can give a precise "already
         # archived" error rather than a generic "not found".
@@ -336,6 +347,19 @@ class TaskStore:
             task.tags = list(tags) if tags else None
         if name is not None:
             task.name = name
+        # v0.5 Phase A — time precision
+        if clear_time:
+            task.time = None
+        elif time is not None:
+            task.time = time
+        if clear_end_time:
+            task.end_time = None
+        elif end_time is not None:
+            task.end_time = end_time
+        if clear_duration_min:
+            task.duration_min = None
+        elif duration_min is not None:
+            task.duration_min = duration_min
         # Pass through anything else into extra (defensive: callers can
         # pass arbitrary fields that we don't model explicitly).
         for k, v in extra.items():

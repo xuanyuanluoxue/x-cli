@@ -27,7 +27,7 @@ from core.formatting import display_width, pad
 from core.config import is_auto_archive_enabled
 from core.models import ArchiveReason, Priority, Task, TaskStatus
 from core.parser import parse_frontmatter
-from core.slug import parse_tags, unique_slug, validate_deadline
+from core.slug import parse_tags, unique_slug, validate_deadline, validate_time, parse_duration, compute_end_time
 from core.storage import (
     TaskAlreadyArchivedError,
     TaskAlreadyExistsError,
@@ -125,6 +125,19 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
                 "--tags",
                 help="新标签（逗号分隔；完全替换而非合并）",
             )
+            # v0.5 Phase A — time precision flags
+            sp.add_argument(
+                "--time",
+                help='开始时间（HH:MM 24h 制；传 "" 显式清除）',
+            )
+            sp.add_argument(
+                "--end-time",
+                help='结束时间（HH:MM；与 --duration 互斥；传 "" 清除）',
+            )
+            sp.add_argument(
+                "--duration",
+                help='持续时间（如 90 / 90m / 1.5h；与 --end-time 互斥）',
+            )
         elif name == "list":
             # BDD: docs/behaviors/todo-list-behavior.md §场景 1-8
             sp = sub.add_parser(name, help="列出任务")
@@ -166,6 +179,19 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
             sp.add_argument(
                 "--tags",
                 help="标签（逗号分隔，如 驾照,暑假）；不传则不写入 tags 字段",
+            )
+            # v0.5 Phase A — time precision
+            sp.add_argument(
+                "--time",
+                help="开始时间（HH:MM 24h 制，如 08:20）",
+            )
+            sp.add_argument(
+                "--end-time",
+                help="结束时间（HH:MM；与 --duration 互斥）",
+            )
+            sp.add_argument(
+                "--duration",
+                help="持续时间（90 / 90m / 1.5h；与 --end-time 互斥）",
             )
         elif name == "stats":
             sp = sub.add_parser(name, help="📊 统计信息")
@@ -623,6 +649,9 @@ def _todo_update(args: argparse.Namespace) -> int:
         and args.priority is None
         and args.deadline is None
         and args.tags is None
+        and args.time is None
+        and args.end_time is None
+        and args.duration is None
     ):
         # Rebuild a parser so we can use parser.error() for consistent
         # argparse-style output ("usage: ..." + "prog: error: ...").
@@ -632,8 +661,12 @@ def _todo_update(args: argparse.Namespace) -> int:
         parser.add_argument("--priority", help="新优先级")
         parser.add_argument("--deadline", help='新截止日期（"" 清除）')
         parser.add_argument("--tags", help="新标签")
+        parser.add_argument("--time", help="新开始时间（HH:MM）")
+        parser.add_argument("--end-time", help='新结束时间（"" 清除）')
+        parser.add_argument("--duration", help='新持续时间（"" 清除）')
         parser.error(
-            "at least one of --status / --priority / --deadline / --tags is required"
+            "at least one of --status / --priority / --deadline / --tags "
+            "/ --time / --end-time / --duration is required"
         )
         return 2  # unreachable; parser.error() raises SystemExit(2)
 
@@ -669,6 +702,36 @@ def _todo_update(args: argparse.Namespace) -> int:
     else:
         new_tags = [t.strip() for t in args.tags.split(",") if t.strip()]
 
+    # v0.5 Phase A — time precision (BDD §场景 7-8, 9-10)
+    new_time: str | None = None
+    clear_time = args.time is not None and args.time == ""
+    if args.time is not None and not clear_time:
+        try:
+            validate_time(args.time)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        new_time = args.time
+
+    new_end_time: str | None = None
+    clear_end_time = args.end_time is not None and args.end_time == ""
+    if args.end_time is not None and not clear_end_time:
+        try:
+            validate_time(args.end_time)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        new_end_time = args.end_time
+
+    new_duration_min: int | None = None
+    clear_duration = args.duration is not None and args.duration == ""
+    if args.duration is not None and not clear_duration:
+        try:
+            new_duration_min = parse_duration(args.duration)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+
     # 写盘
     store = TaskStore()
     try:
@@ -679,6 +742,12 @@ def _todo_update(args: argparse.Namespace) -> int:
             deadline=new_deadline,
             tags=new_tags,
             clear_deadline=clear_deadline,
+            time=new_time,
+            end_time=new_end_time,
+            duration_min=new_duration_min,
+            clear_time=clear_time,
+            clear_end_time=clear_end_time,
+            clear_duration_min=clear_duration,
             today=date.today().isoformat(),
         )
     except TaskNotFoundError:
@@ -759,6 +828,27 @@ def _list_priority_cell(task) -> str:
     return f"{icon} {cell}" if icon else cell
 
 
+def _list_time_cell(task: object) -> str:
+    """v0.5 Phase A — 列表 Time 列展示（BDD §场景 11, 14）。
+
+    优先级：time + end_time → ``HH:MM-HH:MM``
+            time + duration_min → ``HH:MM-<derived>``
+            time alone → ``HH:MM``
+            否则 → ``-``
+    """
+    t = task.time or ""
+    e = getattr(task, "end_time", None)
+    d = getattr(task, "duration_min", None)
+    if not t:
+        return "-"
+    if e:
+        return f"{t}-{e}"
+    if d is not None:
+        derived = compute_end_time(t, d)
+        return f"{t}-{derived}"
+    return t
+
+
 # 列表命令的列定义（表头 + 取值函数），集中维护表格 schema
 _LIST_COLUMNS: tuple[tuple[str, Callable[[object], str]], ...] = (
     ("ID", lambda t: t.id or t.name),
@@ -766,6 +856,7 @@ _LIST_COLUMNS: tuple[tuple[str, Callable[[object], str]], ...] = (
     ("Status", _list_status_cell),
     ("Priority", _list_priority_cell),
     ("Deadline", lambda t: t.deadline or "-"),
+    ("Time", _list_time_cell),  # v0.5 Phase A
 )
 
 
@@ -999,6 +1090,49 @@ def _todo_add(args: argparse.Namespace) -> int:
             # 与「不传 --tags」保持一致（BDD §场景 7 的精神）。
             tags = None
 
+    # v0.5 Phase A — time precision (BDD §场景 1-5, 9-10, 13)
+    time_str: str | None = None
+    end_time_str: str | None = None
+    duration_min: int | None = None
+    if args.time is not None and args.time != "":
+        try:
+            validate_time(args.time)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        time_str = args.time
+    if args.end_time is not None and args.end_time != "":
+        try:
+            validate_time(args.end_time)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+        end_time_str = args.end_time
+    if args.duration is not None and args.duration != "":
+        try:
+            duration_min = parse_duration(args.duration)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+
+    # BDD §场景 5：--end-time 与 --duration 互斥
+    if end_time_str is not None and duration_min is not None:
+        print(
+            "❌ --end-time 与 --duration 互斥，不能同时使用",
+            file=sys.stderr,
+        )
+        return 2
+
+    # BDD §场景 13：end_time 必须 >= time（需要 time 已传入）
+    if time_str is not None and end_time_str is not None:
+        from core.slug import _time_to_minutes
+        if _time_to_minutes(end_time_str) < _time_to_minutes(time_str):
+            print(
+                f"❌ end_time ({end_time_str}) 早于 time ({time_str})",
+                file=sys.stderr,
+            )
+            return 2
+
     # 写入日期：created/updated 同为今天（YYYY-MM-DD 本地日期）。
     today = date.today().isoformat()
 
@@ -1015,6 +1149,9 @@ def _todo_add(args: argparse.Namespace) -> int:
         created=today,
         updated=today,
         deadline=deadline_str,
+        time=time_str,
+        end_time=end_time_str,
+        duration_min=duration_min,
         folder=f"任务/{name}",
         tags=tags,
     )
