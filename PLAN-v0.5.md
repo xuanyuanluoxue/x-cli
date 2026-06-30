@@ -1,6 +1,6 @@
 # PLAN-v0.5 — TODO 增强 + 数据导出 路线图
 
-> **状态**：🚧 实现中（Phase A ✅ / Phase B ✅ / Phase C ✅ / Phase D ⏳ / Phase E ⏳）
+> **状态**：🚧 实现中（Phase A ✅ / Phase B ✅ / Phase C ✅ / Phase D ✅ / Phase E ⏳）
 > **来源**：用户桌面 `x-cli功能建议.md`（v1.0，2026-06-30）+ COMMANDS.md ⏳ 区既有承诺
 > **作者**：Xavier（决策）+ AI（起草 / 实现）
 > **版本**：v0.5.0（接续 v0.4.y）
@@ -15,11 +15,11 @@
 | A | P0 时间精度（--time / --end-time / --duration）| ✅ | `ef9ce68` `f2c6732` `88f5dfd` |
 | B | P1 子任务（--parent / 2 层 / 永远级联）| ✅ | `7b4bf30` `e7c54d9` `0075401` |
 | C | P1 提醒只读 + list --reminding + stats 统计 | ✅ | `34b85a9` `13ef32c` `2b9a032` |
-| D | P2 重复 / 批量 / 排序 / urgent / 回收站 | ⏳ | — |
+| D | P2 重复 / 批量 / 排序 / urgent / 回收站 | ✅ | `eb49c34` `678fc50` `8bfcda9` |
 | E | P3 模板 / 依赖 / 导出 | ⏳ | — |
 | — | 附加修复（date-fragile test + pytest tmpdir workaround）| ✅ | `3a76f17` |
 
-**累计新增**：43 用例 + 1 修复 + 1 workaround，全部 PASS。全量 619/620。
+**累计新增**：80 用例 + 1 修复 + 1 workaround，全部 PASS。全量 657/657。
 
 ---
 
@@ -425,20 +425,31 @@ class Priority(str, Enum):
 - `TODO_ACTIONS` tuple 加 `reminder` 后才能被子命令 dispatch
 - 每次 Phase 加新字段（如 Phase B `parent`、Phase C `remind`）都需同步更新 `tests/test_todo_stats.py` 里手搓 Namespace 的 `test_update_legacy_archived_task_is_blocked`
 
-### Phase D — P2 重复 + 批量 + 排序 + urgent + 回收站（4 个 spec，预计 +30 用例）
+### Phase D — P2 重复 + 批量 + 排序 + urgent + 回收站（3 个 spec，37 用例） ✅ 完成
 
-1. **BDD**:
-   - `todo-repeat-behavior.md`（repeat 字段 + `repeat-fire` 子命令 + 实例命名 -<seq>）
-   - `todo-batch-behavior.md`（done / archive / update / remove 多 id + --filter）
-   - `todo-sort-behavior.md`（4 种 sort + tree + reminding 筛选）
-   - `todo-urgent-behavior.md`（urgent 枚举 + ANSI red 高亮 + 终端检测）
-2. **TDD**: 对应 4 个 test 文件
-3. **实现**:
-   - repeat 解析（手写 cron）+ `x todo repeat-fire <id>` 子命令
-   - batch handler（多 id 接受 + --filter 模糊匹配 + --all flag 扩到 archived）
-   - sort logic（priority / deadline / created / time）
-   - `urgent` 枚举 + ANSI red + 终端颜色检测（`core/formatting.py:supports_color()`）
-   - **回收站**支持：`core/recycle.py`（stdlib-only，Win ctypes + macOS subprocess + Linux gio trash）
+1. **BDD** ✅:
+   - `todo-repeat-behavior.md`（13 场景：repeat 字段 + `repeat-fire` + 实例命名 -<seq>）
+   - `todo-batch-behavior.md`（11 场景：done/archive/update/remove 多 id + --filter + 回收站）
+   - `todo-sort-behavior.md`（13 场景：4 种 sort + tree + reminding + urgent + ANSI）
+2. **TDD** ✅: 37 用例（34 Red → Green）
+3. **实现** ✅:
+   - `core/formatting.py:supports_color()` 跨平台 ANSI 能力检测
+   - `core/formatting.py:colorize()` urgent 标红
+   - `core/slug.py:parse_repeat()` 手写 cron + 4 种 kind
+   - `core/recycle.py` 跨平台回收站（Win ctypes / macOS mv / Linux gio）
+   - `Priority.URGENT` 新增 + `_PRIORITY_SORT_WEIGHT` 用于排序
+   - `core/storage.py:find_descendants / find_by_filter / remove_task` 新增
+   - `archive_task` 在 extra 存 `_orig_status_before_archive`（inventory 减法用）
+   - `plugins/todo.py` 新增 `repeat-fire` / `remove` 子命令 + 4 个 batch handler（done/archive/update/remove 全部支持 --filter/--all）+ --sort/--no-color/--reminding/--tree 列表增强
+4. **验收**: 37/37 Green
+5. **提交**: `eb49c34` (BDD) / `678fc50` (Tests) / `8bfcda9` (Impl)
+
+**实施期发现**：
+- 每次 Phase 加新字段（`parent`/`remind`/`repeat`）都需同步 `tests/test_todo_stats.py` 里手搓 Namespace
+- v0.4 旧 priority 错误路径测试用 `--priority urgent` 假设 urgent 非法，Phase D 引入 urgent 后改用 `critical` 触发
+- v0.4 旧 list 排序测试假设默认 sort=deadline，Phase D 引入 `priority` 为默认后需显式 `--sort deadline`
+- v0.4 旧 archive 缺失 id 假设 argparse 抛 SystemExit，Phase D 引入 nargs="*" + 自定义校验后改用返回码断言
+- cycle 检测先于 depth 检测报错（Phase B 的 minor UX 议题），待 Phase E 一并优化
 
 ### Phase E — P3 模板 + 依赖 + 导出（3 个 spec，预计 +20 用例）
 
