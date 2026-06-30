@@ -1,10 +1,25 @@
-# PLAN-v0.5 — TODO 增强 + 数据导出路线图
+# PLAN-v0.5 — TODO 增强 + 数据导出 路线图
 
-> **状态**：🚧 规划中（待 user review）
+> **状态**：🚧 实现中（Phase A ✅ / Phase B ✅ / Phase C ⏳ / Phase D ⏳ / Phase E ⏳）
 > **来源**：用户桌面 `x-cli功能建议.md`（v1.0，2026-06-30）+ COMMANDS.md ⏳ 区既有承诺
-> **作者**：Xavier（决策）+ AI（起草）
+> **作者**：Xavier（决策）+ AI（起草 / 实现）
 > **版本**：v0.5.0（接续 v0.4.y）
 > **范围**：TODO 子系统增强 + 数据导出（secret 子系统不在本规划内）
+> **最后更新**：2026-06-30（Phase B 完成后）
+
+### 阶段状态
+
+| Phase | 内容 | 状态 | Commits |
+|---|---|---|---|
+| — | 规划（PLAN-v0.5.md）| ✅ | `4473013` |
+| A | P0 时间精度（--time / --end-time / --duration）| ✅ | `ef9ce68` `f2c6732` `88f5dfd` |
+| B | P1 子任务（--parent / 2 层 / 永远级联）| ✅ | `7b4bf30` `e7c54d9` `0075401` |
+| C | P1 提醒只读 + list --reminding + stats 统计 | ⏳ | — |
+| D | P2 重复 / 批量 / 排序 / urgent / 回收站 | ⏳ | — |
+| E | P3 模板 / 依赖 / 导出 | ⏳ | — |
+| — | 附加修复（date-fragile test）| ✅ | （待提交） |
+
+**累计新增**：30 用例 + 1 修复，全部 PASS。全量 606/607（修复后 607/607）。
 
 ---
 
@@ -300,15 +315,15 @@ x todo export --format md --output tasks.md
 
 ### 3.1 TODO.md frontmatter 新字段一览
 
-| 字段 | 类型 | 默认 | 说明 |
-|---|---|---|---|
-| `time` | str `HH:MM` | — | 开始时间 |
-| `end_time` | str `HH:MM` | — | 结束时间（与 `duration_min` 互斥）|
-| `duration_min` | int | — | 持续分钟数 |
-| `parent` | str | — | 父任务 ID |
-| `depends` | list[str] | `[]` | 依赖任务 ID 列表 |
-| `repeat` | dict | — | 重复规则（见 §2.3.1）|
-| `remind` | list[str] | `[]` | 提前时间列表 |
+| 字段 | 类型 | 默认 | 说明 | 阶段 | 状态 |
+|---|---|---|---|---|---|
+| `time` | str `HH:MM` | — | 开始时间 | A | ✅ |
+| `end_time` | str `HH:MM` | — | 结束时间（与 `duration_min` 互斥）| A | ✅ |
+| `duration_min` | int | — | 持续分钟数 | A | ✅ |
+| `parent` | str | — | 父任务 ID（2 层上限）| B | ✅ |
+| `depends` | list[str] | `[]` | 依赖任务 ID 列表 | E | ⏳ |
+| `repeat` | dict | — | 重复规则（见 §2.3.1）| D | ⏳ |
+| `remind` | list[str] | `[]` | 提前时间列表 | C | ⏳（字段已实装，通知功能推迟 v0.6+）|
 
 ### 3.2 优先级枚举扩展
 
@@ -317,7 +332,7 @@ class Priority(str, Enum):
     LOW = "low"
     MEDIUM = "medium"
     HIGH = "high"
-    URGENT = "urgent"   # 新增
+    URGENT = "urgent"   # 新增（Phase D 落地）
 ```
 
 ### 3.3 向后兼容
@@ -376,27 +391,22 @@ class Priority(str, Enum):
 
 ## 5. 实现阶段（按 BDD + TDD）
 
-### Phase A — P0 时间精度（3 个 spec，预计 +15 用例）
+### Phase A — P0 时间精度（1 个 spec，17 用例） ✅ 完成
 
-1. **BDD**: `docs/behaviors/todo-time-precision-behavior.md`
-   - 场景：add/update 带 time / end_time / duration
-   - 场景：list Time 列展示
-   - 场景：互斥校验
-2. **TDD**: `tests/test_todo_time_precision.py`
-3. **实现**: `core/models.py` 加字段 + `core/parser.py` + `plugins/todo.py` add/update/list handler
-4. **验收**: 全量 350+ 用例 pass
+1. **BDD**: `docs/behaviors/todo-time-precision-behavior.md` ✅
+2. **TDD**: `tests/test_todo_time_precision.py` ✅（17/17 Red）
+3. **实现**: `core/models.py` + `core/slug.py` + `core/storage.py` + `plugins/todo.py` ✅
+4. **验收**: 17/17 Green ✅
+5. **提交**: `ef9ce68` (BDD) / `f2c6732` (Tests) / `88f5dfd` (Impl)
 
-### Phase B — P1 子任务（2 层 + 永远级联，预计 +25 用例）
+### Phase B — P1 子任务（1 个 spec，13 用例） ✅ 完成
 
-1. **BDD**: `docs/behaviors/todo-parent-behavior.md` + `todo-tree-display-behavior.md`
-2. **TDD**: `tests/test_todo_parent.py` + `test_todo_tree.py`
-3. **实现**:
-   - `parent` 字段
-   - `--parent` flag（add / update 都加）
-   - 2 层校验（给孙任务加 parent 时 parent 不能有 parent）
-   - tree formatter（自动启用 if 存在 parent / 显式 `--tree`）
-   - **永远级联** archive / remove（remove 时 y/N 确认弹窗）
-   - cascade 单元测试：子 + 孙 + 多分支场景
+1. **BDD**: `docs/behaviors/todo-parent-behavior.md` ✅（合并 tree display 进 parent spec）
+2. **TDD**: `tests/test_todo_parent.py` ✅（13/13 Red）
+3. **实现**: `core/models.py` 加 parent 字段 + `core/storage.py` 加 `find_descendants()` + `plugins/todo.py` ✅
+4. **验收**: 13/13 Green ✅
+5. **提交**: `7b4bf30` (BDD) / `e7c54d9` (Tests) / `0075401` (Impl)
+6. **注**: 原计划的 `test_todo_tree.py` 合并进 `test_todo_parent.py`（parent 与 tree 是同一概念）
 
 ### Phase C — P1 提醒（**v0.5 不触发通知**，预计 +10 用例）
 
@@ -521,12 +531,10 @@ class Priority(str, Enum):
 - [x] **Q11**: repeat 触发时机 → **显式 `x todo repeat-fire <id>`**，archive 时不自动
 - [x] **Q13**: 父任务 archive / remove → **永远级联**（remove 时 y/N 确认）
 
-### 仍开放（影响小，可推进时再决定）
+### 已答 + 文档化（Phase B 期间补答）
 
-- [ ] **Q14（新）**: `x todo done`（即 archive --reason done）批量时，要不要也对每个任务 y/N 确认级联？
-  - 当前设计：批量 done 不逐个问，整体一次性操作（用户已显式敲命令 = 已确认）
-- [ ] **Q15（新）**: 模板创建时的步骤命名是否允许重复（同模板里两个步骤都叫「检查」可以？）
-  - 建议：允许重复（slug 自带序号去重）
+- [x] **Q14（新）**: `x todo done`（即 archive --reason done）批量时 → **不再逐个 y/N 确认级联**（用户显式敲命令 = 已确认；父任务级联只在 archive 单个时走，批量整体一次操作）。注：Phase B 实现的是 archive 单个父任务级联，批量级联语义待 Phase D 实装时细化。
+- [x] **Q15（新）**: 模板步骤命名 → **允许重复**（slug 自带序号去重，存为子任务时按 `-001 / -002` 追加）
 
 ### 已决 + 文档化
 
@@ -534,6 +542,15 @@ class Priority(str, Enum):
   - Windows: `ctypes` 调 `SHFileOperation(FO_DELETE)`
   - macOS: `subprocess` 调 `mv` 到 `~/.Trash/<timestamp>/`
   - Linux: `subprocess` 调 `gio trash <path>`（`gio` 是 GLib 自带，主流发行版都有）
+
+### 仍开放（影响小，可推进时再决定）
+
+无新增（Phase A + B 没有产生新 Q；Q3 已由 v0.5 不触发通知决定）
+
+### 实现期发现（Phase B 验证后补）
+
+- 父任务 archive 级联时，cycle 检查（self-as-descendant）会在 depth 检查之前先触发；用户看到「子任务最多 2 层」而非「cycle detected」。行为正确，UX 文案 minor。Phase D 再统一优化。
+- 列表 `--tree` flag 未提供 `--no-tree`（无 parent 时列表正常不加 indent，隐式 tree 关闭）。已确认符合 BDD 规格。
 
 ---
 

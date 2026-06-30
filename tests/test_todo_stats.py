@@ -386,20 +386,35 @@ def test_stats_due_within_7_days_inclusive_boundaries(store):
 
 
 def test_stats_due_window_in_command_output(store):
-    """The formatted output reflects the same boundary."""
-    make_task(store, "soon1", deadline="2026-06-25")
-    make_task(store, "soon2", deadline="2026-06-28")
-    make_task(store, "later", deadline="2026-06-29")
+    """The formatted output reflects the same boundary.
+
+    Deadlines are computed relative to ``date.today()`` so this test
+    doesn't drift with the calendar. The "7 天内" window is INCLUSIVE
+    (per ``test_stats_due_within_7_days_inclusive_boundaries``), so this
+    test plants one task 3 days out (in), one 8 days out (out), and
+    one 30 days out (out). Only the first should be counted.
+    """
+    from datetime import date, timedelta
+
+    today = date.today()
+    in_window = (today + timedelta(days=3)).isoformat()
+    just_out = (today + timedelta(days=8)).isoformat()  # past inclusive 7d
+    far_out = (today + timedelta(days=30)).isoformat()
+
+    make_task(store, "soon1", deadline=in_window)
+    make_task(store, "just-out", deadline=just_out)
+    make_task(store, "later", deadline=far_out)
 
     code, stdout, _ = run_stats(store)
     assert code == 0
-    # Extract the count from the rendered output
     m = re.search(r"即将到期（7 天内）：(\d+)", stdout)
-    assert m is not None
+    assert m is not None, f"no due-within-window line in stats output: {stdout!r}"
     count = int(m.group(1))
-    # If today >= 2026-06-28 we miss soon1 but still count soon2; this test
-    # only asserts the "later" task is excluded (count >= 1, count <= 2).
-    assert 1 <= count <= 2
+    # Only soon1 (3 days out) should be counted. 7d window is inclusive.
+    assert count == 1, (
+        f"expected exactly 1 task in 7-day window (3d out), got {count}; "
+        f"setup: soon1={in_window} just-out={just_out} later={far_out} today={today}"
+    )
 
 
 # ============================================================
