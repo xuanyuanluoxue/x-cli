@@ -211,12 +211,13 @@ def test_update_invalid_priority_errors(store: TaskStore) -> None:
     """对 priority 同样做合法性校验（场景 4 隐含的同类规则）。"""
     _write_task(store, "kemu1")
 
-    exit_code, _, stderr = _invoke("kemu1", "--priority", "urgent")
+    # v0.5 Phase D: "urgent" is now valid; use a clearly-invalid value
+    exit_code, _, stderr = _invoke("kemu1", "--priority", "critical")
 
     assert exit_code == 2
     assert "❌ 无效的 priority 值" in stderr
-    assert "urgent" in stderr
-    for legal in ("high", "medium", "low"):
+    assert "critical" in stderr
+    for legal in ("high", "medium", "low", "urgent"):
         assert legal in stderr
 
 

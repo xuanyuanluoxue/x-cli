@@ -33,8 +33,10 @@ class TaskStatus(StrEnum):
 
 
 class Priority(StrEnum):
-    """Task priority. Free-form ordering, so we only validate the set."""
+    """Task priority. Sorted in ``stats / list --sort priority`` order:
+    urgent > high > medium > low."""
 
+    URGENT = "urgent"  # v0.5 Phase D — highest, ANSI red in supported terminals
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
@@ -77,6 +79,8 @@ _KNOWN_FIELDS: frozenset[str] = frozenset(
         "parent",
         # v0.5 Phase C — reminder offsets (list of "1d"/"2h"/"30m" strings)
         "remind",
+        # v0.5 Phase D — repeat rule (dict: {kind: "daily"} or {cron: "0 8 * * 1-5"})
+        "repeat",
     }
 )
 
@@ -131,6 +135,11 @@ class Task:
         Optional list of reminder offsets, e.g. ``["1d", "2h", "30m"]``
         (v0.5 Phase C, **read-only mode** — no daemon/notifications
         until v0.6+ exe packaging).
+    repeat:
+        Optional repeat rule (v0.5 Phase D), one of:
+        - ``{"kind": "daily"|"weekly"|"weekdays"|"monthly"}``
+        - ``{"cron": "<5-field cron>"}``
+        Used by ``x todo repeat-fire`` to spawn the next instance.
     body:
         Markdown body text (everything after the ``---`` delimiter).
     extra:
@@ -154,6 +163,7 @@ class Task:
     duration_min: int | None = None  # v0.5 Phase A
     parent: str | None = None  # v0.5 Phase B (kebab-case id of parent task)
     remind: list[str] | None = None  # v0.5 Phase C (e.g. ["1d", "2h"])
+    repeat: dict[str, str] | None = None  # v0.5 Phase D (e.g. {"kind": "daily"})
     body: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -220,6 +230,7 @@ class Task:
             "duration_min",
             "parent",  # v0.5 Phase B
             "remind",  # v0.5 Phase C
+            "repeat",  # v0.5 Phase D
             "folder",
             "tags",
             "subtasks",

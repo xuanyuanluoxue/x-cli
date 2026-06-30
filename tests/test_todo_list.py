@@ -61,6 +61,8 @@ def _run_list_handler(
         priority=None,
         tag=None,
         include_archived=False,
+        sort="priority",  # v0.5 Phase D — default
+        no_color=False,  # v0.5 Phase D
     )
     # Tiny positional argument parser (just enough for these tests)
     it = iter(args)
@@ -73,6 +75,10 @@ def _run_list_handler(
             ns.tag = next(it)
         elif tok == "--all":
             ns.include_archived = True
+        elif tok == "--sort":
+            ns.sort = next(it)
+        elif tok == "--no-color":
+            ns.no_color = True
         else:
             raise AssertionError(f"unexpected token in test: {tok}")
 
@@ -212,12 +218,15 @@ def test_bdd_scenario_1_default_lists_only_active(store):
 
 
 def test_bdd_scenario_1_deadline_sort_none_last(store):
-    """BDD §场景 1：deadline 升序，None 排在末尾。"""
+    """BDD §场景 1：deadline 升序，None 排在末尾。
+
+    v0.5 Phase D: 默认 sort 改为 priority，必须显式 ``--sort deadline``。
+    """
     make_task(store, "no-deadline", deadline=None, priority="high")
     make_task(store, "late", deadline="2026-09-01", priority="low")
     make_task(store, "early", deadline="2026-07-01", priority="medium")
 
-    code, out, _ = _run_list_handler([], store)
+    code, out, _ = _run_list_handler(["--sort", "deadline"], store)
     assert code == 0
     _, data = _parse_list_output(out)
     ids = [row[0] for row in data]
@@ -300,7 +309,11 @@ def test_filter_by_tag_matches_no_task(store):
 
 
 def test_bdd_scenario_5_all_includes_archived(store):
-    """BDD §场景 5：`--all` 包含归档任务，状态列显示 `archived (reason)`。"""
+    """BDD §场景 5：`--all` 包含归档任务，状态列显示 `archived (reason)`。
+
+    v0.5 Phase D: 默认 sort 改为 priority；显式 ``--sort deadline`` 保持
+    原 BDD 期望的 deadline 升序 + None 末尾 + 归档在后的行为。
+    """
     # 3 active + 1 archived = 4 行（与 BDD 一致）
     make_task(store, "kemu1", status="pending", priority="high", deadline="2026-07-15")
     make_task(store, "zizhushixi", status="in_progress", priority="medium", deadline="2026-08-31")
@@ -311,7 +324,7 @@ def test_bdd_scenario_5_all_includes_archived(store):
         archived=True, archive_date="20260521", reason="cancelled",
     )
 
-    code, out, err = _run_list_handler(["--all"], store)
+    code, out, err = _run_list_handler(["--all", "--sort", "deadline"], store)
     assert code == 0
     assert err == ""
 

@@ -315,6 +315,58 @@ def parse_tags(raw: str) -> list[str]:
     return [t.strip() for t in raw.split(",") if t.strip()]
 
 
+# ============================================================
+#  Repeat rule parser (v0.5 Phase D)
+# ============================================================
+
+
+_VALID_REPEAT_KINDS = frozenset({"daily", "weekly", "weekdays", "monthly"})
+_CRON_5FIELD_RE = re.compile(
+    r"^(\*|[0-9,\-/]+)(\s+)(\*|[0-9,\-/]+)(\s+)(\*|[0-9,\-/]+)(\s+)(\*|[0-9,\-/]+)(\s+)(\*|[0-9,\-/]+)$"
+)
+
+
+def parse_repeat(raw: str) -> dict[str, str]:
+    """Parse a ``--repeat`` value into a structured rule.
+
+    Supports two shapes:
+    - **Named kind**: ``daily`` / ``weekly`` / ``weekdays`` / ``monthly``
+    - **5-field cron**: ``"<m> <h> <dom> <mon> <dow>"`` (e.g. ``"0 8 * * 1-5"``)
+
+    Returns ``{"kind": "daily"}`` or ``{"cron": "0 8 * * 1-5"}`` so the
+    YAML serialization is unambiguous.
+
+    Raises ``ValueError`` with a human-readable message on bad input.
+    6-field cron (with seconds) is explicitly rejected per v0.5 scope.
+
+    Examples::
+
+        >>> parse_repeat("daily")
+        {'kind': 'daily'}
+        >>> parse_repeat("0 8 * * 1-5")
+        {'cron': '0 8 * * 1-5'}
+    """
+    if not raw or not raw.strip():
+        raise ValueError(
+            "❌ repeat 格式错误：（支持：daily / weekly / weekdays / monthly / 标准 5 字段 cron）"
+        )
+    val = raw.strip()
+    if val in _VALID_REPEAT_KINDS:
+        return {"kind": val}
+    # Check if it's 5-field cron (whitespace-separated tokens)
+    tokens = val.split()
+    if len(tokens) == 6:
+        raise ValueError(
+            "❌ repeat cron 必须为 5 字段（不支持秒级）"
+        )
+    if len(tokens) == 5 and _CRON_5FIELD_RE.match(val):
+        return {"cron": val}
+    # Fall through: not a valid kind, not a valid cron
+    raise ValueError(
+        f"❌ repeat 格式错误：{val}（支持：daily / weekly / weekdays / monthly / 标准 5 字段 cron）"
+    )
+
+
 # Reuse the duration parser for remind offsets (Nd / Nh / Nm format).
 def parse_remind(raw: str) -> list[str]:
     """Parse a comma-separated remind offset string into a validated list.
@@ -366,4 +418,5 @@ __all__ = [
     "compute_end_time",
     "parse_tags",
     "parse_remind",
+    "parse_repeat",
 ]

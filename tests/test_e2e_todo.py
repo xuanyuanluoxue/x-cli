@@ -448,13 +448,17 @@ def test_e2e_add_duplicate_name_exits_3(x_path: str, todo_dir: Path):
 
 
 def test_e2e_add_invalid_priority_exits_2(x_path: str, todo_dir: Path):
-    """Scenario 11: bad --priority -> exit 2 with valid-values hint."""
+    """Scenario 11: bad --priority -> exit 2 with valid-values hint.
+
+    v0.5 Phase D: "urgent" is now a valid priority; use a clearly-invalid
+    value here.
+    """
     code, _, err = _run_x(
-        x_path, ["todo", "add", "测试", "--priority", "urgent"], todo_dir
+        x_path, ["todo", "add", "测试", "--priority", "critical"], todo_dir
     )
     assert code == 2
     assert "无效的 priority 值" in err
-    for v in ("high", "medium", "low"):
+    for v in ("high", "medium", "low", "urgent"):
         assert v in err
 
 

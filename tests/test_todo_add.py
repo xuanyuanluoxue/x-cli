@@ -240,13 +240,15 @@ def test_add_missing_name_error_message_via_capsys(
 
 
 def test_add_invalid_priority_errors(store: TaskStore) -> None:
-    """对应 BDD §场景 5：--priority urgent → 退出码 2，错误信息含合法值列表。"""
-    exit_code, stdout, stderr = _invoke_add("新任务", "--priority", "urgent")
+    """对应 BDD §场景 5：非法 priority → 退出码 2，错误信息含合法值列表。"""
+    # Note: v0.5 Phase D added "urgent" as a valid priority; we use a
+    # clearly-invalid value here ("critical" was a pre-v0.5 mistake).
+    exit_code, stdout, stderr = _invoke_add("新任务", "--priority", "critical")
 
     assert exit_code == 2, f"expected 2, got {exit_code}; stderr={stderr!r}"
     assert "❌ 无效的 priority 值" in stderr
-    assert "urgent" in stderr
-    for legal in ("high", "medium", "low"):
+    assert "critical" in stderr
+    for legal in ("high", "medium", "low", "urgent"):
         assert legal in stderr, f"legal priority {legal!r} not in stderr: {stderr!r}"
 
     # 没创建文件

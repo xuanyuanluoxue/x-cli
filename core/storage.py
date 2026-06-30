@@ -430,12 +430,64 @@ class TaskStore:
 
         shutil.move(str(src), str(dst))
 
+        # v0.5 Phase D — preserve pre-archive status in extra for inventory decrement
+        # (so callers can call update_inventory_on_archive correctly without
+        # re-querying the task; extra is the round-trip-safe place to stash this)
+        if not task.extra:
+            task.extra = {}
+        task.extra["_orig_status_before_archive"] = (
+            task.status.value
+            if isinstance(task.status, TaskStatus)
+            else str(task.status)
+        )
         task.status = TaskStatus.ARCHIVED
         task.reason = reason_enum
         task.updated = archive_date
         task.folder = f"归档/{dst_name}"
         self._write_task(task, dst)
         return task
+
+    def remove_task(
+        self,
+        name_or_id: str,
+        *,
+        force: bool = False,
+    ) -> tuple[Task, bool]:
+        """Remove a task folder entirely (v0.5 Phase D).
+
+        Two modes (mutually exclusive):
+        - ``force=False`` (default): try to send the folder to the system
+          Recycle Bin (recoverable). Falls back to physical deletion if
+          the platform-specific recycle mechanism is unavailable.
+        - ``force=True``: physical ``shutil.rmtree`` (permanent).
+
+        Returns ``(task, recycled)`` where ``recycled`` is True if the
+        folder was sent to the recycle bin (i.e. not physically deleted).
+        Raises :class:`TaskNotFoundError` if the task does not exist or
+        is already archived (v0.5: ``remove`` only operates on active
+        tasks; pass ``--all`` in CLI to extend to archived — deferred to
+        a later phase).
+        """
+        task = self.get_task(name_or_id, include_archived=False)
+        if task is None:
+            raise TaskNotFoundError(name_or_id)
+
+        folder = self._resolve_active_folder(task)
+        if not folder.exists():
+            raise TaskNotFoundError(name_or_id)
+
+        recycled = False
+        if not force:
+            # Lazy import to keep core/stdlib-only surface minimal
+            from core.recycle import move_to_recycle_bin
+            recycled = move_to_recycle_bin(folder)
+
+        if not recycled:
+            # Physical delete (either --force or recycle failed)
+            import shutil as _sh
+            _sh.rmtree(folder, ignore_errors=True)
+
+        return task, recycled
 
     def find_overdue_tasks(
         self, today: date | str | None = None
@@ -1011,6 +1063,35 @@ def _sort_key(task: Task) -> tuple:
     is_archived = 1 if task.status is TaskStatus.ARCHIVED else 0
     deadline = task.deadline or "9999-99-99"
     return (is_archived, deadline, task.name)
+
+
+def _matches_filter(task: Task, keyword: str) -> bool:
+    """Return True if ``keyword`` appears in name / note / tags (fuzzy).
+
+    Used by ``x todo archive/update/remove --filter <kw>`` (v0.5 Phase D).
+    Substring match (case-sensitive) per current search semantics; can
+    be made smarter later.
+    """
+    if not keyword:
+        return True  # empty filter matches all
+    if keyword in (task.name or ""):
+        return True
+    note = task.extra.get("note", "") if task.extra else ""
+    if isinstance(note, str) and keyword in note:
+        return True
+    if task.tags and any(keyword in t for t in task.tags):
+        return True
+    return False
+
+
+def find_by_filter(keyword: str, *, include_archived: bool = False) -> list[Task]:
+    """Return all tasks whose name/note/tags match ``keyword``.
+
+    Convenience wrapper used by batch ops. Returns active tasks only
+    by default; pass ``include_archived=True`` to extend to archived.
+    """
+    tasks = TaskStore().list_tasks(include_archived=include_archived)
+    return [t for t in tasks if _matches_filter(t, keyword)]
 
 
 def find_descendants(parent_id: str, all_tasks: list[Task]) -> list[Task]:

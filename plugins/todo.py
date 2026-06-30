@@ -23,11 +23,11 @@ import sys
 from pathlib import Path
 from typing import Any, Callable, Sequence
 
-from core.formatting import display_width, pad
+from core.formatting import colorize, display_width, pad, supports_color
 from core.config import is_auto_archive_enabled
 from core.models import ArchiveReason, Priority, Task, TaskStatus
 from core.parser import parse_frontmatter
-from core.slug import parse_tags, parse_remind, unique_slug, validate_deadline, validate_time, parse_duration, compute_end_time
+from core.slug import parse_tags, parse_remind, parse_repeat, unique_slug, validate_deadline, validate_time, parse_duration, compute_end_time
 from core.storage import (
     TaskAlreadyArchivedError,
     TaskAlreadyExistsError,
@@ -64,9 +64,19 @@ _STATUS_ICONS: dict[str, str] = {
 }
 
 _PRIORITY_ICONS: dict[str, str] = {
+    Priority.URGENT.value: "🔥🔥",  # v0.5 Phase D — 双火焰
     Priority.HIGH.value: "🔥",
     Priority.MEDIUM.value: "⚡",
     Priority.LOW.value: "🐢",
+}
+
+
+# Priority 排序权重（v0.5 Phase D — urgent > high > medium > low）
+_PRIORITY_SORT_WEIGHT: dict[str, int] = {
+    Priority.URGENT.value: 0,
+    Priority.HIGH.value: 1,
+    Priority.MEDIUM.value: 2,
+    Priority.LOW.value: 3,
 }
 
 
@@ -87,6 +97,8 @@ TODO_ACTIONS: tuple[str, ...] = (
     "search",   # v0.4.x — cross-field search (name + note + tags)
     "done",     # v0.4.x — `archive --reason done` shortcut
     "reminder", # v0.5 Phase C — read-only remind surface (no notifications)
+    "repeat-fire", # v0.5 Phase D — explicit repeat trigger
+    "remove",   # v0.5 Phase D — recycle-bin delete
 )
 
 
@@ -100,7 +112,15 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
     for name in TODO_ACTIONS:
         if name == "archive":
             sp = sub.add_parser(name, help="归档任务")
-            sp.add_argument("id", help="任务 ID 或活动名称")
+            sp.add_argument(
+                "ids",
+                nargs="*",
+                help="任务 ID（空格分隔；与 --filter 互斥）",
+            )
+            sp.add_argument(
+                "--filter",
+                help="模糊匹配 name/tags/note（替代 ids 参数）",
+            )
             sp.add_argument(
                 "--reason",
                 default="done",
@@ -108,8 +128,13 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
             )
         elif name == "update":
             # BDD: docs/behaviors/todo-update-behavior.md §场景 1-8
+            # v0.5 Phase D: id 改为可选（--filter 模式不需要）
             sp = sub.add_parser(name, help="更新任务")
-            sp.add_argument("id", help="任务 ID（或 active 状态下的任务名）")
+            sp.add_argument(
+                "id",
+                nargs="?",
+                help="任务 ID（或 active 状态下的任务名；与 --filter 互斥）",
+            )
             sp.add_argument(
                 "--status",
                 help="新状态（pending / in_progress / blocked / waiting / archived）",
@@ -149,6 +174,16 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
                 "--remind",
                 help='提醒偏移（"" 清除 remind 字段）',
             )
+            # v0.5 Phase D — batch ops: --filter / --all (update only)
+            sp.add_argument(
+                "--filter",
+                help='模糊匹配 name/tags/note（替代 id 参数；与 id 互斥）',
+            )
+            sp.add_argument(
+                "--all",
+                action="store_true",
+                help="--filter 时扩到 archived 范围（默认 active only）",
+            )
         elif name == "list":
             # BDD: docs/behaviors/todo-list-behavior.md §场景 1-8
             sp = sub.add_parser(name, help="列出任务")
@@ -181,6 +216,18 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
                 "--reminding",
                 action="store_true",
                 help="仅显示带提醒字段的任务",
+            )
+            # v0.5 Phase D — sort modes（无 argparse choices，留给 _todo_list 给中文友好错误）
+            sp.add_argument(
+                "--sort",
+                default="priority",
+                help="排序方式（priority / deadline / created / time，默认 priority）",
+            )
+            # v0.5 Phase D — disable ANSI colors explicitly
+            sp.add_argument(
+                "--no-color",
+                action="store_true",
+                help="禁用 ANSI 颜色（即便终端支持）",
             )
         elif name == "add":
             # BDD: docs/behaviors/todo-add-behavior.md §场景 1-8
@@ -225,6 +272,11 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
             sp.add_argument(
                 "--remind",
                 help='提醒偏移（逗号分隔，如 1d,2h,30m；传 "" 不写入）',
+            )
+            # v0.5 Phase D — repeat rule (显式触发 via repeat-fire 子命令)
+            sp.add_argument(
+                "--repeat",
+                help="重复规则（daily/weekly/weekdays/monthly 或标准 5 字段 cron）",
             )
         elif name == "stats":
             sp = sub.add_parser(name, help="📊 统计信息")
@@ -289,9 +341,17 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
             )
         elif name == "done":
             # v0.4.x — `archive --reason done` 的语义化快捷方式
-            # BDD: docs/behaviors/todo-done-behavior.md（6 场景）
+            # v0.5 Phase D — 批量多 id + --filter 支持
             sp = sub.add_parser(name, help="archive --reason done 的快捷方式")
-            sp.add_argument("id", help="任务 ID")
+            sp.add_argument(
+                "ids",
+                nargs="*",
+                help="任务 ID（空格分隔；与 --filter 互斥）",
+            )
+            sp.add_argument(
+                "--filter",
+                help="模糊匹配 name/tags/note",
+            )
         elif name == "reminder":
             # v0.5 Phase C — reminder read-only surface
             # BDD: docs/behaviors/todo-remind-behavior.md（12 场景）
@@ -311,6 +371,29 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
                 "ids", nargs="+", help="任务 ID（空格分隔）"
             )
             clear_sp.set_defaults(_reminder_action="clear")
+        elif name == "repeat-fire":
+            # v0.5 Phase D — 显式触发重复任务的下一次实例
+            # BDD: docs/behaviors/todo-repeat-behavior.md §场景 8-13
+            sp = sub.add_parser(name, help="显式触发重复任务的下一次实例（自动编号 -001/-002...）")
+            sp.add_argument("id", help="原任务 ID")
+        elif name == "remove":
+            # v0.5 Phase D — 物理删除（走系统回收站 + --force 跳过）
+            # BDD: docs/behaviors/todo-batch-behavior.md §场景 6-12
+            sp = sub.add_parser(name, help="删除任务（默认走回收站；--force 物理删除）")
+            sp.add_argument(
+                "ids",
+                nargs="*",
+                help="任务 ID（空格分隔；与 --filter 互斥）",
+            )
+            sp.add_argument(
+                "--filter",
+                help="模糊匹配 name/tags/note",
+            )
+            sp.add_argument(
+                "--force",
+                action="store_true",
+                help="跳过回收站，物理删除（不可恢复）",
+            )
         else:
             sp = sub.add_parser(name, help=f"{name} 命令")
 
@@ -377,6 +460,14 @@ def run(args: Sequence[str]) -> int:
     if parsed.todo_action == "reminder":
         return _todo_reminder(parsed)
 
+    # x todo repeat-fire — v0.5 Phase D（显式触发重复任务下一次实例）
+    if parsed.todo_action == "repeat-fire":
+        return _todo_repeat_fire(parsed)
+
+    # x todo remove — v0.5 Phase D（走系统回收站 + --force）
+    if parsed.todo_action == "remove":
+        return _todo_remove(parsed)
+
     return _todo_not_implemented(parsed.todo_action)
 
 
@@ -399,14 +490,32 @@ def _todo_archive(args: argparse.Namespace) -> int:
     v0.5 Phase B: 当 archive 的任务有 parent 引用（子任务），
     或有任务以本任务为 parent（父任务场景），永远级联。
 
+    v0.5 Phase D: 批量多 id + ``--filter`` 模糊匹配。
+    单 id 旧调用方式（args.id 仍兼容）也保留。
+
     退出码约定：
-    - 0：成功
-    - 2：非法 reason
-    - 3：任务不存在
+    - 0：全部成功
+    - 2：非法 reason / 必须指定 id 或 --filter
+    - 3：任务不存在（部分成功也算 3）
     - 4：任务已归档（重复归档）
     - 5：归档目标已存在（碰撞）
     """
-    name_or_id: str = args.id
+    from core.storage import find_descendants, find_by_filter
+
+    # v0.5 Phase D — batch: ids (list) 或 --filter 模糊匹配
+    ids: list[str] = list(getattr(args, "ids", None) or [])
+    keyword: str | None = getattr(args, "filter", None)
+    single_id_legacy: str | None = getattr(args, "id", None)  # 兼容旧 done 路径
+
+    if not ids and not keyword and not single_id_legacy:
+        print(
+            "❌ 必须指定任务 ID 或 --filter",
+            file=sys.stderr,
+        )
+        return 2
+    if single_id_legacy and not ids:
+        ids = [single_id_legacy]
+
     reason_str: str = args.reason or "done"
 
     # 1. Validate reason (BDD §场景 6)
@@ -419,83 +528,110 @@ def _todo_archive(args: argparse.Namespace) -> int:
         )
         return 2
 
-    # 2. Pre-flight lookup so we can give precise error messages and
-    #    capture the OLD status for the inventory update (the archive
-    #    itself moves the task out of "active", so we need to remember
-    #    what bucket to decrement).
+    # 2. Resolve targets
     store = TaskStore()
-    existing = store.get_task(name_or_id, include_archived=True)
-    if existing is None:
-        # BDD §场景 4
-        print(f"❌ 任务不存在：{name_or_id}", file=sys.stderr)
+    targets: list[Task] = []
+    not_found: list[str] = []
+    if ids:
+        for raw in ids:
+            tid = raw.strip()
+            if not tid:
+                continue
+            t = store.get_task(tid, include_archived=True)
+            if t is None:
+                not_found.append(tid)
+            else:
+                if t not in targets:
+                    targets.append(t)
+    if keyword:
+        for t in find_by_filter(keyword, include_archived=False):
+            if t not in targets:
+                targets.append(t)
+
+    if not targets:
+        if not_found:
+            print(
+                f"❌ 任务不存在：{', '.join(not_found)}",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"❌ --filter '{keyword}' 没有匹配的任务",
+                file=sys.stderr,
+            )
         return 3
-    if existing.status is TaskStatus.ARCHIVED:
-        # BDD §场景 5
-        folder_display = existing.folder or ""
-        print(
-            f"❌ 任务已归档：{name_or_id}（位于 {folder_display}）",
-            file=sys.stderr,
-        )
-        return 4
 
-    old_status = existing.status
-
-    # 3. v0.5 Phase B — 永远级联：找到所有以本任务为祖先的后代，一起归档
-    from core.storage import find_descendants
+    # Cascade to descendants
     all_active = store.list_tasks(include_archived=False)
-    descendants = find_descendants(existing.id or "", all_active)
+    full_targets: list[Task] = []
+    for t in targets:
+        if t not in full_targets:
+            full_targets.append(t)
+        for d in find_descendants(t.id or "", all_active):
+            if d not in full_targets:
+                full_targets.append(d)
 
-    # 4. Perform the actual archive (parent first, then descendants)
+    # Archive each
     archived_set: list[Task] = []
-    try:
-        archived = store.archive_task(name_or_id, reason=reason_str)
-        archived_set.append(archived)
-    except TaskNotFoundError:
-        print(f"❌ 任务不存在：{name_or_id}", file=sys.stderr)
-        return 3
-    except TaskAlreadyArchivedError as exc:
-        print(
-            f"❌ 任务已归档：{name_or_id}（位于 {exc.folder}）",
-            file=sys.stderr,
-        )
-        return 4
-    except FileExistsError as exc:
-        print(f"❌ {exc}", file=sys.stderr)
-        return 5
-
-    # Cascade archive to descendants (only active ones)
-    for desc in descendants:
+    any_already_archived = False
+    for t in full_targets:
         try:
-            archived_desc = store.archive_task(desc.id or "", reason=reason_str)
-            archived_set.append(archived_desc)
-        except (TaskNotFoundError, TaskAlreadyArchivedError, FileExistsError):
-            # If a descendant vanished between our scan and the archive
-            # call, skip silently — the parent archive already succeeded.
+            archived = store.archive_task(t.id or "", reason=reason_str)
+            archived_set.append(archived)
+        except TaskNotFoundError:
+            continue
+        except TaskAlreadyArchivedError:
+            any_already_archived = True
+            # v0.5 Phase D — 批量场景：仅当 ALL targets 都已归档才算 4；
+            # 部分已归档视为 partial success（rc=3）
+            if len(full_targets) == 1:
+                folder_display = t.folder or ""
+                print(
+                    f"❌ 任务已归档：{t.id or t.name}（位于 {folder_display}）",
+                    file=sys.stderr,
+                )
+                return 4
+            continue
+        except FileExistsError:
             continue
 
-    # 5. Update the top-level TODO.md inventory (BDD §场景 8).
+    # Update inventory（从 task.extra._orig_status_before_archive 取旧状态）
     try:
-        store.update_inventory_on_archive(old_status)
-        for desc in archived_set[1:]:
+        for t in archived_set:
+            old_status_str = (
+                (t.extra or {}).get("_orig_status_before_archive", "pending")
+            )
+            # Convert back to enum
             try:
-                store.update_inventory_on_archive(desc.status)
-            except Exception:  # noqa: BLE001
-                pass
+                old_status = TaskStatus(old_status_str)
+            except ValueError:
+                old_status = TaskStatus.PENDING
+            store.update_inventory_on_archive(old_status)
     except Exception:  # noqa: BLE001
         pass
 
-    # 6. Success message
+    # Success message
     if len(archived_set) == 1:
         print(
-            f"✅ 任务已归档：{archived.name}"
-            f"（ID: {archived.id}，reason={archived.reason.value}）"
+            f"✅ 任务已归档：{archived_set[0].name}"
+            f"（ID: {archived_set[0].id}，reason={reason_str}）"
         )
     else:
-        ids = ", ".join(t.id or t.name for t in archived_set)
+        ids_str = ", ".join(t.id or t.name for t in archived_set)
         print(
-            f"✅ 已级联归档 {len(archived_set)} 个任务：{ids}"
+            f"✅ 已级联归档 {len(archived_set)} 个任务：{ids_str}"
             f"（reason={reason_str}）"
         )
+
+    if not_found:
+        print(
+            f"⚠️ 部分 ID 未找到：{', '.join(not_found)}",
+            file=sys.stderr,
+        )
+        return 3
+    if any_already_archived and len(archived_set) == 0:
+        # All targets were already archived → rc=4
+        return 4
     return 0
 
 
@@ -682,23 +818,16 @@ def _todo_search(args: argparse.Namespace) -> int:
 
 
 def _todo_done(args: argparse.Namespace) -> int:
-    """``x todo done <id>`` — ``x todo archive <id> --reason done`` 的快捷方式。
+    """``x todo done <id...> [--filter]`` — ``x todo archive <id...> --reason done`` 的快捷方式。
 
-    对应 BDD：``docs/behaviors/todo-done-behavior.md``（6 场景）。
-
-    语义上**完全等价**于 ``archive --reason done``（80% 的归档场景）：
-    复用 ``_todo_archive`` 的全部逻辑与退出码，不重复实现。
+    v0.5 Phase D：批量多 id + ``--filter`` 模糊匹配。
+    复用 ``_todo_archive`` 的全部逻辑与退出码。
     """
-    if not args.id or not args.id.strip():
-        print("❌ 任务 ID 不能为空", file=sys.stderr)
-        return 3
-
-    # Build a fake Namespace to delegate to _todo_archive — DRY:
-    # the archive handler is the single source of truth for
-    # folder move + frontmatter update + inventory maintenance.
+    # Reuse _todo_archive logic — translate multi-id/filter to a Namespace it expects
     archive_args = argparse.Namespace(
-        id=args.id.strip(),
+        ids=getattr(args, "ids", None) or ([args.id] if getattr(args, "id", None) else []),
         reason="done",
+        filter=getattr(args, "filter", None),
     )
     return _todo_archive(archive_args)
 
@@ -807,6 +936,208 @@ def _todo_reminder_clear(ids: list[str]) -> int:
 
 
 # ============================================================
+#  x todo repeat-fire (v0.5 Phase D)
+# ============================================================
+
+
+def _todo_repeat_fire(args: argparse.Namespace) -> int:
+    """``x todo repeat-fire <id>`` — 显式触发重复任务的下一次实例。
+
+    对应 BDD：``docs/behaviors/todo-repeat-behavior.md`` §场景 8-13。
+
+    v0.5 范围：
+    - ✅ 创建 seq+1 实例（自动编号 -001/-002...）
+    - ✅ 复制原任务的 repeat 字段
+    - ❌ 不自动 archive 原任务（原任务保留作为锚点）
+    - ❌ 不自动触发（archive done 时**不**调用此函数）
+    """
+    from datetime import date
+
+    tid = (args.id or "").strip()
+    if not tid:
+        print("❌ 任务 ID 不能为空", file=sys.stderr)
+        return 2
+
+    store = TaskStore()
+    task = store.get_task(tid, include_archived=False)
+    if task is None:
+        print(f"❌ 任务不存在：{tid}", file=sys.stderr)
+        return 3
+
+    if not task.repeat:
+        print(f"❌ 任务没有 repeat 字段：{tid}", file=sys.stderr)
+        return 2
+
+    # Compute next seq by scanning active tasks with same name prefix
+    task_id = task.id or ""
+    base_name = task.name
+    seq = 1
+    existing_ids = {t.id for t in store.list_tasks(include_archived=True) if t.id}
+    while f"{task_id}-{seq:03d}" in existing_ids:
+        seq += 1
+    new_id = f"{task_id}-{seq:03d}"
+
+    # New task: same as parent but new id, new folder name suffix
+    today = date.today().isoformat()
+    # Avoid name collision: original "周会" → "周会-001", "周会-002", ...
+    new_name = f"{base_name}-{seq:03d}"
+    new_folder_name = new_name  # The folder name
+    new_folder = store.active_dir / new_folder_name
+    if new_folder.exists():
+        # Extremely unlikely (seq collision) — bump further
+        while new_folder.exists():
+            seq += 1
+            new_id = f"{task_id}-{seq:03d}"
+            new_name = f"{base_name}-{seq:03d}"
+            new_folder = store.active_dir / new_name
+            if seq > 999:
+                print("❌ seq 超过 999（异常），中止", file=sys.stderr)
+                return 5
+
+    # Build new Task (copy relevant fields, new id/name/folder/dates)
+    new_task = Task(
+        id=new_id,
+        name=new_name,
+        status=TaskStatus.PENDING,
+        priority=task.priority,
+        created=today,
+        updated=today,
+        deadline=task.deadline,
+        time=task.time,
+        end_time=task.end_time,
+        duration_min=task.duration_min,
+        parent=task.parent,
+        remind=task.remind,
+        repeat=dict(task.repeat),  # copy repeat rule
+        folder=f"任务/{new_folder_name}",
+        tags=list(task.tags) if task.tags else None,
+    )
+    try:
+        store.add_task(new_task)
+    except TaskAlreadyExistsError as exc:
+        print(f"❌ 任务已存在：{exc.name}", file=sys.stderr)
+        return 3
+    print(f"✅ 已创建下一次实例：{new_id}")
+    return 0
+
+
+# ============================================================
+#  x todo remove (v0.5 Phase D — recycle bin)
+# ============================================================
+
+
+def _todo_remove(args: argparse.Namespace) -> int:
+    """``x todo remove <id...> [--filter] [--force]`` — 物理删除任务。
+
+    对应 BDD：``docs/behaviors/todo-batch-behavior.md`` §场景 6-12。
+
+    v0.5 范围：
+    - 默认走系统回收站（Windows: ctypes SHFileOperation; macOS: mv ~/.Trash; Linux: gio trash）
+    - ``--force`` 跳过回收站（不可恢复）
+    - 多 id 支持 + ``--filter`` 模糊匹配
+    - 父任务级联（永远级联，子 + 孙一起）
+    - 退出码：0 全部成功 / 3 部分不存在（部分成功）
+    """
+    from core.storage import find_descendants, find_by_filter
+
+    ids: list[str] = list(args.ids or [])
+    keyword: str | None = getattr(args, "filter", None)
+    force: bool = bool(getattr(args, "force", False))
+
+    if not ids and not keyword:
+        print(
+            "❌ 必须指定任务 ID 或 --filter",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Resolve targets: ids explicit OR --filter matching
+    store = TaskStore()
+    targets: list[Task] = []
+    not_found: list[str] = []
+    if ids:
+        for raw in ids:
+            tid = raw.strip()
+            if not tid:
+                continue
+            t = store.get_task(tid, include_archived=False)
+            if t is None:
+                not_found.append(tid)
+            else:
+                targets.append(t)
+    if keyword:
+        matched = find_by_filter(keyword, include_archived=False)
+        # Avoid duplicates with explicit ids
+        explicit_ids = {t.id for t in targets}
+        for t in matched:
+            if t.id not in explicit_ids:
+                targets.append(t)
+
+    if not targets:
+        if not_found:
+            print(
+                f"❌ 任务不存在：{', '.join(not_found)}",
+                file=sys.stderr,
+            )
+        else:
+            print(
+                f"❌ --filter '{keyword}' 没有匹配的任务",
+                file=sys.stderr,
+            )
+        return 3
+
+    # Cascade to descendants
+    all_active = store.list_tasks(include_archived=False)
+    cascade_targets: list[Task] = []
+    for t in targets:
+        cascade_targets.append(t)
+        for d in find_descendants(t.id or "", all_active):
+            if d not in cascade_targets:
+                cascade_targets.append(d)
+
+    # Remove each (with cascade)
+    removed_ids: list[str] = []
+    recycled_count = 0
+    for t in cascade_targets:
+        try:
+            _, recycled = store.remove_task(t.id or t.name, force=force)
+            removed_ids.append(t.id or t.name)
+            if recycled:
+                recycled_count += 1
+        except TaskNotFoundError:
+            # Race or already-removed; skip silently
+            pass
+
+    if not removed_ids:
+        print("❌ 没有任务被删除", file=sys.stderr)
+        return 3
+
+    # Compose summary
+    if force:
+        action = "已物理删除（绕过回收站）"
+    elif recycled_count == len(removed_ids):
+        action = "已移入回收站"
+    elif recycled_count == 0:
+        action = "已物理删除（回收站不可用）"
+    else:
+        action = f"已处理（{recycled_count} 个进回收站，{len(removed_ids) - recycled_count} 个物理删除）"
+
+    if len(removed_ids) == 1:
+        print(f"✅ {action}：{removed_ids[0]}")
+    else:
+        print(f"✅ {action}：{', '.join(removed_ids)}（共 {len(removed_ids)} 个）")
+
+    # Partial fail: if explicit ids had not_found, report 3
+    if not_found:
+        print(
+            f"⚠️ 部分 ID 未找到：{', '.join(not_found)}",
+            file=sys.stderr,
+        )
+        return 3
+    return 0
+
+
+# ============================================================
 #  x todo update
 # ============================================================
 
@@ -815,16 +1146,71 @@ def _todo_update(args: argparse.Namespace) -> int:
     """处理 ``x todo update <id> [选项]`` 命令（已被 run 解析过）。
 
     对应 BDD：`docs/behaviors/todo-update-behavior.md`（8 个场景）。
+    v0.5 Phase D: 支持 ``--filter`` 模糊匹配 + ``--all`` 扩到 archived。
 
     退出码约定：
     - 0：成功
     - 2：非法 status / priority 值，或无任何 --xxx 选项（argparse 标准错误）
-    - 3：任务不存在
-    - 4：任务已归档（不可更新，需先 restore）
+    - 3：任务不存在（部分成功也算 3）
+    - 4：任务已归档（不可更新，需先 restore；--all 时允许）
+    """
+    # v0.5 Phase D — batch via --filter (or --all for global)
+    keyword = getattr(args, "filter", None)
+    include_archived = bool(getattr(args, "all", False))
+    target_id: str | None = getattr(args, "id", None)
 
-    未知字段保留由 TaskStore.update_task 走 Task.to_frontmatter_body()
-    整 round-trip 保证（dump_frontmatter + parse_frontmatter），所以
-    ``description`` / ``paused_at`` / ``pause_reason`` 等用户字段不会丢。
+    if keyword or include_archived:
+        from core.storage import find_by_filter
+        if keyword:
+            matched = find_by_filter(keyword, include_archived=include_archived)
+            if not matched:
+                print(f"❌ --filter '{keyword}' 没有匹配的任务", file=sys.stderr)
+                return 3
+        else:
+            # --all without --filter = update every task (active + archived)
+            from core.storage import TaskStore as _TS
+            matched = _TS().list_tasks(include_archived=True)
+
+        # Loop over each target
+        any_fail = False
+        any_archived_blocked = False
+        for t in matched:
+            single = argparse.Namespace(
+                id=t.id or t.name,
+                status=args.status,
+                priority=args.priority,
+                deadline=args.deadline,
+                tags=args.tags,
+                time=args.time,
+                end_time=args.end_time,
+                duration=args.duration,
+                parent=args.parent,
+                remind=args.remind,
+                filter=None,
+                all=False,
+            )
+            rc = _todo_update_single(single)
+            if rc == 3:
+                any_fail = True
+            elif rc == 4:
+                any_archived_blocked = True
+        if any_archived_blocked and not include_archived:
+            return 4
+        if any_archived_blocked and include_archived:
+            # --all + filter matched both active+archived, the archived
+            # ones are still blocked. Return 4 to surface the failure.
+            return 4
+        if any_fail:
+            return 3
+        return 0
+    return _todo_update_single(args)
+
+
+def _todo_update_single(args: argparse.Namespace) -> int:
+    """Single-id ``x todo update`` helper (Phase A/B/C original logic).
+
+    Refactored out of :func:`_todo_update` so the v0.5 Phase D batch path
+    can call it once per matched target without duplicating validation.
     """
     from datetime import date  # local import to keep module load cheap
 
@@ -1074,14 +1460,22 @@ def _list_status_cell(task) -> str:
     return f"{icon} {cell}" if icon else cell
 
 
-def _list_priority_cell(task) -> str:
-    """表格 Priority 列的展示值；带图标。"""
+def _list_priority_cell(task, *, color_enabled: bool | None = None) -> str:
+    """表格 Priority 列的展示值；带图标，urgent 在 ANSI 终端标红。
+
+    v0.5 Phase D：``color_enabled=None`` 自动检测终端（调用 ``supports_color()``），
+    也可显式传 True/False 覆盖（如测试时强制开/关）。
+    """
     if isinstance(task.priority, Priority):
         cell = task.priority.value
     else:
         cell = str(task.priority)
     icon = _PRIORITY_ICONS.get(cell, "")
-    return f"{icon} {cell}" if icon else cell
+    text = f"{icon} {cell}" if icon else cell
+    # v0.5 Phase D — urgent 红色高亮
+    if cell == Priority.URGENT.value:
+        return colorize(text, "red", enabled=color_enabled)
+    return text
 
 
 def _list_time_cell(task: object) -> str:
@@ -1106,14 +1500,23 @@ def _list_time_cell(task: object) -> str:
 
 
 # 列表命令的列定义（表头 + 取值函数），集中维护表格 schema
-_LIST_COLUMNS: tuple[tuple[str, Callable[[object], str]], ...] = (
-    ("ID", lambda t: t.id or t.name),
-    ("Name", lambda t: t.name),
-    ("Status", _list_status_cell),
-    ("Priority", _list_priority_cell),
-    ("Deadline", lambda t: t.deadline or "-"),
-    ("Time", _list_time_cell),  # v0.5 Phase A
+def _make_priority_cell(color_enabled: bool | None) -> Callable[[object], str]:
+    return lambda t: _list_priority_cell(t, color_enabled=color_enabled)
+
+
+_LIST_COLUMNS_TEMPLATE: Callable[[bool | None], tuple[tuple[str, Callable[[object], str]], ...]] = (
+    lambda color_enabled: (
+        ("ID", lambda t: t.id or t.name),
+        ("Name", lambda t: t.name),
+        ("Status", _list_status_cell),
+        ("Priority", _make_priority_cell(color_enabled)),
+        ("Deadline", lambda t: t.deadline or "-"),
+        ("Time", _list_time_cell),  # v0.5 Phase A
+    )
 )
+
+# Backward-compat alias for existing call sites; uses auto color detection.
+_LIST_COLUMNS = _LIST_COLUMNS_TEMPLATE(None)
 
 
 def _matches_list_filters(task, *, status, priority, tag) -> bool:
@@ -1278,6 +1681,15 @@ def _todo_list(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 2
 
+    # v0.5 Phase D — 显式 --sort 校验（argparse choices 给英文错误，加中文友好提示）
+    sort_mode: str = getattr(args, "sort", "priority") or "priority"
+    if sort_mode not in ("priority", "deadline", "created", "time"):
+        print(
+            f"❌ 无效的 sort 值：{sort_mode}（合法：priority / deadline / created / time）",
+            file=sys.stderr,
+        )
+        return 2
+
     tag: str | None = args.tag
     include_archived: bool = bool(getattr(args, "include_archived", False))
     explicit_tree: bool = bool(getattr(args, "tree", False))
@@ -1302,6 +1714,37 @@ def _todo_list(args: argparse.Namespace) -> int:
     if only_reminding:
         tasks = [t for t in tasks if t.remind]
 
+    # v0.5 Phase D — 排序（BDD todo-sort-behavior.md §场景 1-4）
+    sort_mode = getattr(args, "sort", "priority")
+    if sort_mode == "priority":
+        # urgent > high > medium > low, then by created asc as tiebreaker
+        tasks.sort(
+            key=lambda t: (
+                _PRIORITY_SORT_WEIGHT.get(
+                    t.priority.value if isinstance(t.priority, Priority) else str(t.priority),
+                    99,
+                ),
+                t.created or "",
+                t.name,
+            )
+        )
+    elif sort_mode == "deadline":
+        # ascending; None deadlines go last
+        tasks.sort(
+            key=lambda t: (t.deadline is None, t.deadline or "9999-99-99", t.created or "")
+        )
+    elif sort_mode == "created":
+        tasks.sort(key=lambda t: (t.created or "9999-99-99", t.name))
+    elif sort_mode == "time":
+        # by time ascending; no-time goes last (fallback deadline)
+        tasks.sort(
+            key=lambda t: (
+                t.time is None,
+                t.time or "99:99",
+                t.deadline or "9999-99-99",
+            )
+        )
+
     # 4. 输出
     if not tasks:
         # BDD §场景 6：空仓库 / 无匹配 → 提示信息 + 退出码 0
@@ -1313,24 +1756,28 @@ def _todo_list(args: argparse.Namespace) -> int:
     use_tree = explicit_tree or has_parent
     indent_map: dict[str, str] = _compute_tree_indent(tasks) if use_tree else {}
 
+    # v0.5 Phase D — 颜色控制（BDD §场景 9-11）
+    color_enabled = False if getattr(args, "no_color", False) else None  # None = auto
+
     # 计算每列的显示宽度（取表头与所有数据行的最大值），
     # 用 display-width 而非字符数，CJK 字符按 2 宽算，确保对齐
-    header_cells = [h for h, _ in _LIST_COLUMNS]
+    list_columns = _LIST_COLUMNS_TEMPLATE(color_enabled)
+    header_cells = [h for h, _ in list_columns]
     rows: list[list[str]] = [
-        [col(t) for _, col in _LIST_COLUMNS] for t in tasks
+        [col(t) for _, col in list_columns] for t in tasks
     ]
     col_widths = [
         max(
             [display_width(header_cells[i])]
             + [display_width(row[i]) for row in rows]
         )
-        for i in range(len(_LIST_COLUMNS))
+        for i in range(len(list_columns))
     ]
 
     # 表头
     print("  ".join(pad(c, col_widths[i]) for i, c in enumerate(header_cells)))
     # 分隔线（用 ─ 增强可视化）
-    print("  ".join("─" * col_widths[i] for i in range(len(_LIST_COLUMNS))))
+    print("  ".join("─" * col_widths[i] for i in range(len(list_columns))))
     # 数据行（树形模式下前缀 indent 加在整行最前）
     for i, row in enumerate(rows):
         prefix = indent_map.get(tasks[i].id or "", "") if use_tree else ""
@@ -1511,6 +1958,15 @@ def _todo_add(args: argparse.Namespace) -> int:
             print(str(exc), file=sys.stderr)
             return 2
 
+    # v0.5 Phase D — repeat rule（BDD §场景 1-7）
+    repeat_rule: dict[str, str] | None = None
+    if args.repeat is not None and args.repeat != "":
+        try:
+            repeat_rule = parse_repeat(args.repeat)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+
     # 写入日期：created/updated 同为今天（YYYY-MM-DD 本地日期）。
     today = date.today().isoformat()
 
@@ -1532,6 +1988,7 @@ def _todo_add(args: argparse.Namespace) -> int:
         duration_min=duration_min,
         parent=parent_id,
         remind=remind_list,
+        repeat=repeat_rule,
         folder=f"任务/{name}",
         tags=tags,
     )
