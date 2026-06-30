@@ -421,3 +421,35 @@ def test_update_parent_to_descendant_errors(store: TaskStore) -> None:
     assert "parent" not in metadata, (
         f"parent's parent should not be set: {metadata!r}"
     )
+
+
+# ============================================================
+#  Regression: cascade must work when --parent uses task NAME
+#  (v0.5 Phase D subagent discovered P0 bug)
+# ============================================================
+
+
+def test_archive_cascade_works_with_name_based_parent(store: TaskStore) -> None:
+    """子 agent 报告 P0 bug 修复：cascade 必须按 name + id 双向匹配。
+
+    真实用户场景：``x todo add "parent-x"`` 然后 ``x todo add "child-x" --parent parent-x``，
+    parent 字段存的是 name "parent-x"（不是自动生成的 id）。
+    之前的 find_descendants 只按 id 比较，导致 cascade 漏掉子任务。
+    """
+    _invoke_add("parent-x")
+    _invoke_add("child-x", "--parent", "parent-x")
+    _invoke_add("grand-x", "--parent", "child-x")
+
+    # Archive via ID (the most common case)
+    folder_p = store.active_dir / "parent-x"
+    metadata = _read_frontmatter(folder_p)
+    parent_id = metadata["id"]
+
+    rc, out, _ = _invoke_archive(parent_id, "--reason", "done")
+    assert rc == 0, f"archive failed: {out!r}"
+    assert "已级联归档 3" in out, f"expected 3 tasks cascaded, got: {out!r}"
+
+    # All 3 should be gone from active
+    assert not (store.active_dir / "parent-x").exists()
+    assert not (store.active_dir / "child-x").exists()
+    assert not (store.active_dir / "grand-x").exists()

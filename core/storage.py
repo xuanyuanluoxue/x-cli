@@ -1102,21 +1102,42 @@ def find_descendants(parent_id: str, all_tasks: list[Task]) -> list[Task]:
     children and grandchildren. Returns an empty list if no descendants
     exist or the parent has no children.
 
-    Used by v0.5 Phase B cascade logic (archive / remove a parent →
+    v0.5 Phase D: matches ``task.parent`` against BOTH ``parent_id``
+    (id) AND the parent's ``name`` (folder name). The ``parent`` field
+    on disk is whatever the user passed to ``--parent`` — typically a
+    name like ``parent-x``, not the auto-generated slug id like
+    ``parentx``. Cascade must handle both forms.
+
+    Used by v0.5 Phase B+ cascade logic (archive / remove a parent →
     also archive / remove its descendants).
     """
     if not parent_id:
         return []
-    by_id = {t.id: t for t in all_tasks if t.id}
+    # Identify the parent task: match by id OR by name. The parent's
+    # name is what `task.folder` ends with (e.g. ``任务/parent-x``).
+    parent_name: str | None = None
+    for t in all_tasks:
+        if t.id == parent_id or t.name == parent_id:
+            parent_name = t.name
+            break
+
+    def _matches_parent(t: Task) -> bool:
+        """True if ``t.parent`` points at our parent (by id or name)."""
+        return t.parent in (parent_id, parent_name)
+
     out: list[Task] = []
     # Direct children
     for t in all_tasks:
-        if t.parent == parent_id and t not in out:
+        if _matches_parent(t) and t not in out:
             out.append(t)
-    # Grandchildren (children of direct children)
-    direct_child_ids = {t.id for t in out if t.id}
+    # Grandchildren (children of direct children — match by id or name too)
+    direct_child_keys: set[str] = set()
+    for t in out:
+        if t.id:
+            direct_child_keys.add(t.id)
+        direct_child_keys.add(t.name)
     for t in all_tasks:
-        if t.parent in direct_child_ids and t not in out:
+        if t.parent in direct_child_keys and t not in out:
             out.append(t)
     # Sanity: never include parent itself
     out = [t for t in out if t.id != parent_id]
