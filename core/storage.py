@@ -314,6 +314,8 @@ class TaskStore:
         clear_duration_min: bool = False,
         parent: str | None = None,
         clear_parent: bool = False,
+        remind: list[str] | None = None,
+        clear_remind: bool = False,
         today: str | None = None,
         **extra: Any,
     ) -> Task:
@@ -371,6 +373,11 @@ class TaskStore:
             task.parent = None
         elif parent is not None:
             task.parent = parent
+        # v0.5 Phase C — remind list (read-only mode; no notifications)
+        if clear_remind:
+            task.remind = None
+        elif remind is not None:
+            task.remind = list(remind) if remind else None
         # Pass through anything else into extra (defensive: callers can
         # pass arbitrary fields that we don't model explicitly).
         for k, v in extra.items():
@@ -945,6 +952,12 @@ class TaskStore:
                     high_breakdown.get(effective_status_value, 0) + 1
                 )
 
+        # v0.5 Phase C — 有提醒任务数（仅 active；archived 不算）
+        remind_active = sum(
+            1 for t in tasks
+            if t.remind and not (t.folder and t.folder.startswith("归档/"))
+        )
+
         return {
             "total": len(tasks),
             "by_status": by_status,
@@ -952,6 +965,7 @@ class TaskStore:
             "due_within_7_days": due_soon,
             "high_priority_active": high_active,
             "high_priority_breakdown": high_breakdown,
+            "remind_active": remind_active,
         }
 
     # --------------------------------------------------------

@@ -27,7 +27,7 @@ from core.formatting import display_width, pad
 from core.config import is_auto_archive_enabled
 from core.models import ArchiveReason, Priority, Task, TaskStatus
 from core.parser import parse_frontmatter
-from core.slug import parse_tags, unique_slug, validate_deadline, validate_time, parse_duration, compute_end_time
+from core.slug import parse_tags, parse_remind, unique_slug, validate_deadline, validate_time, parse_duration, compute_end_time
 from core.storage import (
     TaskAlreadyArchivedError,
     TaskAlreadyExistsError,
@@ -86,6 +86,7 @@ TODO_ACTIONS: tuple[str, ...] = (
     "restore",  # v0.4.x — archive → active
     "search",   # v0.4.x — cross-field search (name + note + tags)
     "done",     # v0.4.x — `archive --reason done` shortcut
+    "reminder", # v0.5 Phase C — read-only remind surface (no notifications)
 )
 
 
@@ -143,6 +144,11 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
                 "--parent",
                 help='父任务 ID（"" 清除 parent 字段）',
             )
+            # v0.5 Phase C — remind offsets
+            sp.add_argument(
+                "--remind",
+                help='提醒偏移（"" 清除 remind 字段）',
+            )
         elif name == "list":
             # BDD: docs/behaviors/todo-list-behavior.md §场景 1-8
             sp = sub.add_parser(name, help="列出任务")
@@ -169,6 +175,12 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
                 "--tree",
                 action="store_true",
                 help="强制树形展示子任务",
+            )
+            # v0.5 Phase C — filter by remind field
+            sp.add_argument(
+                "--reminding",
+                action="store_true",
+                help="仅显示带提醒字段的任务",
             )
         elif name == "add":
             # BDD: docs/behaviors/todo-add-behavior.md §场景 1-8
@@ -208,6 +220,11 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
             sp.add_argument(
                 "--parent",
                 help="父任务 ID（创建子任务；最多 2 层）",
+            )
+            # v0.5 Phase C — remind offsets (read-only mode, no notifications)
+            sp.add_argument(
+                "--remind",
+                help='提醒偏移（逗号分隔，如 1d,2h,30m；传 "" 不写入）',
             )
         elif name == "stats":
             sp = sub.add_parser(name, help="📊 统计信息")
@@ -275,6 +292,25 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
             # BDD: docs/behaviors/todo-done-behavior.md（6 场景）
             sp = sub.add_parser(name, help="archive --reason done 的快捷方式")
             sp.add_argument("id", help="任务 ID")
+        elif name == "reminder":
+            # v0.5 Phase C — reminder read-only surface
+            # BDD: docs/behaviors/todo-remind-behavior.md（12 场景）
+            # v0.5 does NOT trigger notifications — only storage / display / clear.
+            sub_reminder = sub.add_parser(name, help="提醒管理（v0.5 只读，不触发通知）")
+            sub_sub = sub_reminder.add_subparsers(
+                dest="reminder_action", required=True
+            )
+            # x todo reminder list
+            list_sp = sub_sub.add_parser("list", help="列出所有带提醒字段的任务")
+            list_sp.set_defaults(_reminder_action="list")
+            # x todo reminder clear <id...>
+            clear_sp = sub_sub.add_parser(
+                "clear", help="清除一个或多个任务的提醒字段"
+            )
+            clear_sp.add_argument(
+                "ids", nargs="+", help="任务 ID（空格分隔）"
+            )
+            clear_sp.set_defaults(_reminder_action="clear")
         else:
             sp = sub.add_parser(name, help=f"{name} 命令")
 
@@ -336,6 +372,10 @@ def run(args: Sequence[str]) -> int:
     # x todo done — v0.4.x 新增（archive --reason done 快捷方式）
     if parsed.todo_action == "done":
         return _todo_done(parsed)
+
+    # x todo reminder — v0.5 Phase C（只读 / clear，**不触发通知**）
+    if parsed.todo_action == "reminder":
+        return _todo_reminder(parsed)
 
     return _todo_not_implemented(parsed.todo_action)
 
@@ -664,6 +704,109 @@ def _todo_done(args: argparse.Namespace) -> int:
 
 
 # ============================================================
+#  x todo reminder list / clear (v0.5 Phase C)
+# ============================================================
+
+
+def _todo_reminder(args: argparse.Namespace) -> int:
+    """``x todo reminder list / clear`` — 提醒只读 + 清除。
+
+    对应 BDD：``docs/behaviors/todo-remind-behavior.md``（12 场景）。
+
+    v0.5 范围（明确）：
+    - ✅ 字段可写、可显示、可清除、可筛选、可统计
+    - ❌ **不触发任何通知**（daemon / scheduler 推到 v0.6+ 打包 exe 后）
+
+    退出码：
+    - 0：成功（包括「无提醒」空表）
+    - 3：clear 时任务不存在
+    """
+    action = getattr(args, "_reminder_action", None)
+    if action == "list":
+        return _todo_reminder_list()
+    if action == "clear":
+        return _todo_reminder_clear(args.ids)
+    # Should never reach here (subparser required=True)
+    print(f"❌ 未知的 reminder 子命令：{action}", file=sys.stderr)
+    return 2
+
+
+def _todo_reminder_list() -> int:
+    """``x todo reminder list`` — 列出所有带 remind 字段的 active 任务。
+
+    输出表格列：ID / Name / Deadline / Time / Reminders。
+    表格为空时输出提示文案（而非错误）。
+    """
+    store = TaskStore()
+    tasks = store.list_tasks(include_archived=False)
+    reminded = [t for t in tasks if t.remind]
+
+    if not reminded:
+        print("📭 没有带提醒的任务")
+        return 0
+
+    # Column widths (CJK-aware via display_width)
+    header = ["ID", "Name", "Deadline", "Time", "Reminders"]
+    rows = []
+    for t in reminded:
+        rows.append([
+            t.id or t.name,
+            t.name,
+            t.deadline or "-",
+            _list_time_cell(t),
+            ", ".join(t.remind or []),
+        ])
+    col_widths = [
+        max([display_width(header[i])] + [display_width(r[i]) for r in rows])
+        for i in range(len(header))
+    ]
+    print("  ".join(pad(c, col_widths[i]) for i, c in enumerate(header)))
+    print("  ".join("─" * col_widths[i] for i in range(len(header))))
+    for row in rows:
+        print("  ".join(pad(c, col_widths[i]) for i, c in enumerate(row)))
+    return 0
+
+
+def _todo_reminder_clear(ids: list[str]) -> int:
+    """``x todo reminder clear <id...>`` — 清除一个或多个任务的 remind 字段。
+
+    每个 id 独立校验：不存在则退出码 3（与 update / archive 一致）。
+    """
+    from datetime import date
+
+    store = TaskStore()
+    today = date.today().isoformat()
+    cleared: list[str] = []
+    not_found: list[str] = []
+    for raw in ids:
+        tid = raw.strip()
+        if not tid:
+            continue
+        try:
+            task = store.update_task(
+                tid,
+                clear_remind=True,
+                today=today,
+            )
+            cleared.append(task.id or task.name)
+        except TaskNotFoundError:
+            not_found.append(tid)
+
+    if not_found:
+        print(
+            f"❌ 任务不存在：{', '.join(not_found)}",
+            file=sys.stderr,
+        )
+        return 3
+
+    if len(cleared) == 1:
+        print(f"✅ 已清除提醒：{cleared[0]}")
+    else:
+        print(f"✅ 已清除提醒：{', '.join(cleared)}（共 {len(cleared)} 个）")
+    return 0
+
+
+# ============================================================
 #  x todo update
 # ============================================================
 
@@ -695,6 +838,7 @@ def _todo_update(args: argparse.Namespace) -> int:
         and args.end_time is None
         and args.duration is None
         and args.parent is None
+        and args.remind is None
     ):
         # Rebuild a parser so we can use parser.error() for consistent
         # argparse-style output ("usage: ..." + "prog: error: ...").
@@ -708,9 +852,10 @@ def _todo_update(args: argparse.Namespace) -> int:
         parser.add_argument("--end-time", help='新结束时间（"" 清除）')
         parser.add_argument("--duration", help='新持续时间（"" 清除）')
         parser.add_argument("--parent", help='父任务 ID（"" 清除）')
+        parser.add_argument("--remind", help='提醒偏移（"" 清除）')
         parser.error(
             "at least one of --status / --priority / --deadline / --tags "
-            "/ --time / --end-time / --duration / --parent is required"
+            "/ --time / --end-time / --duration / --parent / --remind is required"
         )
         return 2  # unreachable; parser.error() raises SystemExit(2)
 
@@ -772,6 +917,16 @@ def _todo_update(args: argparse.Namespace) -> int:
     if args.duration is not None and not clear_duration:
         try:
             new_duration_min = parse_duration(args.duration)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+
+    # v0.5 Phase C — --remind 校验（BDD §场景 3, 4, 5）
+    new_remind: list[str] | None | type(...) = None  # sentinel
+    clear_remind = args.remind is not None and args.remind == ""
+    if args.remind is not None and not clear_remind:
+        try:
+            new_remind = parse_remind(args.remind)
         except ValueError as exc:
             print(str(exc), file=sys.stderr)
             return 2
@@ -846,6 +1001,9 @@ def _todo_update(args: argparse.Namespace) -> int:
     if new_parent is not None or clear_parent:
         update_kwargs["parent"] = new_parent if not clear_parent else None
         update_kwargs["clear_parent"] = clear_parent
+    if new_remind is not None or clear_remind:
+        update_kwargs["remind"] = new_remind if not clear_remind else None
+        update_kwargs["clear_remind"] = clear_remind
     try:
         task = store.update_task(args.id, **update_kwargs)
     except TaskNotFoundError:
@@ -1123,6 +1281,7 @@ def _todo_list(args: argparse.Namespace) -> int:
     tag: str | None = args.tag
     include_archived: bool = bool(getattr(args, "include_archived", False))
     explicit_tree: bool = bool(getattr(args, "tree", False))
+    only_reminding: bool = bool(getattr(args, "reminding", False))
 
     # 0. Auto-archive hook (opt-in, default disabled).
     store = TaskStore()
@@ -1138,6 +1297,10 @@ def _todo_list(args: argparse.Namespace) -> int:
             t for t in tasks
             if _matches_list_filters(t, status=status, priority=priority, tag=tag)
         ]
+
+    # v0.5 Phase C — --reminding filter (BDD §场景 9)
+    if only_reminding:
+        tasks = [t for t in tasks if t.remind]
 
     # 4. 输出
     if not tasks:
@@ -1306,6 +1469,48 @@ def _todo_add(args: argparse.Namespace) -> int:
             )
             return 2
 
+    # v0.5 Phase B — --parent 校验（BDD §场景 3, 4）
+    parent_id: str | None = None
+    if args.parent is not None and args.parent != "":
+        parent_id = args.parent
+        # Existence + depth check
+        store_for_check = TaskStore()
+        parent_task = store_for_check.get_task(parent_id, include_archived=False)
+        if parent_task is None:
+            print(
+                f"❌ 父任务不存在：{parent_id}",
+                file=sys.stderr,
+            )
+            return 3
+        # Depth check: parent must be at depth ≤ 1 (root=0 or child=1).
+        # Allowed chain: root → child → grandchild (new) = depth 2.
+        # Reject if parent is itself a grandchild (depth 2), which would make new task great-grandchild (depth 3).
+        # Compute parent depth by walking the chain.
+        depth = 0
+        current = parent_task
+        visited: set[str] = set()
+        while current and current.parent:
+            if current.id in visited:
+                break  # cycle, treat as depth 0
+            visited.add(current.id)
+            depth += 1
+            current = store_for_check.get_task(current.parent, include_archived=False)
+        if depth >= 2:
+            print(
+                f"❌ 子任务最多 2 层：{parent_id} 已经是孙任务",
+                file=sys.stderr,
+            )
+            return 2
+
+    # v0.5 Phase C — --remind 校验（BDD §场景 5, 12）
+    remind_list: list[str] | None = None
+    if args.remind is not None and args.remind != "":
+        try:
+            remind_list = parse_remind(args.remind)
+        except ValueError as exc:
+            print(str(exc), file=sys.stderr)
+            return 2
+
     # 写入日期：created/updated 同为今天（YYYY-MM-DD 本地日期）。
     today = date.today().isoformat()
 
@@ -1326,6 +1531,7 @@ def _todo_add(args: argparse.Namespace) -> int:
         end_time=end_time_str,
         duration_min=duration_min,
         parent=parent_id,
+        remind=remind_list,
         folder=f"任务/{name}",
         tags=tags,
     )
@@ -1405,6 +1611,12 @@ def _render_stats(stats: dict[str, Any]) -> str:
             f"（⏳ pending: {hb.get('pending', 0)} / "
             f"▶ in_progress: {hb.get('in_progress', 0)}）"
         )
+
+    # v0.5 Phase C — 有提醒任务数（BDD §场景 10）
+    # 仅在 ≥ 1 时显示（与高优先级行风格一致）
+    remind_active = stats.get("remind_active", 0)
+    if remind_active > 0:
+        lines.append(f"⏰ 有提醒任务数：{remind_active}")
 
     return "\n".join(lines) + "\n"
 

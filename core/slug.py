@@ -208,7 +208,8 @@ def validate_deadline(value: str) -> str:
 _TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
 # Allow optional leading minus so we can distinguish format-error
 # (e.g. ``abc``) from sign-error (e.g. ``-5m``).
-_DURATION_RE = re.compile(r"^(-?)(\d+(?:\.\d+)?)([hm])?$")
+# Supports ``Nd`` / ``Nh`` / ``Nm`` (days / hours / minutes). Decimal allowed.
+_DURATION_RE = re.compile(r"^(-?)(\d+(?:\.\d+)?)([dhm])?$")
 
 
 def validate_time(value: str) -> str:
@@ -280,7 +281,12 @@ def parse_duration(raw: str) -> int:
     sign = -1 if m.group(1) == "-" else 1
     number = float(m.group(2))
     unit = m.group(3) or "m"  # default = minutes
-    minutes = sign * number * 60 if unit == "h" else sign * number
+    if unit == "d":
+        minutes = sign * number * 24 * 60
+    elif unit == "h":
+        minutes = sign * number * 60
+    else:  # m
+        minutes = sign * number
     if minutes <= 0:
         raise ValueError(
             f"❌ duration 必须为正数：{raw}"
@@ -309,6 +315,48 @@ def parse_tags(raw: str) -> list[str]:
     return [t.strip() for t in raw.split(",") if t.strip()]
 
 
+# Reuse the duration parser for remind offsets (Nd / Nh / Nm format).
+def parse_remind(raw: str) -> list[str]:
+    """Parse a comma-separated remind offset string into a validated list.
+
+    Each entry must be a positive duration in ``Nd`` / ``Nh`` / ``Nm``
+    format (same as :func:`parse_duration`). Re-uses the duration regex
+    so format errors are consistent with ``--duration``.
+
+    Error messages specifically say "remind" (not "duration") so the
+    user sees which flag is at fault.
+
+    Examples::
+
+        >>> parse_remind("1d")
+        ['1d']
+        >>> parse_remind("1d,2h,30m")
+        ['1d', '2h', '30m']
+    """
+    if not raw or not raw.strip():
+        raise ValueError(
+            "❌ remind 格式错误：（合法：Nd / Nh / Nm，支持小数）"
+        )
+    entries = [e.strip() for e in raw.split(",") if e.strip()]
+    if not entries:
+        raise ValueError(
+            "❌ remind 格式错误：（合法：Nd / Nh / Nm，支持小数）"
+        )
+    # Validate each entry against the duration regex directly so we
+    # control the error message wording (mention "remind" not "duration").
+    for e in entries:
+        if not _DURATION_RE.match(e.strip()):
+            raise ValueError(
+                f"❌ remind 格式错误：{e}（合法：Nd / Nh / Nm，支持小数）"
+            )
+        # Reuse parse_duration for the actual minutes calc (also
+        # validates sign — negatives raise ValueError too).
+        sign = -1 if e.strip().startswith("-") else 1
+        if sign < 0:
+            raise ValueError(f"❌ remind 必须为正数：{e}")
+    return entries
+
+
 __all__ = [
     "slugify",
     "unique_slug",
@@ -317,4 +365,5 @@ __all__ = [
     "parse_duration",
     "compute_end_time",
     "parse_tags",
+    "parse_remind",
 ]

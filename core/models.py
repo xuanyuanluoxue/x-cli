@@ -75,6 +75,8 @@ _KNOWN_FIELDS: frozenset[str] = frozenset(
         "duration_min",  # int, minutes
         # v0.5 Phase B — subtask parent reference (id of parent task, optional)
         "parent",
+        # v0.5 Phase C — reminder offsets (list of "1d"/"2h"/"30m" strings)
+        "remind",
     }
 )
 
@@ -125,6 +127,10 @@ class Task:
     parent:
         Optional ``id`` of the parent task (v0.5 Phase B). Max chain
         depth is 2 (root → child → grandchild). Enforced at CLI layer.
+    remind:
+        Optional list of reminder offsets, e.g. ``["1d", "2h", "30m"]``
+        (v0.5 Phase C, **read-only mode** — no daemon/notifications
+        until v0.6+ exe packaging).
     body:
         Markdown body text (everything after the ``---`` delimiter).
     extra:
@@ -147,6 +153,7 @@ class Task:
     end_time: str | None = None  # v0.5 Phase A
     duration_min: int | None = None  # v0.5 Phase A
     parent: str | None = None  # v0.5 Phase B (kebab-case id of parent task)
+    remind: list[str] | None = None  # v0.5 Phase C (e.g. ["1d", "2h"])
     body: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -212,6 +219,7 @@ class Task:
             "end_time",
             "duration_min",
             "parent",  # v0.5 Phase B
+            "remind",  # v0.5 Phase C
             "folder",
             "tags",
             "subtasks",
@@ -229,6 +237,9 @@ class Task:
                 continue
             elif field_name == "subtasks" and isinstance(value, list) and not value:
                 # Empty subtask list → skip
+                continue
+            elif field_name == "remind" and isinstance(value, list) and not value:
+                # Empty remind list → skip (same as tags / subtasks)
                 continue
             else:
                 metadata[field_name] = value
