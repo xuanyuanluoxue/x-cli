@@ -55,3 +55,7 @@ htmlcov/
 
 # Subagent test artifacts (created by parallel subagent test runs)
 .arts/
+
+# Open Design skill outputs (HTML previews, SVG icons, JSON manifests).
+# Reproducible from skill inputs — never commit, regenerate on demand.
+.design/

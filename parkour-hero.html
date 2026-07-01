@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>x web · Parkour Hero</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;900&family=Manrope:wght@400;500;700&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#fff;--ink-soft:rgba(255,255,255,.65);--ink-mute:rgba(255,255,255,.35);
+    --accent:#7af0ff;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:#07090b;color:var(--ink);font-family:'Manrope',system-ui,sans-serif;-webkit-font-smoothing:antialiased}
+
+  .hero{position:relative;width:100vw;height:100vh;overflow:hidden;cursor:crosshair}
+
+  /* ===== SKY (dark, monochrome) ===== */
+  .sky{position:absolute;inset:0 0 32% 0;background:linear-gradient(180deg,#050608 0%,#0a0d12 60%,#10141a 100%);z-index:0}
+
+  /* Subtle stars */
+  .stars{position:absolute;inset:0 0 32% 0;z-index:1;pointer-events:none}
+  .star{position:absolute;background:#fff;border-radius:50%;animation:twinkle ease-in-out infinite}
+  @keyframes twinkle{0%,100%{opacity:.15;transform:scale(1)}50%{opacity:.8;transform:scale(1.3)}}
+
+  /* ===== MOON (single soft disc) ===== */
+  .moon{position:absolute;width:120px;height:120px;top:14%;right:18%;border-radius:50%;background:radial-gradient(circle at 35% 35%,#e8eaee,#9ea4ad 60%,#3a3e44 100%);filter:blur(.5px);box-shadow:0 0 60px rgba(255,255,255,.08),0 0 120px rgba(255,255,255,.04);z-index:2}
+  .moon::before{content:'';position:absolute;inset:8%;border-radius:50%;background:radial-gradient(circle at 70% 60%,rgba(0,0,0,.4),transparent 40%)}
+
+  /* ===== DISTANT CITY (slow, faint) ===== */
+  .city-far{position:absolute;left:0;bottom:32%;width:200%;height:18%;z-index:3;animation:scroll 80s linear infinite;opacity:.5}
+  .city-mid{position:absolute;left:0;bottom:30%;width:200%;height:14%;z-index:4;animation:scroll 28s linear infinite;opacity:.85}
+  @keyframes scroll{from{transform:translateX(0)}to{transform:translateX(-50%)}}
+  .city-far svg,.city-mid svg{display:block;width:50%;height:100%;float:left}
+
+  /* ===== HORIZON LINE ===== */
+  .horizon{position:absolute;left:0;right:0;bottom:32%;height:1px;background:linear-gradient(to right,transparent,rgba(255,255,255,.2),transparent);z-index:5}
+
+  /* ===== GROUND (the land) ===== */
+  .ground{position:absolute;left:0;right:0;bottom:0;height:32%;background:linear-gradient(180deg,#101418 0%,#07090b 100%);z-index:6;overflow:hidden}
+  .ground::before{content:'';position:absolute;inset:0;background-image:repeating-linear-gradient(90deg,transparent 0,transparent 60px,rgba(255,255,255,.015) 60px,rgba(255,255,255,.015) 61px);animation:groundShift 4s linear infinite}
+  @keyframes groundShift{from{transform:translateX(0)}to{transform:translateX(-60px)}}
+
+  /* Ground edge highlight */
+  .ground::after{content:'';position:absolute;top:0;left:0;right:0;height:1px;background:linear-gradient(to right,transparent 10%,rgba(255,255,255,.25) 50%,transparent 90%)}
+
+  /* Ground cracks/details - scrolling SVG layer */
+  .ground-details{position:absolute;left:0;bottom:0;width:200%;height:100%;z-index:7;animation:scroll 6s linear infinite;opacity:.7}
+  .ground-details svg{display:block;width:50%;height:100%;float:left}
+
+  /* Ground depth - subtle perspective lines */
+  .ground-depth{position:absolute;left:0;right:0;bottom:0;height:32%;z-index:5;pointer-events:none;background:repeating-linear-gradient(180deg,transparent 0,transparent 1px,rgba(255,255,255,.02) 1px,rgba(255,255,255,.02) 2px)}
+
+  /* Speed lines (subtle, on the ground level) */
+  .speed-lines{position:absolute;inset:0;z-index:8;pointer-events:none;overflow:hidden}
+  .speed-line{position:absolute;height:1px;background:linear-gradient(to right,transparent,rgba(255,255,255,.35),transparent);animation:speedLine linear infinite}
+  @keyframes speedLine{0%{transform:translateX(-100%);opacity:0}10%{opacity:1}90%{opacity:1}100%{transform:translateX(120vw);opacity:0}}
+
+  /* ===== DUST behind stickman ===== */
+  .dust{position:absolute;width:240px;height:60px;bottom:30%;left:30%;z-index:9;pointer-events:none}
+  .dust-puff{position:absolute;background:radial-gradient(circle,rgba(255,255,255,.45) 0%,transparent 70%);border-radius:50%;animation:dustFloat linear infinite;filter:blur(3px)}
+  @keyframes dustFloat{0%{transform:translate(0,0) scale(.5);opacity:0}20%{opacity:1}100%{transform:translate(-200px,-15px) scale(2);opacity:0}}
+
+  /* ===== ACTION LAYER ===== */
+  .action-layer{position:absolute;inset:0;z-index:10;pointer-events:none}
+
+  /* Stickman - pure white with subtle cyan glow */
+  .stickman{position:absolute;bottom:30%;left:38%;filter:drop-shadow(0 0 10px rgba(122,240,255,.35));animation:stickmanRun 2s linear infinite;transform-origin:50% 100%}
+  @keyframes stickmanRun{
+    0%{transform:translateY(0) translateX(0)}
+    50%{transform:translateY(-6px) translateX(120px)}
+    100%{transform:translateY(0) translateX(240px)}
+  }
+
+  /* ===== BALLS (monochrome white, varying opacity) ===== */
+  .ball{position:absolute;border-radius:50%;animation:chase 2s linear infinite;will-change:transform}
+  .ball::before{content:'';position:absolute;top:50%;right:100%;transform:translateY(-50%);width:80px;height:8px;background:linear-gradient(to left,currentColor,transparent);opacity:.4;filter:blur(6px);border-radius:50%}
+  .ball::after{content:'';position:absolute;top:25%;left:25%;width:25%;height:25%;background:radial-gradient(circle,rgba(255,255,255,.6),transparent 70%);border-radius:50%}
+
+  /* All balls monochrome - just white with varying opacity */
+  .b1{width:42px;height:42px;bottom:31%;left:26%;background:radial-gradient(circle at 35% 30%,#fff,rgba(255,255,255,.85) 40%,rgba(255,255,255,.3) 100%);color:rgba(255,255,255,.7);animation-delay:.08s;opacity:.95}
+  .b2{width:30px;height:30px;bottom:34%;left:22%;background:radial-gradient(circle at 35% 30%,#fff,rgba(255,255,255,.7) 40%,rgba(255,255,255,.2) 100%);color:rgba(255,255,255,.6);animation-delay:.2s;opacity:.8}
+  .b3{width:54px;height:54px;bottom:29%;left:16%;background:radial-gradient(circle at 35% 30%,#fff,rgba(255,255,255,.75) 40%,rgba(255,255,255,.2) 100%);color:rgba(255,255,255,.5);animation-delay:.35s;opacity:.85}
+  .b4{width:36px;height:36px;bottom:33%;left:11%;background:radial-gradient(circle at 35% 30%,#fff,rgba(255,255,255,.65) 40%,rgba(255,255,255,.15) 100%);color:rgba(255,255,255,.45);animation-delay:.5s;opacity:.7}
+  .b5{width:46px;height:46px;bottom:30%;left:6%;background:radial-gradient(circle at 35% 30%,#fff,rgba(255,255,255,.7) 40%,rgba(255,255,255,.2) 100%);color:rgba(255,255,255,.5);animation-delay:.65s;opacity:.75}
+  .b6{width:32px;height:32px;bottom:34%;left:1%;background:radial-gradient(circle at 35% 30%,#fff,rgba(255,255,255,.6) 40%,rgba(255,255,255,.15) 100%);color:rgba(255,255,255,.4);animation-delay:.8s;opacity:.65}
+  @keyframes chase{0%,100%{transform:translate(0,0)}25%{transform:translate(6px,-12px)}50%{transform:translate(0,-4px)}75%{transform:translate(-6px,-10px)}}
+
+  /* ===== PARTICLES ===== */
+  .particles{position:absolute;inset:0;z-index:11;pointer-events:none}
+  .particle{position:absolute;background:#fff;border-radius:50%;opacity:0;animation:float linear infinite}
+  @keyframes float{0%{transform:translateY(110vh) translateX(0);opacity:0}8%{opacity:.5}92%{opacity:.5}100%{transform:translateY(-100px) translateX(50px);opacity:0}}
+
+  /* ===== VIGNETTE ===== */
+  .vignette{position:absolute;inset:0;background:radial-gradient(ellipse at 35% 50%,transparent 0%,rgba(0,0,0,.6) 85%);z-index:12;pointer-events:none}
+
+  /* ===== GRAIN ===== */
+  .grain{position:absolute;inset:0;z-index:13;pointer-events:none;opacity:.06;background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");animation:grainShift .5s steps(4) infinite}
+  @keyframes grainShift{0%{transform:translate(0,0)}25%{transform:translate(-2%,1%)}50%{transform:translate(1%,-1%)}75%{transform:translate(-1%,2%)}100%{transform:translate(0,0)}}
+
+  /* ===== OVERLAY ===== */
+  .overlay{position:absolute;top:50%;left:6%;transform:translateY(-50%);z-index:14;max-width:680px;animation:overlayIn 1.4s cubic-bezier(.16,1,.3,1) .4s backwards}
+  @keyframes overlayIn{from{opacity:0;transform:translateY(calc(-50% + 30px))}to{opacity:1;transform:translateY(-50%)}}
+
+  .brand-mark{font-family:'JetBrains Mono',monospace;font-size:11px;letter-spacing:.4em;color:var(--accent);margin-bottom:24px;display:inline-flex;align-items:center;gap:12px;text-transform:uppercase;opacity:.85}
+  .brand-mark::before{content:'';width:24px;height:1px;background:var(--accent);animation:pulse 2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1;transform:scaleX(1)}50%{opacity:.3;transform:scaleX(1.5)}}
+
+  .title{font-family:'Big Shoulders Display',sans-serif;font-size:clamp(60px,10vw,160px);font-weight:900;line-height:.85;letter-spacing:-.02em;color:var(--ink);margin-bottom:28px;text-shadow:0 2px 20px rgba(0,0,0,.5)}
+  .title .accent{color:var(--accent);text-shadow:0 0 30px rgba(122,240,255,.3)}
+
+  .subtitle{font-family:'Manrope',sans-serif;font-size:clamp(14px,1.3vw,18px);color:var(--ink-soft);margin-bottom:36px;max-width:440px;line-height:1.6;font-weight:400}
+
+  .cta-row{display:inline-flex;align-items:center;gap:20px;flex-wrap:wrap}
+  .cta{display:inline-flex;align-items:center;gap:10px;padding:16px 32px;background:var(--ink);color:#0a0d12;border-radius:2px;font-weight:700;text-decoration:none;font-family:'Manrope',sans-serif;font-size:14px;letter-spacing:.08em;text-transform:uppercase;transition:all .3s cubic-bezier(.16,1,.3,1);position:relative}
+  .cta:hover{background:var(--accent);color:#000;transform:translateY(-2px)}
+  .cta-icon{width:14px;height:14px;border:1.5px solid currentColor;border-radius:50%;border-top-color:transparent;animation:spin 1.2s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  .meta-link{color:var(--ink-mute);text-decoration:none;font-size:13px;letter-spacing:.1em;text-transform:uppercase;font-weight:500;padding-bottom:2px;transition:color .3s;border-bottom:1px solid var(--ink-mute)}
+  .meta-link:hover{color:var(--accent);border-color:var(--accent)}
+
+  /* HUD */
+  .hud{position:absolute;bottom:36px;right:36px;z-index:14;color:var(--ink-mute);font-family:'JetBrains Mono',monospace;font-size:10px;text-align:right;letter-spacing:.2em;line-height:2}
+  .hud .row{display:flex;gap:14px;justify-content:flex-end}
+  .hud .val{color:var(--ink-soft);font-weight:700}
+  .hud .blink{color:var(--accent);animation:blink 1.2s steps(2) infinite}
+  @keyframes blink{50%{opacity:.2}}
+
+  .corner{position:absolute;z-index:14;color:var(--ink-mute);font-family:'JetBrains Mono',monospace;font-size:10px;letter-spacing:.25em;text-transform:uppercase}
+  .corner-tl{top:32px;left:36px}
+  .corner-tr{top:32px;right:36px;display:flex;gap:28px}
+  .corner a{color:inherit;text-decoration:none;transition:color .3s}
+  .corner a:hover{color:var(--accent)}
+
+  @media (max-width:768px){
+    .overlay{left:5%;right:5%;max-width:none}
+    .title{font-size:clamp(48px,15vw,90px)}
+    .subtitle{font-size:13px}
+    .cta{padding:12px 22px;font-size:12px}
+    .hud,.corner{font-size:9px}
+    .corner-tl,.corner-tr{top:18px}
+    .corner-tl{left:18px}
+    .corner-tr{right:18px}
+    .hud{bottom:18px;right:18px}
+    .stickman{left:28%;transform:scale(.65)}
+    .b1{left:18%}.b2{left:14%}.b3{left:8%}.b4{left:3%}.b5{left:-2%}.b6{left:-7%}
+  }
+</style>
+</head>
+<body>
+<div class="hero">
+
+  <div class="sky"></div>
+  <div class="stars" id="stars"></div>
+  <div class="moon"></div>
+
+  <div class="city-far" id="cityFar"></div>
+  <div class="city-mid" id="cityMid"></div>
+
+  <div class="horizon"></div>
+
+  <div class="ground">
+    <div class="ground-depth"></div>
+  </div>
+  <div class="ground-details" id="groundDetails"></div>
+
+  <div class="speed-lines" id="speedLines"></div>
+
+  <div class="action-layer">
+    <svg class="stickman" width="60" height="90" viewBox="0 0 60 90">
+      <circle cx="30" cy="13" r="9" fill="none" stroke="#fff" stroke-width="3"/>
+      <circle cx="30" cy="13" r="5" fill="#fff" opacity=".2"/>
+      <line x1="30" y1="22" x2="30" y2="55" stroke="#fff" stroke-width="3" stroke-linecap="round"/>
+      <g stroke="#fff" stroke-width="3" stroke-linecap="round" fill="none">
+        <line x1="30" y1="30" x2="14" y2="40">
+          <animate attributeName="x2" values="14;22;14" dur=".4s" repeatCount="indefinite"/>
+          <animate attributeName="y2" values="40;28;40" dur=".4s" repeatCount="indefinite"/>
+        </line>
+        <line x1="30" y1="30" x2="46" y2="40">
+          <animate attributeName="x2" values="46;38;46" dur=".4s" repeatCount="indefinite"/>
+          <animate attributeName="y2" values="40;28;40" dur=".4s" repeatCount="indefinite"/>
+        </line>
+        <line x1="30" y1="55" x2="18" y2="82">
+          <animate attributeName="x2" values="18;26;18" dur=".4s" repeatCount="indefinite"/>
+          <animate attributeName="y2" values="82;70;82" dur=".4s" repeatCount="indefinite"/>
+        </line>
+        <line x1="30" y1="55" x2="42" y2="82">
+          <animate attributeName="x2" values="42;34;42" dur=".4s" repeatCount="indefinite"/>
+          <animate attributeName="y2" values="82;70;82" dur=".4s" repeatCount="indefinite"/>
+        </line>
+      </g>
+      <g transform="translate(40, 4)">
+        <line x1="0" y1="0" x2="0" y2="6" stroke="#7af0ff" stroke-width="2" stroke-linecap="round">
+          <animate attributeName="opacity" values="1;.2;1" dur=".6s" repeatCount="indefinite"/>
+        </line>
+        <circle cx="0" cy="9" r="1.5" fill="#7af0ff">
+          <animate attributeName="opacity" values="1;.2;1" dur=".6s" repeatCount="indefinite"/>
+        </circle>
+      </g>
+    </svg>
+
+    <div class="dust" id="dust"></div>
+
+    <div class="ball b1"></div>
+    <div class="ball b2"></div>
+    <div class="ball b3"></div>
+    <div class="ball b4"></div>
+    <div class="ball b5"></div>
+    <div class="ball b6"></div>
+  </div>
+
+  <div class="particles" id="particles"></div>
+  <div class="vignette"></div>
+  <div class="grain"></div>
+
+  <div class="corner corner-tl">X WEB // 2026</div>
+  <div class="corner corner-tr">
+    <a href="#">Tasks</a>
+    <a href="#">Secrets</a>
+    <a href="#">Stats</a>
+  </div>
+
+  <div class="overlay">
+    <div class="brand-mark">PARKOUR MODE</div>
+    <h1 class="title">
+      <span>KEEP</span><br>
+      <span class="accent">MOVING</span>
+    </h1>
+    <p class="subtitle">终端与浏览器,永远在路上。<br>让 CLI 像跑酷一样流畅。</p>
+    <div class="cta-row">
+      <a class="cta" href="#">
+        Run with x
+        <span class="cta-icon"></span>
+      </a>
+      <a class="meta-link" href="#">Source</a>
+    </div>
+  </div>
+
+  <div class="hud">
+    <div class="row"><span>DISTANCE</span><span class="val">∞</span></div>
+    <div class="row"><span>SPEED</span><span class="val">240 px/s</span></div>
+    <div class="row"><span>STATUS</span><span class="blink">● ONLINE</span></div>
+  </div>
+
+</div>
+
+<script>
+// Stars
+const starsEl = document.getElementById('stars');
+for (let i = 0; i < 70; i++) {
+  const s = document.createElement('div');
+  s.className = 'star';
+  s.style.left = Math.random() * 100 + '%';
+  s.style.top = Math.random() * 100 + '%';
+  const size = Math.random() * 1.8 + .8;
+  s.style.width = size + 'px';
+  s.style.height = size + 'px';
+  s.style.animationDelay = Math.random() * 3 + 's';
+  s.style.animationDuration = (2.5 + Math.random() * 3) + 's';
+  starsEl.appendChild(s);
+}
+
+// Particles
+const particlesEl = document.getElementById('particles');
+for (let i = 0; i < 30; i++) {
+  const p = document.createElement('div');
+  p.className = 'particle';
+  p.style.left = Math.random() * 100 + '%';
+  const size = Math.random() * 2 + 1;
+  p.style.width = size + 'px';
+  p.style.height = size + 'px';
+  p.style.animationDuration = (9 + Math.random() * 11) + 's';
+  p.style.animationDelay = Math.random() * 10 + 's';
+  particlesEl.appendChild(p);
+}
+
+// Speed lines
+const speedEl = document.getElementById('speedLines');
+for (let i = 0; i < 14; i++) {
+  const l = document.createElement('div');
+  l.className = 'speed-line';
+  l.style.top = (Math.random() * 28 + 36) + '%';  // ground area
+  l.style.width = (80 + Math.random() * 220) + 'px';
+  l.style.animationDuration = (.7 + Math.random() * 1.3) + 's';
+  l.style.animationDelay = Math.random() * 2 + 's';
+  speedEl.appendChild(l);
+}
+
+// Dust
+const dustEl = document.getElementById('dust');
+for (let i = 0; i < 8; i++) {
+  const d = document.createElement('div');
+  d.className = 'dust-puff';
+  d.style.left = (i * 20) + 'px';
+  d.style.bottom = (Math.random() * 25) + 'px';
+  const size = 5 + Math.random() * 7;
+  d.style.width = size + 'px';
+  d.style.height = size + 'px';
+  d.style.animationDuration = (1.2 + Math.random() * .8) + 's';
+  d.style.animationDelay = (i * .13) + 's';
+  dustEl.appendChild(d);
+}
+
+// City silhouette generator
+function makeCity(baseHeight, variation, fillColor, windowChance, windowColor, totalWidth) {
+  let svg = '<svg viewBox="0 0 ' + totalWidth + ' ' + (baseHeight + 50) + '" preserveAspectRatio="none">';
+  svg += '<defs><linearGradient id="g_' + Math.random().toString(36).slice(2,7) + '" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="' + fillColor + '"/><stop offset="100%" stop-color="#050608"/></linearGradient></defs>';
+  let pts = '0,' + (baseHeight + 50) + ' ';
+  let x = 0;
+  while (x < totalWidth) {
+    const w = 25 + Math.random() * 70;
+    const h = baseHeight - Math.random() * variation;
+    pts += x + ',' + h + ' ';
+    x += w;
+    pts += x + ',' + h + ' ';
+    if (Math.random() < windowChance) {
+      for (let wy = h + 6; wy < baseHeight - 6; wy += 7) {
+        for (let wx = x - w + 5; wx < x - 5; wx += 9) {
+          if (Math.random() < .35) {
+            svg += '<rect x="' + wx + '" y="' + wy + '" width="2.5" height="3" fill="' + windowColor + '" opacity="' + (.3 + Math.random() * .5) + '"/>';
+          }
+        }
+      }
+    }
+  }
+  pts += x + ',' + (baseHeight + 50);
+  svg += '<polygon points="' + pts + '" fill="#101418"/>';
+  svg += '</svg>';
+  return '<div style="width:50%;height:100%;float:left">' + svg + '</div><div style="width:50%;height:100%;float:left">' + svg + '</div>';
+}
+
+document.getElementById('cityFar').innerHTML = makeCity(140, 90, '#181c20', .15, '#ffd166', 4000);
+document.getElementById('cityMid').innerHTML = makeCity(110, 70, '#0a0d12', .45, '#ffe8a3', 4000);
+
+// Ground details - cracks, marks, debris
+function makeGroundDetails(width, height) {
+  let svg = '<svg viewBox="0 0 ' + width + ' ' + height + '" preserveAspectRatio="none">';
+  svg += '<defs><pattern id="gridPat" width="120" height="' + height + '" patternUnits="userSpaceOnUse"><line x1="0" y1="0" x2="0" y2="' + height + '" stroke="rgba(255,255,255,0.04)" stroke-width="1"/></pattern></defs>';
+  svg += '<rect width="' + width + '" height="' + height + '" fill="url(#gridPat)"/>';
+  // Random cracks
+  for (let i = 0; i < 20; i++) {
+    const cx = Math.random() * width;
+    const cy = Math.random() * height;
+    const len = 20 + Math.random() * 60;
+    const ang = Math.random() * Math.PI;
+    svg += '<line x1="' + cx + '" y1="' + cy + '" x2="' + (cx + Math.cos(ang) * len) + '" y2="' + (cy + Math.sin(ang) * len) + '" stroke="rgba(255,255,255,0.08)" stroke-width="1"/>';
+  }
+  // Small debris/marks
+  for (let i = 0; i < 30; i++) {
+    const x = Math.random() * width;
+    const y = Math.random() * height;
+    const w = 3 + Math.random() * 8;
+    const h = 1 + Math.random() * 2;
+    svg += '<rect x="' + x + '" y="' + y + '" width="' + w + '" height="' + h + '" fill="rgba(255,255,255,0.06)"/>';
+  }
+  // Horizon line highlight
+  svg += '<line x1="0" y1="2" x2="' + width + '" y2="2" stroke="rgba(255,255,255,0.15)" stroke-width="1"/>';
+  svg += '</svg>';
+  return '<div style="width:50%;height:100%;float:left">' + svg + '</div><div style="width:50%;height:100%;float:left">' + svg + '</div>';
+}
+
+document.getElementById('groundDetails').innerHTML = makeGroundDetails(4000, 320);
+
+// Parallax mouse tilt
+const hero = document.querySelector('.hero');
+hero.addEventListener('mousemove', (e) => {
+  const x = (e.clientX / window.innerWidth - .5) * 3;
+  const y = (e.clientY / window.innerHeight - .5) * 3;
+  hero.style.transform = 'perspective(1200px) rotateY(' + x + 'deg) rotateX(' + (-y) + 'deg)';
+});
+hero.addEventListener('mouseleave', () => { hero.style.transform = ''; });
+</script>
+</body>
+</html>
