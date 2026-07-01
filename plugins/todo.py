@@ -85,6 +85,16 @@ _PRIORITY_SORT_WEIGHT: dict[str, int] = {
 # ============================================================
 
 
+# v0.5: flags whose value may legitimately start with '-' (so argparse's
+# "expected one argument" check on the bare form must be bypassed).
+# We rewrite `--flag -X` to `--flag=-X` before argparse sees it; the
+# `=` form is accepted by argparse regardless of the value's leading
+# character.  See ``todo-remind-behavior.md §场景 5`` and
+# ``todo-time-precision-behavior.md §场景 10`` for the BDD contract
+# ("❌ must be positive: -5m").
+_DASH_VALUE_FLAGS: frozenset[str] = frozenset({"--remind", "--duration"})
+
+
 TODO_ACTIONS: tuple[str, ...] = (
     "list",
     "add",
@@ -180,6 +190,11 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
             sp.add_argument(
                 "--remind",
                 help='提醒偏移（"" 清除 remind 字段）',
+            )
+            # v0.5 Phase D — repeat rule (also updateable, "" 清除)
+            sp.add_argument(
+                "--repeat",
+                help='重复规则（"" 清除 repeat 字段）',
             )
             # v0.5 Phase D — batch ops: --filter / --all (update only)
             sp.add_argument(
@@ -465,9 +480,24 @@ register = _todo_register
 
 def run(args: Sequence[str]) -> int:
     """x todo 入口：解析参数并分发到子命令"""
+    # v0.5: argparse 默认拒单值参数的 '-X' 形式（"expected one argument"）。
+    # 我们用 `--flag=-X` 让 argparse 接受（`=` 形式赋值绕过 looks_like_option
+    # 检查），但 `parse_remind` / `parse_duration` 期望原始 `-X`——把前缀 `=`
+    # 在 parse_args 后再剥掉。 见 ``_DASH_VALUE_FLAGS`` 上方注释。
+    argv = list(args)
+    for i, token in enumerate(argv):
+        if token in _DASH_VALUE_FLAGS and i + 1 < len(argv):
+            nxt = argv[i + 1]
+            if nxt.startswith("-") and len(nxt) > 1:
+                argv[i + 1] = f"={nxt}"
     parser = argparse.ArgumentParser(prog="x todo", description="TODO 管理")
     register(parser)
-    parsed = parser.parse_args(list(args))
+    parsed = parser.parse_args(argv)
+    # 还原 `=` 前缀：让下游 parse_* 看到干净的 `-X`。
+    for flag in _DASH_VALUE_FLAGS:
+        value = getattr(parsed, flag.lstrip("-"), None)
+        if isinstance(value, str) and value.startswith("="):
+            setattr(parsed, flag.lstrip("-"), value[1:])
 
     if not parsed.todo_action:
         parser.print_help()
