@@ -1,11 +1,11 @@
 # PLAN-v0.5 — TODO 增强 + 数据导出 路线图
 
-> **状态**：🚧 实现中（Phase A ✅ / Phase B ✅ / Phase C ✅ / Phase D ✅ / Phase E ⏳）
+> **状态**：✅ 落地完成（Phase A–E 全 ✅），v0.5.0 收口见 §10
 > **来源**：用户桌面 `x-cli功能建议.md`（v1.0，2026-06-30）+ COMMANDS.md ⏳ 区既有承诺
 > **作者**：Xavier（决策）+ AI（起草 / 实现）
 > **版本**：v0.5.0（接续 v0.4.y）
 > **范围**：TODO 子系统增强 + 数据导出（secret 子系统不在本规划内）
-> **最后更新**：2026-06-30（Phase C 完成后）
+> **最后更新**：2026-07-01（v0.5 收口 + 对账）
 
 ### 阶段状态
 
@@ -16,10 +16,12 @@
 | B | P1 子任务（--parent / 2 层 / 永远级联）| ✅ | `7b4bf30` `e7c54d9` `0075401` |
 | C | P1 提醒只读 + list --reminding + stats 统计 | ✅ | `34b85a9` `13ef32c` `2b9a032` |
 | D | P2 重复 / 批量 / 排序 / urgent / 回收站 | ✅ | `eb49c34` `678fc50` `8bfcda9` |
-| E | P3 模板 / 依赖 / 导出 | ⏳ | — |
+| E | P3 模板 / 依赖 / 导出 | ✅ | `9d0e265` `5df2d1b` `0a61786` |
 | — | 附加修复（date-fragile test + pytest tmpdir workaround）| ✅ | `3a76f17` |
+| — | v0.5 收口：5 impl bug + 2 test bug | ✅ | `c0a21a0` `5703aa5` |
+| — | v0.5 收口：update parser 补 --repeat + argv 重写 | ✅ | `e890086` |
 
-**累计新增**：80 用例 + 1 修复 + 1 workaround，全部 PASS。全量 657/657。
+**累计新增**：104 用例（17+14+13+37+23）+ 7 修复 / workaround，全部 PASS。全量 **573 PASS / 108 SKIP / 0 FAIL**，覆盖率 77%。
 
 ---
 
@@ -631,7 +633,62 @@ class Priority(str, Enum):
 
 ---
 
-## 10. 参考
+## 10. v0.5 收口 + 对账（2026-07-01）
+
+### 10.1 收口 commit
+
+| Commit | 范围 | 内容 |
+|---|---|---|
+| `5703aa5` | Phase D P0 bug 修复 | cascade 双向匹配 parent id + name |
+| `c0a21a0` | v0.5 收口 1 | 5 impl bug（batch Namespace 漏 depends / has_unfulfilled id-only / archived deps 校验 / CSV 缺 tags 列 / `_todo_update_single` 漏 repeat）+ 2 test bug（test_todo_depends 缺 `_invoke_list` / test_todo_stats 旧 Namespace 缺 repeat+depends）|
+| `e890086` | v0.5 收口 2 | 6 fail：update parser 补 `--repeat` flag + `run()` 入口对 `--remind` / `--duration` 做 argv 重写（`--flag -X` → `--flag=-X`，parse_args 后剥 `=` 前缀）绕过 argparse 默认拒 `-` 开头值的限制 |
+
+### 10.2 用户桌面建议对账（`x-cli功能建议.md` v1.0）
+
+**14 项功能** / **11 ✅** / **4 🟡** / **0 ❌**
+
+| § | 功能 | 状态 | 备注 |
+|---|---|---|---|
+| 1.1 | `--time HH:MM` | ✅ | Phase A |
+| 1.2 | `--end-time` / `--duration` | ✅ | Phase A，互斥校验 |
+| 2.1 | `--parent` 子任务（2 层 + 级联）| ✅ | Phase B |
+| 2.2 | `--repeat` 重复任务 | ✅ | Phase D + `repeat-fire` 显式触发 |
+| 2.3 | `--remind` 智能提醒 | 🟡 | 字段/列表/筛选/统计全实装；**通知触发** v0.6+ 打包 exe 后（设计内推迟，PLAN §6.2）|
+| 3.1 | `urgent` 优先级 | 🟡 | 排序 + ANSI red 高亮 OK；**stats 渲染缺 urgent 行**（`_render_stats` tuple 只列 high/medium/low）|
+| 3.2 | `--sort` 排序 | ✅ | Phase D，4 模式 + 默认 priority |
+| 4.1 | 标签 `key:value` 格式 | 🟡 | 用户可写 `--tags "地点:2507右"`（普通字符串），CLI **不解析** key:value |
+| 4.2 | `--tag` 多值 + key:value 筛选 | 🟡 | `--tag` 当前单值字符串（`nargs` 缺），key:value 精确匹配**未实装**；PLAN §2.2.3 承诺但 Phase D 漏 |
+| 5 | 批量 done/archive/update/remove + `--filter` | ✅ | Phase D，nargs="*" + `--filter` + `--all`；remove 走系统回收站 |
+| 6 | `--depends` 任务依赖 | ✅ | Phase E，字段 + 校验 + list 🔒 标记；按 spec **不做循环检测** |
+| 7 | 任务模板 + add --template | ✅ | Phase E，步骤去重 + 父+子展开 + 错误回滚 |
+| 8 | 数据导出 json/csv/md | ✅ | Phase E，`--format` / `--output` / `--all`；CSV 多值用 `;` |
+| 9 | `x todo stats` | 🟡 | 缺用户建议列的 3 个指标：**本周完成 / 本月完成 / 平均完成时间**（grep 整项目无相关字段/测试，需扩 `Task` 存 `archived_at` 日期 + 3 行 render + 3-5 测试）|
+| 11 | YAML 数据结构（7 字段）| ✅ | `core/models.py` Task dataclass 字段全实装 |
+
+### 10.3 已知缺口（v0.5.1 hotfix 候选）
+
+| 优先级 | 项 | 工作量 | 影响面 |
+|---|---|---|---|
+| **高** | stats §9 三个指标（本週/本月/平均完成）| 中（需扩 Task + 3 行 render + 测试）| 用户最高频反馈（建议文档明确列）|
+| 中 | `--tag` 多值 + key:value 筛选 | 小（< 30 行 + 2-3 测试）| PLAN §2.2.3 承诺漏项 |
+| 低 | `_render_stats` 加 urgent 行 | 1 行 | stats 完整性 |
+| 低 | 标签 key:value 解析 | 跟 `--tag` 一起做 | 标签系统增强 |
+
+### 10.4 推迟到 v0.6+（不在本规划）
+
+- 提醒 daemon 实装（独立进程 + 系统调度器 + 跨平台系统通知）— 前置：PyInstaller `x.exe` 打包
+- `x --config --force` flag
+- 日志轮转（按日期 / 按大小）
+- `--log-level` 子命令覆盖
+- Config validation / 热重载 / `--help` 子命令透传
+- `x secret update --category`（CHANGELOG v0.6.0 已记录，但 v0.5 收口时未落地到 COMMANDS.md ✅ 区）
+- `x todo restore`（COMMANDS.md ⏳ P1 旧承诺）
+- `x todo edit` / `x todo tag` / `x todo init`（COMMANDS.md ⏳ P1 旧承诺）
+- `x skill` / `x agent` / `x system`（COMMANDS.md ⏳ P3 远期）
+
+---
+
+## 11. 参考
 
 - 用户建议原件：`C:\Users\Chatxavier\Desktop\x-cli功能建议.md`（v1.0）
 - 项目规约：`AGENTS.md` §5 BDD+TDD 流程
@@ -642,4 +699,5 @@ class Priority(str, Enum):
 ---
 
 *文档创建时间：2026-06-30*
+*最后更新：2026-07-01（v0.5 收口 + 对账，Phase E ✅，新增 §10 收口章节）*
 *维护者：AI 起草 + 用户 review*
