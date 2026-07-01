@@ -95,6 +95,15 @@ def _open_browser(url: str, token: str, auto_token_url: bool) -> None:
 
 def run(args: Sequence[str]) -> int:
     """Start the web server and block until Ctrl+C."""
+    # v0.6.1: positional ``help`` alias (--help/-h 由 argparse 原生处理)
+    if list(args) == ["help"]:
+        parser = argparse.ArgumentParser(
+            prog="x web", description="x-cli Web UI (REST API + frontend)"
+        )
+        register(parser)
+        parser.print_help()
+        return 0
+
     parser = argparse.ArgumentParser(prog="x web", description="x-cli Web UI (REST API + frontend)")
     register(parser)
     parsed = parser.parse_args(list(args))

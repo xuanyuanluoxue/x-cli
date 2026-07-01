@@ -480,6 +480,14 @@ register = _todo_register
 
 def run(args: Sequence[str]) -> int:
     """x todo 入口：解析参数并分发到子命令"""
+    # v0.6.1: ``x todo help``（位置别名）→ 打印 todo help 并退出。必须放在
+    # dash-value 重写 + parse_args 之前；--help/-h 由 argparse 原生处理。
+    if list(args) == ["help"]:
+        parser = argparse.ArgumentParser(prog="x todo", description="TODO 管理")
+        register(parser)
+        parser.print_help()
+        return 0
+
     # v0.5: argparse 默认拒单值参数的 '-X' 形式（"expected one argument"）。
     # 我们用 `--flag=-X` 让 argparse 接受（`=` 形式赋值绕过 looks_like_option
     # 检查），但 `parse_remind` / `parse_duration` 期望原始 `-X`——把前缀 `=`

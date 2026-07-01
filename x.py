@@ -107,10 +107,17 @@ from plugins.todo import _STATUS_ICONS, _PRIORITY_ICONS  # noqa: E402,F401
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """构造主解析器：--version / --config / --log-level / --config-init / <subcommand> [args...]"""
+    """构造主解析器：--version / --config / --log-level / --config-init / <subcommand> [args...]
+
+    v0.6.1: ``add_help=False`` **不**手动注册 ``-h/--help`` flag — 这样 argparse
+    不会消费 ``--help``，让它落到 ``remaining`` 转给子命令 handler（每个 plugin
+    自带 ArgumentParser，原生处理 ``--help``）。顶层 help 由 ``main()`` 在没有
+    subcommand 时显式打印（看 ``argv`` 里有没有 ``--help`` / ``-h``）。
+    """
     parser = argparse.ArgumentParser(
         prog="x",
         description="Xavier 个人工具集的统一 CLI 入口",
+        add_help=False,
     )
     parser.add_argument(
         "-v", "--version",
@@ -145,8 +152,19 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """主入口：解析 → 加载配置 + 日志 → 分发到子命令 handler"""
+    argv = list(argv) if argv is not None else None
     parser = build_parser()
-    parsed, remaining = parser.parse_known_args(argv if argv is not None else None)
+    parsed, remaining = parser.parse_known_args(argv)
+
+    # v0.6.1: 顶层 help 只在 *没有* subcommand 时打印；有 subcommand 时
+    # ``--help`` / ``-h`` 应原样传给子命令 handler（plugin 自己的 argparse
+    # 打印对应 help）。``x help`` 是 ``x --help`` 的位置别名（git/npm 习惯）。
+    if not parsed.subcommand and ("--help" in (argv or []) or "-h" in (argv or [])):
+        parser.print_help()
+        return 0
+    if parsed.subcommand == "help":
+        parser.print_help()
+        return 0
 
     # --version 优先（最便宜的 early-exit）
     if parsed.version:

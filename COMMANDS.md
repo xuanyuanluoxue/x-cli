@@ -17,7 +17,8 @@
 | 命令 | 用途 | 关键参数 |
 |------|------|----------|
 | `x --version` (`-v`) | 显示版本号 | — |
-| `x --help` (`-h`) | 显示帮助 | — |
+| `x --help` (`-h`) / `x help` | 显示顶层帮助 | — |
+| `x <sub> --help` / `x <sub> -h` / `x <sub> help` | 显示子命令帮助 | — |
 | `x --config <path>` | 加载 YAML 配置 | 覆盖默认 todo_dir / secrets_path / log_level / log_path |
 | `x --log-level <level>` | 全局日志级别 | DEBUG / INFO / WARNING / ERROR / CRITICAL（大小写不敏感，WARN/FATAL 别名） |
 | `x --config-init` | 写默认配置到 `xcli_data_dir()/config.yaml` | 不覆盖（除非未来 `--force`） |
@@ -40,7 +41,7 @@
 | `x secret import --from <dir>` | 从 .md 批量迁移（旧文件保留）| — |
 | `x secret export` | JSON 备份 | `--to <path>` |
 
-**合计 21 个命令**（3 顶层 + 10 todo + 8 secret）+ 3 全局 flag
+**合计 21 个命令**（3 顶层 + 10 todo + 8 secret）+ 3 全局 flag + 6 个 help 入口（x / x help / 3× x <sub> --help / 3× x <sub> help）
 
 **存储（全部独立于 legacy TODO system）**：
 
@@ -74,7 +75,7 @@
 - [ ] `x --log-level <level>` 在子命令里覆盖（现在是全局）
 - [ ] Config validation（typo 检测 for unknown keys）
 - [ ] Config 热重载（运行中修改不生效，需重启）
-- [ ] `--help` 解析修复（现在被顶层 parser 截走，没传给子命令）
+- [x] `--help` 解析修复（现在被顶层 parser 截走，没传给子命令）— v0.6.1
 - [ ] x secret update 加 `--category` 支持（现在只能 rm + set）
 
 ### P3 — 远期（其他插件）
@@ -119,6 +120,7 @@
 | Commit | 版本 | 主题 |
 |---|---|---|
 | `deef0fd` | v0.4.y | docs: COMMANDS.md flip — --config / --log-level / --config-init ✅ |
+| `pending` | v0.6.1 | feat(x): --help passthrough + x help / x <sub> help 别名 |
 | `e8abe1b` | v0.4.y | feat: --config / --log-level / --config-init global options |
 | `e4b6813` | v0.4.x | feat: restore / search / done（todo 生命周期闭环 + 2 快捷）|
 | `a6978c8` | v0.4.0 | feat: x todo 独立存储 + init + import |

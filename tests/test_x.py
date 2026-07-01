@@ -49,10 +49,15 @@ def test_no_args_shows_help_and_exits_zero():
 
 
 def test_help_flag_exits_zero_and_prints_help(capsys):
-    """对应场景：x --help 显示帮助，退出码 0（argparse 会触发 SystemExit）"""
-    with pytest.raises(SystemExit) as exc_info:
-        main(["--help"])
-    assert exc_info.value.code == 0
+    """对应场景：x --help 显示帮助，退出码 0
+
+    v0.6.1 行为变更：以前 argparse 自动 ``add_help`` → ``SystemExit(0)``；
+    现在 ``x.py`` 用 ``add_help=False`` + 显式 ``print_help()`` + return 0，
+    因为 ``--help`` 必须能 passthrough 到子命令（COMMANDS.md P2）。契约
+    不变（exit 0 + 显示顶层 help），实现细节变了。
+    """
+    exit_code = main(["--help"])
+    assert exit_code == 0
     captured = capsys.readouterr()
     assert "SUBCOMMAND" in captured.out
     assert "todo" in captured.out
@@ -87,17 +92,26 @@ def test_todo_no_action_shows_help_and_exits_zero():
         assert action in output
 
 
-def test_todo_help_flag_shows_main_help(capsys):
-    """对应场景：x todo --help 由主入口 argparse 拦截，显示 x 主入口帮助
+def test_todo_help_flag_shows_todo_help(capsys):
+    """v0.6.1 修复：``x todo --help`` 现在显示 *x todo* 自己的 help（不是顶层）。
 
-    查看 x todo 子动作帮助：用 `x todo`（无参数）。这是 argparse 标准行为。
+    旧行为（v0.6.0 之前）被 COMMANDS.md P2 列为 bug：顶层 argparse 的
+    ``add_help=True`` 会在 ``parse_known_args`` 看到 ``--help`` 时
+    ``SystemExit(0)``，``--help`` 永远进不到 plugin。修复后 ``--help``
+    落到 ``remaining`` 转给 plugin，每个 plugin 自带 ArgumentParser 处理。
+    BDD：``docs/behaviors/help-passthrough-behavior.md`` 场景 2/3。
+
+    Plugin 子 parser 的 argparse auto-help 仍然走 ``SystemExit(0)``（标准行为）。
     """
     with pytest.raises(SystemExit) as exc_info:
         main(["todo", "--help"])
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
-    # argparse 主入口帮助里会提到 todo
-    assert "todo" in captured.out
+    # 确认是 todo 的 help（包含 "usage: x todo" + "TODO 管理"）
+    assert "usage: x todo" in captured.out
+    assert "TODO 管理" in captured.out
+    # 不应再泄漏顶层 --log-level
+    assert "--log-level" not in captured.out
 
 
 @pytest.mark.parametrize("action", [])
