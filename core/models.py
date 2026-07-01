@@ -81,6 +81,8 @@ _KNOWN_FIELDS: frozenset[str] = frozenset(
         "remind",
         # v0.5 Phase D — repeat rule (dict: {kind: "daily"} or {cron: "0 8 * * 1-5"})
         "repeat",
+        # v0.5 Phase E — task dependencies (list of task ids this task depends on)
+        "depends",
     }
 )
 
@@ -140,6 +142,9 @@ class Task:
         - ``{"kind": "daily"|"weekly"|"weekdays"|"monthly"}``
         - ``{"cron": "<5-field cron>"}``
         Used by ``x todo repeat-fire`` to spawn the next instance.
+    depends:
+        Optional list of task ids this task depends on (v0.5 Phase E).
+        List rendering shows a 🔒 marker for unfulfilled deps.
     body:
         Markdown body text (everything after the ``---`` delimiter).
     extra:
@@ -164,6 +169,7 @@ class Task:
     parent: str | None = None  # v0.5 Phase B (kebab-case id of parent task)
     remind: list[str] | None = None  # v0.5 Phase C (e.g. ["1d", "2h"])
     repeat: dict[str, str] | None = None  # v0.5 Phase D (e.g. {"kind": "daily"})
+    depends: list[str] | None = None  # v0.5 Phase E (list of task ids)
     body: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -231,6 +237,7 @@ class Task:
             "parent",  # v0.5 Phase B
             "remind",  # v0.5 Phase C
             "repeat",  # v0.5 Phase D
+            "depends",  # v0.5 Phase E
             "folder",
             "tags",
             "subtasks",
@@ -251,6 +258,9 @@ class Task:
                 continue
             elif field_name == "remind" and isinstance(value, list) and not value:
                 # Empty remind list → skip (same as tags / subtasks)
+                continue
+            elif field_name == "depends" and isinstance(value, list) and not value:
+                # Empty depends list → skip
                 continue
             else:
                 metadata[field_name] = value

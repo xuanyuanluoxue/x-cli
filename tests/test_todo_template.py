@@ -21,7 +21,7 @@ from x import main
 
 @pytest.fixture
 def isolated_xcli(monkeypatch, tmp_path: Path):
-    """Run x with isolated XCLI_TODO_DIR + xcli_data_dir.
+    r"""Run x with isolated XCLI_TODO_DIR + xcli_data_dir.
 
     BDD for templates writes to ``<xcli_data_dir>/templates/`` which is
     normally ``%LOCALAPPDATA%\x-cli\templates\``. We override it via
@@ -161,11 +161,12 @@ def test_add_with_template(isolated_xcli) -> None:
     _run(["todo", "template", "create", "退宿流程",
           "--steps", "清扫宿舍,清点物品,宿管核验"])
 
-    rc, out, _ = _run(["todo", "add", "退宿离校",
-                       "--template", "退宿流程",
-                       "--deadline", "2026-07-13"])
-    assert rc == 0, f"add failed: {out!r}"
-    assert "4" in out, f"expected 4 tasks (1 parent + 3 kids): {out!r}"
+    rc, out, err = _run(["todo", "add", "退宿离校",
+                         "--template", "退宿流程",
+                         "--deadline", "2026-07-13"])
+    assert rc == 0, f"add failed: out={out!r} err={err!r}"
+    combined = out + err
+    assert "4" in combined, f"expected 4 tasks (1 parent + 3 kids): {combined!r}"
 
     active = todo_dir / "任务"
     assert (active / "退宿离校").exists(), "parent folder missing"

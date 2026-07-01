@@ -99,6 +99,8 @@ TODO_ACTIONS: tuple[str, ...] = (
     "reminder", # v0.5 Phase C — read-only remind surface (no notifications)
     "repeat-fire", # v0.5 Phase D — explicit repeat trigger
     "remove",   # v0.5 Phase D — recycle-bin delete
+    "template", # v0.5 Phase E — task template create/list/remove
+    "export",   # v0.5 Phase E — data export json/csv/md
 )
 
 
@@ -168,6 +170,11 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
             sp.add_argument(
                 "--parent",
                 help='父任务 ID（"" 清除 parent 字段）',
+            )
+            # v0.5 Phase E — 任务依赖（"" 清除 depends 字段）
+            sp.add_argument(
+                "--depends",
+                help='依赖任务 ID 列表（逗号分隔；"" 清除 depends 字段）',
             )
             # v0.5 Phase C — remind offsets
             sp.add_argument(
@@ -277,6 +284,16 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
             sp.add_argument(
                 "--repeat",
                 help="重复规则（daily/weekly/weekdays/monthly 或标准 5 字段 cron）",
+            )
+            # v0.5 Phase E — 任务模板（展开为父任务 + N 个子任务）
+            sp.add_argument(
+                "--template",
+                help="任务模板名（用 x todo template create 先创建）",
+            )
+            # v0.5 Phase E — 任务依赖（多个用逗号分隔）
+            sp.add_argument(
+                "--depends",
+                help="依赖任务 ID（多个用逗号分隔）",
             )
         elif name == "stats":
             sp = sub.add_parser(name, help="📊 统计信息")
@@ -394,6 +411,48 @@ def _todo_register(parser: argparse.ArgumentParser) -> None:
                 action="store_true",
                 help="跳过回收站，物理删除（不可恢复）",
             )
+        elif name == "template":
+            # v0.5 Phase E — 任务模板
+            # BDD: docs/behaviors/todo-template-behavior.md §场景 1-9
+            sub_tmpl = sub.add_parser(name, help="任务模板管理（用于 add --template 展开）")
+            sub_tmpl_sub = sub_tmpl.add_subparsers(
+                dest="template_action", required=True
+            )
+            # x todo template create <name> --steps "A,B,C"
+            create_sp = sub_tmpl_sub.add_parser(
+                "create", help="创建任务模板（--steps 逗号分隔）"
+            )
+            create_sp.add_argument("name", help="模板名（中文 / 英文均可）")
+            create_sp.add_argument(
+                "--steps", required=True, help="步骤名（逗号分隔）"
+            )
+            create_sp.set_defaults(_template_action="create")
+            # x todo template list
+            list_sp = sub_tmpl_sub.add_parser("list", help="列出所有模板")
+            list_sp.set_defaults(_template_action="list")
+            # x todo template remove <name>
+            remove_sp = sub_tmpl_sub.add_parser("remove", help="删除模板")
+            remove_sp.add_argument("name", help="模板名")
+            remove_sp.set_defaults(_template_action="remove")
+        elif name == "export":
+            # v0.5 Phase E — 数据导出
+            # BDD: docs/behaviors/todo-export-behavior.md §场景 1-8
+            sp = sub.add_parser(name, help="导出任务数据（json / csv / md）")
+            sp.add_argument(
+                "--format",
+                required=True,
+                choices=["json", "csv", "md"],
+                help="导出格式",
+            )
+            sp.add_argument(
+                "--output",
+                help="输出文件路径（默认 stdout）",
+            )
+            sp.add_argument(
+                "--all",
+                action="store_true",
+                help="包含已归档任务",
+            )
         else:
             sp = sub.add_parser(name, help=f"{name} 命令")
 
@@ -467,6 +526,14 @@ def run(args: Sequence[str]) -> int:
     # x todo remove — v0.5 Phase D（走系统回收站 + --force）
     if parsed.todo_action == "remove":
         return _todo_remove(parsed)
+
+    # x todo template — v0.5 Phase E（模板 create/list/remove + add --template）
+    if parsed.todo_action == "template":
+        return _todo_template(parsed)
+
+    # x todo export — v0.5 Phase E（json/csv/md 数据导出）
+    if parsed.todo_action == "export":
+        return _todo_export(parsed)
 
     return _todo_not_implemented(parsed.todo_action)
 
@@ -1225,6 +1292,7 @@ def _todo_update_single(args: argparse.Namespace) -> int:
         and args.duration is None
         and args.parent is None
         and args.remind is None
+        and args.depends is None
     ):
         # Rebuild a parser so we can use parser.error() for consistent
         # argparse-style output ("usage: ..." + "prog: error: ...").
@@ -1239,9 +1307,10 @@ def _todo_update_single(args: argparse.Namespace) -> int:
         parser.add_argument("--duration", help='新持续时间（"" 清除）')
         parser.add_argument("--parent", help='父任务 ID（"" 清除）')
         parser.add_argument("--remind", help='提醒偏移（"" 清除）')
+        parser.add_argument("--depends", help='依赖任务 ID（"" 清除）')
         parser.error(
             "at least one of --status / --priority / --deadline / --tags "
-            "/ --time / --end-time / --duration / --parent / --remind is required"
+            "/ --time / --end-time / --duration / --parent / --remind / --depends is required"
         )
         return 2  # unreachable; parser.error() raises SystemExit(2)
 
@@ -1317,6 +1386,19 @@ def _todo_update_single(args: argparse.Namespace) -> int:
             print(str(exc), file=sys.stderr)
             return 2
 
+    # v0.5 Phase E — --depends 校验（覆盖 / 清空）
+    new_depends: list[str] | None | type(...) = None  # sentinel
+    clear_depends = args.depends is not None and args.depends == ""
+    if args.depends is not None and not clear_depends:
+        deps = [d.strip() for d in args.depends.split(",") if d.strip()]
+        if deps:
+            from core.storage import TaskStore as _TS
+            for d in deps:
+                if _TS().get_task(d, include_archived=False) is None:
+                    print(f"❌ 依赖任务不存在：{d}", file=sys.stderr)
+                    return 3
+            new_depends = deps
+
     # v0.5 Phase B — --parent 校验（BDD §场景 3, 4, 14）
     new_parent: str | None | type(...) = None  # sentinel
     clear_parent = args.parent is not None and args.parent == ""
@@ -1382,6 +1464,8 @@ def _todo_update_single(args: argparse.Namespace) -> int:
         clear_time=clear_time,
         clear_end_time=clear_end_time,
         clear_duration_min=clear_duration,
+        depends=new_depends,
+        clear_depends=clear_depends,
         today=date.today().isoformat(),
     )
     if new_parent is not None or clear_parent:
@@ -1390,6 +1474,9 @@ def _todo_update_single(args: argparse.Namespace) -> int:
     if new_remind is not None or clear_remind:
         update_kwargs["remind"] = new_remind if not clear_remind else None
         update_kwargs["clear_remind"] = clear_remind
+    if new_depends is not None or clear_depends:
+        update_kwargs["depends"] = new_depends if not clear_depends else None
+        update_kwargs["clear_depends"] = clear_depends
     try:
         task = store.update_task(args.id, **update_kwargs)
     except TaskNotFoundError:
@@ -1497,6 +1584,15 @@ def _list_time_cell(task: object) -> str:
         derived = compute_end_time(t, d)
         return f"{t}-{derived}"
     return t
+
+
+def _list_name_cell(task: object, *, has_unfulfilled_dep: bool) -> str:
+    """v0.5 Phase E — 列表 Name 列展示（BDD §场景 6, 7）。
+
+    任务有未完成的依赖时，Name 前加 🔒 提示。
+    """
+    name = task.name or ""
+    return f"🔒 {name}" if has_unfulfilled_dep else name
 
 
 # 列表命令的列定义（表头 + 取值函数），集中维护表格 schema
@@ -1759,13 +1855,37 @@ def _todo_list(args: argparse.Namespace) -> int:
     # v0.5 Phase D — 颜色控制（BDD §场景 9-11）
     color_enabled = False if getattr(args, "no_color", False) else None  # None = auto
 
+    # v0.5 Phase E — 依赖未完成标记（BDD §场景 6, 7）
+    # A task has unfulfilled dep when any of its `depends` is in active+pending.
+    active_pending_ids = {
+        t.id for t in tasks
+        if t.id
+        and t.status != TaskStatus.ARCHIVED
+    }
+    has_unfulfilled = {
+        t.id: any(
+            dep_id in active_pending_ids
+            for dep_id in (t.depends or [])
+        )
+        for t in tasks
+    }
+
     # 计算每列的显示宽度（取表头与所有数据行的最大值），
     # 用 display-width 而非字符数，CJK 字符按 2 宽算，确保对齐
     list_columns = _LIST_COLUMNS_TEMPLATE(color_enabled)
     header_cells = [h for h, _ in list_columns]
-    rows: list[list[str]] = [
-        [col(t) for _, col in list_columns] for t in tasks
-    ]
+    # v0.5 Phase E: name column (idx=1) gets the 🔒 prefix when unfulfilled
+    rows: list[list[str]] = []
+    for t in tasks:
+        row: list[str] = []
+        for col_idx, (_, col) in enumerate(list_columns):
+            if col_idx == 1:
+                # Name column
+                cell = _list_name_cell(t, has_unfulfilled_dep=has_unfulfilled.get(t.id, False))
+            else:
+                cell = col(t)
+            row.append(cell)
+        rows.append(row)
     col_widths = [
         max(
             [display_width(header_cells[i])]
@@ -1967,6 +2087,18 @@ def _todo_add(args: argparse.Namespace) -> int:
             print(str(exc), file=sys.stderr)
             return 2
 
+    # v0.5 Phase E — depends (validation: all must exist)
+    depends_list: list[str] | None = None
+    if args.depends is not None and args.depends != "":
+        deps = [d.strip() for d in args.depends.split(",") if d.strip()]
+        if deps:
+            from core.storage import TaskStore as _TS
+            for d in deps:
+                if _TS().get_task(d, include_archived=False) is None:
+                    print(f"❌ 依赖任务不存在：{d}", file=sys.stderr)
+                    return 3
+            depends_list = deps
+
     # 写入日期：created/updated 同为今天（YYYY-MM-DD 本地日期）。
     today = date.today().isoformat()
 
@@ -1989,6 +2121,7 @@ def _todo_add(args: argparse.Namespace) -> int:
         parent=parent_id,
         remind=remind_list,
         repeat=repeat_rule,
+        depends=depends_list,
         folder=f"任务/{name}",
         tags=tags,
     )
@@ -2006,6 +2139,82 @@ def _todo_add(args: argparse.Namespace) -> int:
 
     # BDD §场景 1/2：成功
     print(f"✅ 任务已创建：{task.name}（ID: {task.id}）")
+    return _maybe_expand_template(task, args.template)
+
+
+def _maybe_expand_template(parent_task: Task, template_name: str | None) -> int:
+    """v0.5 Phase E — expand add --template into parent + N children."""
+    if not template_name:
+        return 0  # nothing to do
+
+    tmpl_dir = _todo_template_dir()
+    tmpl_file = tmpl_dir / f"{template_name}.yaml"
+    if not tmpl_file.exists():
+        print(f"❌ 模板不存在：{template_name}", file=sys.stderr)
+        # Rollback the parent (delete it) so user doesn't end up with orphan
+        from core.storage import TaskStore as _TS
+        try:
+            _TS().remove_task(parent_task.id or parent_task.name, force=True)
+        except Exception:  # noqa: BLE001
+            pass
+        return 3
+
+    from core.parser import parse_frontmatter
+    text = tmpl_file.read_text(encoding="utf-8")
+    meta, _ = parse_frontmatter(text)
+    steps = meta.get("steps", [])
+
+    if not steps:
+        print(f"❌ 模板至少需要 1 个步骤：{template_name}", file=sys.stderr)
+        return 2
+
+    from datetime import date
+    today = date.today().isoformat()
+    store = TaskStore()
+
+    # Dedup step names: same step name gets -001 / -002 suffix.
+    # Note: the **folder name** is always `<parent_name>-<NNN>` where NNN is
+    # the SEQUENTIAL position (1, 2, 3, …), not the dedup counter. This
+    # ensures child folders are always uniquely named even when step names
+    # collide (e.g. 3 "检查" steps → 检查-001/002/003 in YAML, but folder
+    # names are parent-001/002/003).
+    seen: dict[str, int] = {}
+    created: list[Task] = []
+    for seq_idx, raw_name in enumerate(steps, start=1):
+        dedup_count = seen.get(raw_name, 0)
+        seen[raw_name] = dedup_count + 1
+        if dedup_count == 0:
+            step_name = raw_name
+        else:
+            step_name = f"{raw_name}-{dedup_count + 1:03d}"
+        child_folder_name = f"{parent_task.name}-{seq_idx:03d}"
+        child = Task(
+            id=None,  # auto-generate from name
+            name=child_folder_name,
+            status=TaskStatus.PENDING,
+            priority=parent_task.priority,
+            created=today,
+            updated=today,
+            deadline=parent_task.deadline,
+            time=parent_task.time,
+            end_time=parent_task.end_time,
+            duration_min=parent_task.duration_min,
+            parent=parent_task.id,  # parent: id (auto-cascades)
+            folder=f"任务/{child_folder_name}",
+        )
+        try:
+            store.add_task(child)
+        except TaskAlreadyExistsError:
+            # name collision; bump until unique
+            child.name = f"{parent_task.name}-{count + 1:03d}-{step_name[:20]}"
+            child.folder = f"任务/{child.name}"
+            store.add_task(child)
+        created.append(child)
+
+    print(
+        f"✅ 已创建 {len(created) + 1} 个任务（父 + {len(created)} 子）",
+        file=sys.stderr,
+    )
     return 0
 
 
@@ -2326,4 +2535,234 @@ def _todo_import(args: argparse.Namespace) -> int:
             print(f"   - 跳过 {skipped_yaml} 个（解析失败）")
         print()
         print(f"💡 试用：x todo list")
+    return 0
+
+
+# ============================================================
+#  x todo template (v0.5 Phase E)
+# ============================================================
+
+
+def _todo_template_dir() -> Path:
+    """Return the templates directory under xcli_data_dir (creates if missing)."""
+    from core.paths import xcli_data_dir
+    d = Path(xcli_data_dir()) / "templates"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _todo_template(args: argparse.Namespace) -> int:
+    """``x todo template create/list/remove`` — task template management.
+
+    对应 BDD：``docs/behaviors/todo-template-behavior.md``（9 场景）。
+
+    v0.5 范围：
+    - 模板存储在 ``<xcli_data_dir>/templates/<name>.yaml``
+    - add --template 展开为父任务 + N 个子任务（步骤去重自动加 -NNN 后缀）
+    - 模板名直接对应文件名（中文 / 英文均可）
+    """
+    action = getattr(args, "_template_action", None)
+    if action == "create":
+        return _todo_template_create(args.name, args.steps)
+    if action == "list":
+        return _todo_template_list()
+    if action == "remove":
+        return _todo_template_remove(args.name)
+    print(f"❌ 未知的 template 子命令：{action}", file=sys.stderr)
+    return 2
+
+
+def _todo_template_create(name: str, steps_raw: str) -> int:
+    """Create a template file under xcli_data_dir/templates/."""
+    from core.parser import dump_frontmatter
+    steps = [s.strip() for s in steps_raw.split(",") if s.strip()]
+    if not steps:
+        print("❌ 模板至少需要 1 个步骤", file=sys.stderr)
+        return 2
+    tmpl_dir = _todo_template_dir()
+    target = tmpl_dir / f"{name}.yaml"
+    if target.exists():
+        print(
+            f"❌ 模板已存在：{name}（请用 remove 先删，或换名字）",
+            file=sys.stderr,
+        )
+        return 5
+    metadata = {"name": name, "steps": steps}
+    target.write_text(
+        dump_frontmatter(metadata, body=""), encoding="utf-8"
+    )
+    print(f"✅ 模板已创建：{name}（{len(steps)} 步）")
+    return 0
+
+
+def _todo_template_list() -> int:
+    """List all template names."""
+    tmpl_dir = _todo_template_dir()
+    templates = sorted(p.stem for p in tmpl_dir.glob("*.yaml"))
+    if not templates:
+        print("📭 没有已创建的模板（试试 x todo template create <name> --steps ...）")
+        return 0
+    print("已创建的模板：")
+    for name in templates:
+        print(f"  • {name}")
+    return 0
+
+
+def _todo_template_remove(name: str) -> int:
+    """Delete a template file."""
+    tmpl_dir = _todo_template_dir()
+    target = tmpl_dir / f"{name}.yaml"
+    if not target.exists():
+        print(f"❌ 模板不存在：{name}", file=sys.stderr)
+        return 3
+    target.unlink()
+    print(f"✅ 模板已删除：{name}")
+    return 0
+
+
+# ============================================================
+#  x todo export (v0.5 Phase E)
+# ============================================================
+
+
+def _todo_export_serialize(task, fmt: str) -> str:
+    """Serialize a single Task to a string line for the given format."""
+    if fmt == "json":
+        # Full frontmatter + body as a JSON object
+        import json
+        meta, body = task.to_frontmatter_body()
+        meta["body"] = body
+        return json.dumps(meta, ensure_ascii=False, sort_keys=False)
+    if fmt == "csv":
+        # Flat row: id, name, status, priority, deadline, time, end_time,
+        # duration_min, parent, remind, repeat, depends, folder, archived_at, tags
+        tags = ";".join(task.tags) if task.tags else ""
+        remind = ";".join(task.remind) if task.remind else ""
+        depends = ";".join(task.depends) if task.depends else ""
+        repeat = (
+            ";".join(f"{k}={v}" for k, v in (task.repeat or {}).items())
+            if task.repeat
+            else ""
+        )
+        # Quote any field containing comma or quote
+        def _quote(s: str) -> str:
+            if s and ("," in s or '"' in s or "\n" in s):
+                return f'"{s.replace(chr(34), chr(34) * 2)}"'
+            return s
+
+        return ",".join(
+            [
+                _quote(task.id or ""),
+                _quote(task.name or ""),
+                _quote(
+                    task.status.value
+                    if hasattr(task.status, "value")
+                    else str(task.status)
+                ),
+                _quote(
+                    task.priority.value
+                    if hasattr(task.priority, "value")
+                    else str(task.priority)
+                ),
+                _quote(task.deadline or ""),
+                _quote(task.time or ""),
+                _quote(task.end_time or ""),
+                _quote(str(task.duration_min) if task.duration_min is not None else ""),
+                _quote(task.parent or ""),
+                _quote(remind),
+                _quote(repeat),
+                _quote(depends),
+                _quote(task.folder or ""),
+            ]
+        )
+    if fmt == "md":
+        # Human-readable row
+        status = (
+            task.status.value
+            if hasattr(task.status, "value")
+            else str(task.status)
+        )
+        priority = (
+            task.priority.value
+            if hasattr(task.priority, "value")
+            else str(task.priority)
+        )
+        return (
+            f"| {task.id or ''} | {task.name} | {status} | "
+            f"{priority} | {task.deadline or '-'} | {task.time or '-'} |"
+        )
+    return ""
+
+
+def _todo_export_header(fmt: str) -> str:
+    if fmt == "csv":
+        return (
+            "id,name,status,priority,deadline,time,end_time,"
+            "duration_min,parent,remind,repeat,depends,folder"
+        )
+    if fmt == "md":
+        return "| id | name | status | priority | deadline | time |"
+    return ""
+
+
+def _todo_export_separator(fmt: str) -> str:
+    if fmt == "md":
+        return "|---|---|---|---|---|---|"
+    return ""
+
+
+def _todo_export(args: argparse.Namespace) -> int:
+    """``x todo export --format json|csv|md`` — bulk export task data.
+
+    对应 BDD：``docs/behaviors/todo-export-behavior.md``（8 场景）。
+    """
+    fmt = args.format
+    include_archived = bool(getattr(args, "all", False))
+    output_path = getattr(args, "output", None)
+
+    store = TaskStore()
+    tasks = store.list_tasks(include_archived=include_archived)
+
+    if fmt not in ("json", "csv", "md"):
+        print(
+            f"❌ 无效的 format：{fmt}（支持：json / csv / md）",
+            file=sys.stderr,
+        )
+        return 2
+
+    if output_path:
+        out_path = Path(output_path)
+        if not out_path.parent.exists():
+            print(
+                f"❌ 父目录不存在：{out_path.parent}",
+                file=sys.stderr,
+            )
+            return 5
+    else:
+        out_path = None
+
+    if fmt == "json":
+        import json
+        # Array of full frontmatter dicts
+        data = []
+        for t in tasks:
+            meta, body = t.to_frontmatter_body()
+            meta["body"] = body
+            data.append(meta)
+        text = json.dumps(data, ensure_ascii=False, indent=2)
+    else:
+        lines = [_todo_export_header(fmt)]
+        if fmt == "md":
+            lines.append(_todo_export_separator(fmt))
+        for t in tasks:
+            lines.append(_todo_export_serialize(t, fmt))
+        text = "\n".join(lines) + "\n"
+
+    if out_path:
+        out_path.write_text(text, encoding="utf-8")
+        print(f"✅ 已导出 {len(tasks)} 个任务到 {out_path}")
+    else:
+        print(text, end="" if text.endswith("\n") else "\n")
+        print(f"✅ 已导出 {len(tasks)} 个任务到 stdout", file=sys.stderr)
+
     return 0

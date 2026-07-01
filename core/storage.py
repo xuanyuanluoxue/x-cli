@@ -316,6 +316,8 @@ class TaskStore:
         clear_parent: bool = False,
         remind: list[str] | None = None,
         clear_remind: bool = False,
+        depends: list[str] | None = None,
+        clear_depends: bool = False,
         today: str | None = None,
         **extra: Any,
     ) -> Task:
@@ -378,6 +380,11 @@ class TaskStore:
             task.remind = None
         elif remind is not None:
             task.remind = list(remind) if remind else None
+        # v0.5 Phase E — task dependencies list
+        if clear_depends:
+            task.depends = None
+        elif depends is not None:
+            task.depends = list(depends) if depends else None
         # Pass through anything else into extra (defensive: callers can
         # pass arbitrary fields that we don't model explicitly).
         for k, v in extra.items():
