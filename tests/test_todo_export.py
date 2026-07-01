@@ -104,9 +104,11 @@ def test_export_csv(store: TaskStore) -> None:
     rows = list(reader)
     assert len(rows) == 1
     row = rows[0]
+    # priority + id + tags
+    assert row["priority"] == "high", f"priority wrong: {row.get('priority')!r}"
+    assert row["id"] == "ta", f"id wrong: {row.get('id')!r}"
     # tags should be 'a;b' (semicolon-separated)
     assert row["tags"] == "a;b", f"tags wrong: {row.get('tags')!r}"
-    assert row["priority"] == "high"
 
 
 # ============================================================

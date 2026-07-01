@@ -53,6 +53,10 @@ def _invoke_update(*argv: str) -> tuple[int, str, str]:
     return _invoke("todo", "update", *argv)
 
 
+def _invoke_list(*argv: str) -> tuple[int, str, str]:
+    return _invoke("todo", "list", *argv)
+
+
 def _id_of(stdout: str) -> str:
     m = re.search(r"ID:\s*(\S+)", stdout)
     assert m is not None

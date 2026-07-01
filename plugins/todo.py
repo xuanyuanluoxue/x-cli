@@ -1253,6 +1253,7 @@ def _todo_update(args: argparse.Namespace) -> int:
                 duration=args.duration,
                 parent=args.parent,
                 remind=args.remind,
+                depends=args.depends,
                 filter=None,
                 all=False,
             )
@@ -1292,6 +1293,7 @@ def _todo_update_single(args: argparse.Namespace) -> int:
         and args.duration is None
         and args.parent is None
         and args.remind is None
+        and args.repeat is None
         and args.depends is None
     ):
         # Rebuild a parser so we can use parser.error() for consistent
@@ -1308,9 +1310,11 @@ def _todo_update_single(args: argparse.Namespace) -> int:
         parser.add_argument("--parent", help='父任务 ID（"" 清除）')
         parser.add_argument("--remind", help='提醒偏移（"" 清除）')
         parser.add_argument("--depends", help='依赖任务 ID（"" 清除）')
+        parser.add_argument("--repeat", help='重复规则（"" 清除）')
         parser.error(
             "at least one of --status / --priority / --deadline / --tags "
-            "/ --time / --end-time / --duration / --parent / --remind / --depends is required"
+            "/ --time / --end-time / --duration / --parent / --remind / "
+            "--repeat / --depends is required"
         )
         return 2  # unreachable; parser.error() raises SystemExit(2)
 
@@ -1394,7 +1398,9 @@ def _todo_update_single(args: argparse.Namespace) -> int:
         if deps:
             from core.storage import TaskStore as _TS
             for d in deps:
-                if _TS().get_task(d, include_archived=False) is None:
+                # Allow depending on archived tasks (they're "satisfied"
+                # by default; user may be re-referencing a known predecessor).
+                if _TS().get_task(d, include_archived=True) is None:
                     print(f"❌ 依赖任务不存在：{d}", file=sys.stderr)
                     return 3
             new_depends = deps
@@ -1856,17 +1862,24 @@ def _todo_list(args: argparse.Namespace) -> int:
     color_enabled = False if getattr(args, "no_color", False) else None  # None = auto
 
     # v0.5 Phase E — 依赖未完成标记（BDD §场景 6, 7）
-    # A task has unfulfilled dep when any of its `depends` is in active+pending.
-    active_pending_ids = {
-        t.id for t in tasks
-        if t.id
-        and t.status != TaskStatus.ARCHIVED
-    }
-    has_unfulfilled = {
-        t.id: any(
-            dep_id in active_pending_ids
+    # A task has unfulfilled dep when any of its `depends` matches a
+    # non-archived task by EITHER id OR name (since `task.depends` is
+    # whatever the user passed to --depends, typically a name like
+    # "复习" not the auto-generated slug id).
+    active_keys: set[str] = set()
+    for t in tasks:
+        if t.status != TaskStatus.ARCHIVED and t.id:
+            active_keys.add(t.id)
+            active_keys.add(t.name)
+
+    def _has_unfulfilled_dep(t) -> bool:
+        return any(
+            dep_id in active_keys
             for dep_id in (t.depends or [])
         )
+
+    has_unfulfilled = {
+        t.id: _has_unfulfilled_dep(t)
         for t in tasks
     }
 
@@ -2094,7 +2107,8 @@ def _todo_add(args: argparse.Namespace) -> int:
         if deps:
             from core.storage import TaskStore as _TS
             for d in deps:
-                if _TS().get_task(d, include_archived=False) is None:
+                # Allow depending on archived tasks (satisfied by default)
+                if _TS().get_task(d, include_archived=True) is None:
                     print(f"❌ 依赖任务不存在：{d}", file=sys.stderr)
                     return 3
             depends_list = deps
@@ -2673,6 +2687,12 @@ def _todo_export_serialize(task, fmt: str) -> str:
                 _quote(repeat),
                 _quote(depends),
                 _quote(task.folder or ""),
+                _quote(tags),
+                _quote(
+                    (task.extra or {}).get("note", "")
+                    if task.extra
+                    else ""
+                ),
             ]
         )
     if fmt == "md":
@@ -2698,7 +2718,7 @@ def _todo_export_header(fmt: str) -> str:
     if fmt == "csv":
         return (
             "id,name,status,priority,deadline,time,end_time,"
-            "duration_min,parent,remind,repeat,depends,folder"
+            "duration_min,parent,remind,repeat,depends,folder,tags,note"
         )
     if fmt == "md":
         return "| id | name | status | priority | deadline | time |"
