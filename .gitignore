@@ -56,6 +56,10 @@ htmlcov/
 # Subagent test artifacts (created by parallel subagent test runs)
 .arts/
 
+# Local AI editor/session state (not project source)
+.mimocode/
+.qoder/
+
 # Open Design skill outputs (HTML previews, SVG icons, JSON manifests).
 # Reproducible from skill inputs — never commit, regenerate on demand.
 .design/
