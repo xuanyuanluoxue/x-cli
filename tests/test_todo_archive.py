@@ -502,11 +502,23 @@ def test_archive_help_lists_id_and_reason_args() -> None:
     # by capsys in the calling context.
 
 
-def test_archive_missing_id_arg_triggers_argparse_error() -> None:
-    """`x todo archive`（无 id）→ argparse 报错（SystemExit(2)）。"""
-    with pytest.raises(SystemExit) as exc_info:
-        main(["todo", "archive"])
-    assert exc_info.value.code == 2
+def test_archive_missing_id_arg_triggers_error() -> None:
+    """`x todo archive`（无 id）→ 退出码 2。
+
+    v0.5 Phase D: id 改为可选（nargs="*"，支持 --filter 模式），所以 argparse
+    不再拒绝空 id。改为由 handler 校验「id 或 --filter 必须有一个」并 rc=2。
+    """
+    import io as _io
+    from contextlib import redirect_stderr, redirect_stdout as _ro
+    out, err = _io.StringIO(), _io.StringIO()
+    with _ro(out), redirect_stderr(err):
+        try:
+            rc = main(["todo", "archive"])
+        except SystemExit as e:
+            rc = e.code if isinstance(e.code, int) else 2
+    assert rc == 2
+    combined = out.getvalue() + err.getvalue()
+    assert "id 或 --filter" in combined or "必须指定" in combined
 
 
 # ============================================================

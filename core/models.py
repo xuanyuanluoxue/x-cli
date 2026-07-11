@@ -33,8 +33,10 @@ class TaskStatus(StrEnum):
 
 
 class Priority(StrEnum):
-    """Task priority. Free-form ordering, so we only validate the set."""
+    """Task priority. Sorted in ``stats / list --sort priority`` order:
+    urgent > high > medium > low."""
 
+    URGENT = "urgent"  # v0.5 Phase D — highest, ANSI red in supported terminals
     HIGH = "high"
     MEDIUM = "medium"
     LOW = "low"
@@ -69,6 +71,18 @@ _KNOWN_FIELDS: frozenset[str] = frozenset(
         "tags",
         "subtasks",
         "reason",  # only valid when status == archived
+        # v0.5 Phase A — time precision (all optional, see BDD §场景 12)
+        "time",          # "HH:MM" 24h
+        "end_time",      # "HH:MM" 24h
+        "duration_min",  # int, minutes
+        # v0.5 Phase B — subtask parent reference (id of parent task, optional)
+        "parent",
+        # v0.5 Phase C — reminder offsets (list of "1d"/"2h"/"30m" strings)
+        "remind",
+        # v0.5 Phase D — repeat rule (dict: {kind: "daily"} or {cron: "0 8 * * 1-5"})
+        "repeat",
+        # v0.5 Phase E — task dependencies (list of task ids this task depends on)
+        "depends",
     }
 )
 
@@ -107,6 +121,30 @@ class Task:
         imposing a schema we do not yet need).
     reason:
         Archive reason — only meaningful when ``status == archived``.
+    time:
+        Optional ``HH:MM`` 24h start time (v0.5 Phase A).
+    end_time:
+        Optional ``HH:MM`` 24h end time. Mutually exclusive with
+        :attr:`duration_min` (enforced at the CLI layer).
+    duration_min:
+        Optional integer duration in minutes. Mutually exclusive with
+        :attr:`end_time`. End time is derived at display time via
+        ``compute_end_time(time, duration_min)`` and not written back.
+    parent:
+        Optional ``id`` of the parent task (v0.5 Phase B). Max chain
+        depth is 2 (root → child → grandchild). Enforced at CLI layer.
+    remind:
+        Optional list of reminder offsets, e.g. ``["1d", "2h", "30m"]``
+        (v0.5 Phase C, **read-only mode** — no daemon/notifications
+        until v0.6+ exe packaging).
+    repeat:
+        Optional repeat rule (v0.5 Phase D), one of:
+        - ``{"kind": "daily"|"weekly"|"weekdays"|"monthly"}``
+        - ``{"cron": "<5-field cron>"}``
+        Used by ``x todo repeat-fire`` to spawn the next instance.
+    depends:
+        Optional list of task ids this task depends on (v0.5 Phase E).
+        List rendering shows a 🔒 marker for unfulfilled deps.
     body:
         Markdown body text (everything after the ``---`` delimiter).
     extra:
@@ -125,6 +163,13 @@ class Task:
     tags: list[str] | None = None
     subtasks: list[dict[str, Any]] | None = None
     reason: ArchiveReason | None = None
+    time: str | None = None  # v0.5 Phase A
+    end_time: str | None = None  # v0.5 Phase A
+    duration_min: int | None = None  # v0.5 Phase A
+    parent: str | None = None  # v0.5 Phase B (kebab-case id of parent task)
+    remind: list[str] | None = None  # v0.5 Phase C (e.g. ["1d", "2h"])
+    repeat: dict[str, str] | None = None  # v0.5 Phase D (e.g. {"kind": "daily"})
+    depends: list[str] | None = None  # v0.5 Phase E (list of task ids)
     body: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -186,6 +231,13 @@ class Task:
             "created",
             "updated",
             "deadline",
+            "time",
+            "end_time",
+            "duration_min",
+            "parent",  # v0.5 Phase B
+            "remind",  # v0.5 Phase C
+            "repeat",  # v0.5 Phase D
+            "depends",  # v0.5 Phase E
             "folder",
             "tags",
             "subtasks",
@@ -203,6 +255,12 @@ class Task:
                 continue
             elif field_name == "subtasks" and isinstance(value, list) and not value:
                 # Empty subtask list → skip
+                continue
+            elif field_name == "remind" and isinstance(value, list) and not value:
+                # Empty remind list → skip (same as tags / subtasks)
+                continue
+            elif field_name == "depends" and isinstance(value, list) and not value:
+                # Empty depends list → skip
                 continue
             else:
                 metadata[field_name] = value

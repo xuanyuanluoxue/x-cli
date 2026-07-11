@@ -306,6 +306,18 @@ class TaskStore:
         tags: list[str] | None = None,
         name: str | None = None,
         clear_deadline: bool = False,
+        time: str | None = None,
+        end_time: str | None = None,
+        duration_min: int | None = None,
+        clear_time: bool = False,
+        clear_end_time: bool = False,
+        clear_duration_min: bool = False,
+        parent: str | None = None,
+        clear_parent: bool = False,
+        remind: list[str] | None = None,
+        clear_remind: bool = False,
+        depends: list[str] | None = None,
+        clear_depends: bool = False,
         today: str | None = None,
         **extra: Any,
     ) -> Task:
@@ -315,6 +327,15 @@ class TaskStore:
         ``todo-update-behavior.md`` scenario 5). ``today`` defaults to
         the current local date as ``YYYY-MM-DD`` and is used to refresh
         the ``updated`` field.
+
+        v0.5 Phase A: ``time`` / ``end_time`` / ``duration_min`` accept
+        new values; ``clear_*`` flags remove the field entirely (per
+        BDD §场景 8). Mutex between ``end_time`` and ``duration_min``
+        is enforced by the CLI layer.
+
+        v0.5 Phase B: ``parent`` accepts a task id; ``clear_parent=True``
+        removes the parent reference. CLI layer enforces depth ≤ 2 and
+        no-cycles invariants.
         """
         # Look in the archive too so we can give a precise "already
         # archived" error rather than a generic "not found".
@@ -336,6 +357,34 @@ class TaskStore:
             task.tags = list(tags) if tags else None
         if name is not None:
             task.name = name
+        # v0.5 Phase A — time precision
+        if clear_time:
+            task.time = None
+        elif time is not None:
+            task.time = time
+        if clear_end_time:
+            task.end_time = None
+        elif end_time is not None:
+            task.end_time = end_time
+        if clear_duration_min:
+            task.duration_min = None
+        elif duration_min is not None:
+            task.duration_min = duration_min
+        # v0.5 Phase B — subtask parent
+        if clear_parent:
+            task.parent = None
+        elif parent is not None:
+            task.parent = parent
+        # v0.5 Phase C — remind list (read-only mode; no notifications)
+        if clear_remind:
+            task.remind = None
+        elif remind is not None:
+            task.remind = list(remind) if remind else None
+        # v0.5 Phase E — task dependencies list
+        if clear_depends:
+            task.depends = None
+        elif depends is not None:
+            task.depends = list(depends) if depends else None
         # Pass through anything else into extra (defensive: callers can
         # pass arbitrary fields that we don't model explicitly).
         for k, v in extra.items():
@@ -388,12 +437,64 @@ class TaskStore:
 
         shutil.move(str(src), str(dst))
 
+        # v0.5 Phase D — preserve pre-archive status in extra for inventory decrement
+        # (so callers can call update_inventory_on_archive correctly without
+        # re-querying the task; extra is the round-trip-safe place to stash this)
+        if not task.extra:
+            task.extra = {}
+        task.extra["_orig_status_before_archive"] = (
+            task.status.value
+            if isinstance(task.status, TaskStatus)
+            else str(task.status)
+        )
         task.status = TaskStatus.ARCHIVED
         task.reason = reason_enum
         task.updated = archive_date
         task.folder = f"归档/{dst_name}"
         self._write_task(task, dst)
         return task
+
+    def remove_task(
+        self,
+        name_or_id: str,
+        *,
+        force: bool = False,
+    ) -> tuple[Task, bool]:
+        """Remove a task folder entirely (v0.5 Phase D).
+
+        Two modes (mutually exclusive):
+        - ``force=False`` (default): try to send the folder to the system
+          Recycle Bin (recoverable). Falls back to physical deletion if
+          the platform-specific recycle mechanism is unavailable.
+        - ``force=True``: physical ``shutil.rmtree`` (permanent).
+
+        Returns ``(task, recycled)`` where ``recycled`` is True if the
+        folder was sent to the recycle bin (i.e. not physically deleted).
+        Raises :class:`TaskNotFoundError` if the task does not exist or
+        is already archived (v0.5: ``remove`` only operates on active
+        tasks; pass ``--all`` in CLI to extend to archived — deferred to
+        a later phase).
+        """
+        task = self.get_task(name_or_id, include_archived=False)
+        if task is None:
+            raise TaskNotFoundError(name_or_id)
+
+        folder = self._resolve_active_folder(task)
+        if not folder.exists():
+            raise TaskNotFoundError(name_or_id)
+
+        recycled = False
+        if not force:
+            # Lazy import to keep core/stdlib-only surface minimal
+            from core.recycle import move_to_recycle_bin
+            recycled = move_to_recycle_bin(folder)
+
+        if not recycled:
+            # Physical delete (either --force or recycle failed)
+            import shutil as _sh
+            _sh.rmtree(folder, ignore_errors=True)
+
+        return task, recycled
 
     def find_overdue_tasks(
         self, today: date | str | None = None
@@ -910,6 +1011,12 @@ class TaskStore:
                     high_breakdown.get(effective_status_value, 0) + 1
                 )
 
+        # v0.5 Phase C — 有提醒任务数（仅 active；archived 不算）
+        remind_active = sum(
+            1 for t in tasks
+            if t.remind and not (t.folder and t.folder.startswith("归档/"))
+        )
+
         return {
             "total": len(tasks),
             "by_status": by_status,
@@ -917,6 +1024,7 @@ class TaskStore:
             "due_within_7_days": due_soon,
             "high_priority_active": high_active,
             "high_priority_breakdown": high_breakdown,
+            "remind_active": remind_active,
         }
 
     # --------------------------------------------------------
@@ -962,6 +1070,85 @@ def _sort_key(task: Task) -> tuple:
     is_archived = 1 if task.status is TaskStatus.ARCHIVED else 0
     deadline = task.deadline or "9999-99-99"
     return (is_archived, deadline, task.name)
+
+
+def _matches_filter(task: Task, keyword: str) -> bool:
+    """Return True if ``keyword`` appears in name / note / tags (fuzzy).
+
+    Used by ``x todo archive/update/remove --filter <kw>`` (v0.5 Phase D).
+    Substring match (case-sensitive) per current search semantics; can
+    be made smarter later.
+    """
+    if not keyword:
+        return True  # empty filter matches all
+    if keyword in (task.name or ""):
+        return True
+    note = task.extra.get("note", "") if task.extra else ""
+    if isinstance(note, str) and keyword in note:
+        return True
+    if task.tags and any(keyword in t for t in task.tags):
+        return True
+    return False
+
+
+def find_by_filter(keyword: str, *, include_archived: bool = False) -> list[Task]:
+    """Return all tasks whose name/note/tags match ``keyword``.
+
+    Convenience wrapper used by batch ops. Returns active tasks only
+    by default; pass ``include_archived=True`` to extend to archived.
+    """
+    tasks = TaskStore().list_tasks(include_archived=include_archived)
+    return [t for t in tasks if _matches_filter(t, keyword)]
+
+
+def find_descendants(parent_id: str, all_tasks: list[Task]) -> list[Task]:
+    """Return all transitive descendants of ``parent_id`` (depth 1 + 2).
+
+    Walks ``task.parent`` chains through ``all_tasks`` and collects every
+    task whose root ancestor is ``parent_id``. Includes both direct
+    children and grandchildren. Returns an empty list if no descendants
+    exist or the parent has no children.
+
+    v0.5 Phase D: matches ``task.parent`` against BOTH ``parent_id``
+    (id) AND the parent's ``name`` (folder name). The ``parent`` field
+    on disk is whatever the user passed to ``--parent`` — typically a
+    name like ``parent-x``, not the auto-generated slug id like
+    ``parentx``. Cascade must handle both forms.
+
+    Used by v0.5 Phase B+ cascade logic (archive / remove a parent →
+    also archive / remove its descendants).
+    """
+    if not parent_id:
+        return []
+    # Identify the parent task: match by id OR by name. The parent's
+    # name is what `task.folder` ends with (e.g. ``任务/parent-x``).
+    parent_name: str | None = None
+    for t in all_tasks:
+        if t.id == parent_id or t.name == parent_id:
+            parent_name = t.name
+            break
+
+    def _matches_parent(t: Task) -> bool:
+        """True if ``t.parent`` points at our parent (by id or name)."""
+        return t.parent in (parent_id, parent_name)
+
+    out: list[Task] = []
+    # Direct children
+    for t in all_tasks:
+        if _matches_parent(t) and t not in out:
+            out.append(t)
+    # Grandchildren (children of direct children — match by id or name too)
+    direct_child_keys: set[str] = set()
+    for t in out:
+        if t.id:
+            direct_child_keys.add(t.id)
+        direct_child_keys.add(t.name)
+    for t in all_tasks:
+        if t.parent in direct_child_keys and t not in out:
+            out.append(t)
+    # Sanity: never include parent itself
+    out = [t for t in out if t.id != parent_id]
+    return out
 
 
 def _coerce_enum(value: Any, enum_cls: type, field_name: str) -> Any:

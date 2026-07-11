@@ -159,6 +159,15 @@ both one-way and read-only.
 .venv\Scripts\python.exe -m pytest                 # Windows
 .venv\Scripts\python.exe -m pytest --cov=core --cov=x  # with coverage
 
+# ⚠️ Windows pytest tmpdir workaround (2026-06-30):
+# If pytest fails with `PermissionError: [WinError 5]` on
+# `C:\Users\...\AppData\Local\Temp\pytest-of-...\pytest-current`,
+# override TMP/TEMP to a writable path:
+$env:TMP = "D:\Temp\pytest_tmp"
+$env:TEMP = "D:\Temp\pytest_tmp"
+# (root cause: some process holds the default tmp dir open,
+#  suppressing the actual test failure detail with a cleanup traceback.)
+
 # BDD-first, commit-before-code workflow
 # (1) Edit COMMANDS.md to add a command to the "⏳ Implemented" or backlog section
 # (2) Write BDD spec in docs/behaviors/<command>-behavior.md
@@ -173,7 +182,12 @@ See [AGENTS.md](AGENTS.md) for the full dev conventions, including the
 
 ## Roadmap
 
-**Done** (v0.4.y, current):
+**Done** (v0.5.0 partial — Phase A & B landed):
+- P0 time precision: `--time HH:MM` / `--end-time HH:MM` / `--duration 90|90m|1.5h`
+- P1 subtasks: `--parent <id>` (2 levels) with cascade archive
+- 607 tests passing, 1 platform-conditional skip, see [PLAN-v0.5.md](PLAN-v0.5.md) for remaining scope
+
+**Done** (v0.4.y):
 - 21 commands across `x todo` (10) and `x secret` (8) plus 3 global flags
 - 526 tests passing, 4 platform-conditional skips, 93% coverage
 - CJK task names + icons in output
@@ -181,11 +195,16 @@ See [AGENTS.md](AGENTS.md) for the full dev conventions, including the
 - Configurable log level + log path
 - One-way import from a legacy TODO directory / 密钥 Markdown directory
 
-**Next** (candidates, not committed):
+**Next** (v0.5.0 remaining — Phase C/D/E):
+- P1 reminders (read-only in v0.5; daemon in v0.6+ after exe packaging)
+- P2 recurring tasks (`--repeat` + explicit `repeat-fire`), batch ops, list sorting, `urgent` priority with ANSI red highlight, recycle bin
+- P3 templates, task dependencies, JSON/CSV/MD export
+- See [PLAN-v0.5.md](PLAN-v0.5.md) §5 implementation phases
+
+**Next** (v0.6+ candidates, not committed):
 - Encrypted-at-rest secret store (currently plain JSON)
 - Git-based version control of the TODO directory (`git init` + auto-commit hooks)
-- Plugin split (`plugins/todo.py` extracted from `x.py`)
-- PyInstaller single-file binary distribution
+- PyInstaller single-file binary distribution (pre-req for reminder daemon)
 
 **Won't** (by design):
 - Cloud sync, multi-device support

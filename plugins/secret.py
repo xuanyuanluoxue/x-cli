@@ -137,7 +137,19 @@ def run(args: Sequence[str]) -> int:
 
     无 action → 打印 usage + 退出码 0（BDD §场景 16）。
     action 解析后通过 ``globals().get("_secret_<action>")`` 派发到对应 handler。
+
+    v0.6.1: ``x secret help``（位置别名）→ 打印 secret help 并退出；
+    ``x secret --help`` / ``x secret -h`` 由 argparse 原生处理。
     """
+    # v0.6.1: positional ``help`` alias
+    if list(args) == ["help"]:
+        parser = argparse.ArgumentParser(
+            prog="x secret", description="密钥管理（独立 JSON DB）"
+        )
+        register(parser)
+        parser.print_help()
+        return 0
+
     parser = argparse.ArgumentParser(
         prog="x secret", description="密钥管理（独立 JSON DB）"
     )
