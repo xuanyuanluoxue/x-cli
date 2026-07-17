@@ -386,13 +386,13 @@ X-Web-Token: <token>
 
 ---
 
-## 10. 实施阶段拆分
+## 10. 当前实现位置
 
-| 阶段 | 分支 | 内容 |
+| 部分 | 位置 | 状态 |
 |------|------|------|
-| **Backend (本次)** | `feature/web-backend` | 上述所有后端代码 + 测试 + 占位 `index.html` |
-| Frontend (另议) | `feature/web-frontend`（基于 feature/web-backend）| 替换 `core/web/static/`，见 `docs/web-frontend-plan.md` |
+| Backend | `core/web/` + `core/web/handlers/` | 已实现并由 `tests/test_web_api.py` 覆盖 |
+| Frontend | `core/web/static/` | 已实现登录、任务、密钥和统计视图 |
 
 ---
 
-*本文件由 feature/web-backend 任务生成（2026-06-27）。前端 AI 实现前必读。*
+*本文件最初由 Web backend 任务生成，现作为 API 与前后端边界的永久文档维护。*

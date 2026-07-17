@@ -34,9 +34,9 @@ import pytest
 from core.models import ArchiveReason, Priority, Task, TaskStatus
 from core.parser import parse_frontmatter
 from core.storage import TaskStore
+from plugins.todo import _todo_register
+from plugins.todo_lifecycle import _todo_archive
 from x import main
-
-from x import _todo_archive  # for direct unit tests (Scenario 6, 8 edge cases)
 
 
 # ============================================================
@@ -489,7 +489,6 @@ def test_archive_help_lists_id_and_reason_args() -> None:
     绕开 ``x.py`` 主入口的 ``--help`` 拦截（主入口会先消费 ``--help``，这是
     argparse ``parse_known_args`` 的固有行为）。
     """
-    from x import _todo_register
     import argparse
 
     parser = argparse.ArgumentParser(prog="x todo")

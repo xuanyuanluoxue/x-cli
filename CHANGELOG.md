@@ -10,19 +10,38 @@
 ## [Unreleased]
 
 ### Added
-- 无
+- **Windows x64 独立发行物**：PyInstaller one-file EXE，无需用户安装 Python；
+  构建时验证 `--version`、`note --help` 和 Web 静态首页。
+- **WinGet 发行基础**：stdlib-only 清单生成器、真实 SHA-256、WinGet 1.12.0
+  portable singleton 清单和本机严格校验流程。
+- **GitHub Release workflow**：手动运行只构建 artifact，匹配源码版本的 tag
+  才创建公开 Release。
+- `docs/releasing.md`：Windows 构建、版本检查、WinGet 验证和外部发布边界手册。
 
 ### Changed
-- 无
+- 版本升级为 `0.7.0`，并集中到 `core/version.py` 单一来源。
+- setuptools 改为递归发现 `core*` / `plugins*`，正式 wheel 现在包含
+  `core.web.handlers` 和全部 Web 静态资源。
+- 项目 license 元数据改用 SPDX `MIT`，清除 setuptools 弃用警告。
+- 顶层入口改为静态白名单 + `importlib` 延迟加载；version/help/未知命令
+  不再导入全部插件，`core` 也不再反向依赖 `x.py`。
+- `plugins/todo.py` 拆为 parser/dispatcher facade、presenters、queries、
+  lifecycle、mutations 五个职责模块，用户命令和数据格式保持兼容。
+- 开发流程改为按风险分级：小改动轻量验证，中型功能使用简短计划，
+  架构/数据/安全/发行改动才使用完整计划和发行检查。
 
 ### Deprecated
 - 无
 
 ### Removed
-- 无
+- 删除已完成的 v0.5 临时计划、过时 Web 前端交接文档和两个未被运行代码
+  引用的设计原型；永久规格已迁移到 BDD、API 和架构文档。
 
 ### Fixed
-- 无
+- 修复 `pyproject.toml` 仍为 `0.5.0`、CLI 已为 `0.6.0` 的版本漂移。
+- 修复手写 `packages = ["plugins", "core"]` 导致正式安装包遗漏 Web 子包的问题。
+- 修复 PyInstaller one-file Web 冒烟测试结束后残留子进程、锁住旧 EXE 的问题。
+- 修复 E2E 测试把版本硬编码为 `0.6.0`、发版后产生假失败的问题。
 
 ---
 

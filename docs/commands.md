@@ -28,6 +28,9 @@ x <子命令> [选项]
 | 变量 | 状态 | 说明 |
 |------|------|------|
 | `XCLI_TODO_DIR` | ✅ 已实现 | 覆盖 TODO 根目录（默认 `<legacy-config-dir>/TODO`）。主要给测试用 |
+| `XCLI_SECRETS_DIR` | ✅ 已实现 | 覆盖密钥 JSON 文件路径 |
+| `XCLI_DIARY_DIR` | ✅ 已实现 | 覆盖 diary Markdown 文件目录 |
+| `XCLI_NOTES_DIR` | ✅ 已实现 | 覆盖 note Markdown 文件目录 |
 
 ### 1.4 示例
 
@@ -43,6 +46,8 @@ x todo add --help
 
 # 切数据源（测试用）
 XCLI_TODO_DIR=/tmp/test python x.py todo list
+XCLI_DIARY_DIR=/tmp/diary python x.py diary "测试内容"
+XCLI_NOTES_DIR=/tmp/notes python x.py note add "测试笔记"
 ```
 
 ---
@@ -442,9 +447,69 @@ x secret update minimax --value sk-new --category 接口密钥
 
 ---
 
-## 4. `x skill` — 技能管理（**未实现**）
+## 4. `x diary` — 本地日记
 
-### 4.1 子命令概览
+### 4.1 写入当天日记
+
+```bash
+x diary "今天完成了 x diary P0"
+```
+
+- 写入本地日期对应的 `<xcli_diary_dir>/YYYY-MM-DD.md`。
+- 首次写入创建日期标题；同一天后续写入追加 `- HH:MM 内容`，不覆盖旧内容。
+- 空内容或纯空白内容返回退出码 `2`。
+- 默认目录为 `<xcli_data_dir>/diary/`，可用 `XCLI_DIARY_DIR` 覆盖。
+
+### 4.2 列出最近的日记日期
+
+```bash
+x diary list             # 最近 7 个有日记的日期
+x diary list --limit 3   # 最近 3 个
+```
+
+- 仅识别合法的 `YYYY-MM-DD.md` 普通文件。
+- 日期从新到旧排列；没有日记的自然日不会补齐。
+- `--limit` 必须是正整数，否则 argparse 返回退出码 `2`。
+- 空日记库输出 `📭 暂无日记`，退出码为 `0`。
+
+---
+
+## 5. `x note` — 主题笔记
+
+### 5.1 子命令概览
+
+| 子命令 | 状态 | 说明 | 参数 |
+|---|---|---|---|
+| `x note add <标题>` | ✅ | 创建独立 Markdown 笔记 | `--body` / `--tags` |
+| `x note list` | ✅ | 列出最近笔记 | `--tag` / `--limit` |
+| `x note show <id>` | ✅ | 显示标题、元数据和正文 | — |
+| `x note search <关键词>` | ✅ | 搜索 title/tags/body | `--limit` |
+
+### 5.2 存储与 ID
+
+- 默认目录为 `<xcli_data_dir>/notes/`，可用 `XCLI_NOTES_DIR` 覆盖。
+- 每篇笔记保存为 `<id>.md`，包含 YAML frontmatter 和 Markdown 正文。
+- ID 为 `n-YYYYMMDD-HHMMSS`；同秒冲突自动追加 `-2`、`-3`，永不覆盖。
+- list/search 按更新时间从新到旧排列，默认最多 20 篇。
+
+### 5.3 示例
+
+```bash
+x note add "MiniMax API 配置" --body "这里是正文" --tags AI,API
+x note list --tag AI --limit 10
+x note show n-20260717-143012
+x note search minimax --limit 5
+```
+
+- 标题和搜索关键词不能为空；错误时退出码为 `2`。
+- show 找不到 ID 时退出码为 `3`。
+- 笔记 Markdown/frontmatter 损坏时退出码为 `5`，不输出部分结果。
+
+---
+
+## 6. `x skill` — 技能管理（**未实现**）
+
+### 6.1 子命令概览
 
 | 子命令 | 状态 | 说明 |
 |--------|------|------|
@@ -457,9 +522,9 @@ x secret update minimax --value sk-new --category 接口密钥
 
 ---
 
-## 5. `x system` — 系统工具（**未实现**）
+## 7. `x system` — 系统工具（**未实现**）
 
-### 5.1 子命令概览
+### 7.1 子命令概览
 
 | 子命令 | 状态 | 说明 |
 |--------|------|------|
@@ -470,22 +535,22 @@ x secret update minimax --value sk-new --category 接口密钥
 
 ---
 
-## 6. 退出码速查表
+## 8. 退出码速查表
 
 | 退出码 | 含义 | 触发场景 |
 |--------|------|---------|
 | 0 | 成功 | 所有 action 正常完成 |
 | 1 | 通用错误 | 未知子命令 / 占位 action |
-| 2 | 参数错误 | 非法 status/priority/reason/deadline / 缺必填参数 / 缺 --xxx / secret update 无 --value/--note/--category |
-| 3 | 任务/密钥不存在 | list / update / archive 找不到任务 / secret get/update/rm 找不到密钥 |
+| 2 | 参数错误 | 非法 status/priority/reason/deadline / 缺必填参数 / diary 或 note 空内容 / 非法 limit / secret update 无 --value/--note/--category |
+| 3 | 任务/密钥/笔记不存在 | list / update / archive 找不到任务 / secret get/update/rm 找不到密钥 / note show 找不到 ID |
 | 4 | 已存在/已归档 | 重复 archive / 对已归档任务 update / secret set 已存在 |
-| 5 | 数据完整性 | YAML 解析失败 / 归档目标碰撞 / secret import 源目录不存在 / JSON 损坏 |
+| 5 | 数据完整性 | YAML/笔记解析失败 / 归档目标碰撞 / secret import 源目录不存在 / JSON 损坏 |
 
 ---
 
-## 7. 缩写支持（**未实现**）
+## 9. 缩写支持（**未实现**）
 
-### 7.1 子命令缩写
+### 9.1 子命令缩写
 
 **MVP 阶段**：不支持缩写（保持简单）。
 
@@ -498,15 +563,15 @@ x todo list
 x t l
 ```
 
-### 7.2 自动缩写（**无计划**）
+### 9.2 自动缩写（**无计划**）
 
 > 不计划实现 — argparse 不原生支持，argcomplete Tab 补全更直接。
 
 ---
 
-## 8. Tab 补全（**未实现**）
+## 10. Tab 补全（**未实现**）
 
-### 8.1 启用 Tab 补全（计划）
+### 10.1 启用 Tab 补全（计划）
 
 **bash**：
 ```bash
@@ -520,7 +585,7 @@ eval "$(register-python-argcomplete x)"
 eval "$(register-python-argcomplete x)"
 ```
 
-### 8.2 补全示例（计划）
+### 10.2 补全示例（计划）
 
 ```bash
 x <TAB><TAB>
@@ -537,7 +602,7 @@ x todo add --<TAB><TAB>
 
 ---
 
-## 9. BDD 行为规格索引
+## 11. BDD 行为规格索引
 
 每个 action 都有完整的 Given-When-Then 场景文档：
 
@@ -551,10 +616,12 @@ x todo add --<TAB><TAB>
 | `x todo search` | [todo-list-behavior.md](behaviors/todo-list-behavior.md) | （合并在 list） |
 | `x todo auto-archive` | [todo-auto-archive-behavior.md](behaviors/todo-auto-archive-behavior.md) | 6 |
 | `x secret *` | [secret-behavior.md](behaviors/secret-behavior.md) | 19（含 1.5/1.6/2.5/8.5/8.6 增强场景） |
-| **合计** | — | **64 场景** |
+| `x diary *` | [diary-behavior.md](behaviors/diary-behavior.md) | 8 |
+| `x note *` | [note-behavior.md](behaviors/note-behavior.md) | 12 |
+| **合计** | — | **84 场景** |
 
 每个 BDD 场景都有对应的 pytest 用例（在 `tests/test_todo_*.py` + `tests/test_secrets.py` + `tests/test_todo_auto_archive.py` + `tests/test_e2e_*.py`）。
 
 ---
 
-*本文档是活文档，随命令集扩展更新。最后更新：2026-06-26（merge: secret --category + todo auto-archive）。*
+*本文档是活文档，随命令集扩展更新。最后更新：2026-07-17（新增 x diary / x note P0）。*

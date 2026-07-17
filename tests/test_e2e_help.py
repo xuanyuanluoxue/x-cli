@@ -75,7 +75,7 @@ def test_e2e_help_alias_prints_top_help(x_path: str, tmp_path: Path):
     assert "--config" in out, f"missing --config in:\n{out}"
     assert "SUBCOMMAND" in out, f"missing SUBCOMMAND in:\n{out}"
     # Subcommands listed
-    for sub in ("todo", "secret", "web"):
+    for sub in ("todo", "secret", "diary", "note", "web"):
         assert sub in out, f"missing subcommand {sub!r} in:\n{out}"
 
 

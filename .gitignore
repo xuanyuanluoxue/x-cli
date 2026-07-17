@@ -49,6 +49,8 @@ x-*.log
 .pytest_cache/
 .coverage
 htmlcov/
+.pytest-tmp/
+*.sha256
 
 # Mavis (plan state, sessions, runtime data — not project source)
 .mavis/

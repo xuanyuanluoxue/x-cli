@@ -63,7 +63,7 @@ def pad(s: str, width: int) -> str:
 
 
 # ============================================================
-#  v0.5 Phase D — terminal color detection (PLAN-v0.5.md §6.5)
+#  Terminal color detection used by TODO priority rendering.
 # ============================================================
 
 # ANSI escape codes (cached as constants to avoid repeated string concat)

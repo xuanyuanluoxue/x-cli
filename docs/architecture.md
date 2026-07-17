@@ -2,38 +2,51 @@
 
 > **目标读者**：接续开发 x-cli 的 AI agent 或人类开发者
 > **必读**：**在写代码前必须先读本文档**
-> **状态**：本文档反映 **v0.5.0 实际架构**（2026-06-21，Phase 4 plugin split 已实装）
+> **状态**：本文档反映 **v0.7.0 实际架构**（2026-07-17）
 
 ---
 
 ## 1. 整体架构
 
-### 1.1 当前架构：entry point + core + plugins（v0.5.0）
+### 1.1 当前架构：延迟分发的模块化单体（v0.7.x）
 
 **x-cli 5 层架构**（从上到下）：
 
 ```
-x.py  (215 行，entry point only)
+x.py  (entry point only)
 ├── --version / --config / --log-level / --config-init 全局 flag
-├── SUBCOMMAND_HANDLERS 字典
-│     {"todo": plugins.todo.run,
-│      "secret": plugins.secret.run}
-└── main()  →  加载 config + log → 派发到 plugin.run()
+├── build_parser() / main()
+└── main() → early-exit → 加载 config + log → 请求 core.dispatch 分发
 
-plugins/  (子命令插件，每个文件 1 个子系统)
-├── todo.py    ← x todo: 10 个 action + register(parser) + run(args)
-└── secret.py  ← x secret: 8 个 action + register(parser) + run(args)
+core/dispatch.py  (静态白名单 + 延迟加载)
+├── SUBCOMMAND_MODULES: {"todo": "plugins.todo", ...}
+└── load_subcommand_handler(name) → importlib → plugin.run
+
+plugins/  (子命令插件与 TODO 内部分层)
+├── todo.py              ← x todo parser + dispatcher facade
+├── todo_presenters.py   ← 纯展示、过滤与校验 helpers
+├── todo_queries.py      ← list / search / stats / export
+├── todo_lifecycle.py    ← archive / restore / reminder / repeat / remove
+├── todo_mutations.py    ← add / update / init / import / template
+├── secret.py  ← x secret 命令族
+├── diary.py   ← x diary 写入 + 最近日期列表
+├── note.py    ← x note 主题笔记 add/list/show/search
+└── web.py     ← x web 本地 HTTP 服务 + 静态前端
 
 core/  (核心库，被 x.py + plugins/ 共享)
+├── dispatch.py    ← 内建插件白名单 + 延迟加载
 ├── models.py      ← Task dataclass + 3 个 enum
 ├── parser.py      ← YAML frontmatter 解析/序列化（手写，stdlib-only）
 ├── slug.py        ← 中英文 slug 生成（stdlib-only）
-├── paths.py       ← 跨平台路径解析（XCLI_TODO_DIR / XCLI_DATA_DIR）
+├── paths.py       ← 跨平台路径解析（todo / secret / diary / notes / config / log）
 ├── formatting.py  ← CJK-aware display helpers（display_width + pad）
 ├── storage.py     ← TaskStore：文件系统 CRUD + 统计 + 索引维护
 ├── secrets.py     ← SecretStore：JSON DB CRUD + import + export
+├── diary.py       ← DiaryStore：每日 Markdown 追加 + 日期列表
+├── note.py        ← NoteStore：主题 Markdown 创建、列表、显示、搜索
 ├── config.py      ← AppConfig + YAML 解析（v0.4.y）
-└── logging.py     ← stdlib logging wrapper（v0.4.y）
+├── logging.py     ← stdlib logging wrapper（v0.4.y）
+└── web/           ← 本地 HTTP API、认证与静态资源
 
 # 第三方依赖：0（dependencies = []）
 ```
@@ -48,15 +61,17 @@ def run(args: Sequence[str]) -> int:
     """解析 + 派发，返回 exit code"""
 ```
 
-**加新子命令的步骤**（未来维护）：
+**加新子命令的步骤**：
 1. 创建 `plugins/<name>.py`，实现 `register` + `run`
-2. 在 `x.py:SUBCOMMAND_HANDLERS` 加 1 行条目
-3. 写 BDD spec（`docs/behaviors/<name>-behavior.md`）+ tests
+2. 在 `core.dispatch:SUBCOMMAND_MODULES` 加 1 行静态映射
+3. 用户可见行为发生变化时写 BDD，并按风险分级补测试
 
 **核心理念**：
-- **Entry point `x.py` 只做 argparse + config + log + 派发**（215 行）
+- **Entry point `x.py` 只做 argparse + config + log + 派发**
 - **Plugins `plugins/` 各自独立**，互不依赖
 - **核心库 `core/` 纯 stdlib，零三方依赖**（`pyproject.toml dependencies = []`）
+- **依赖方向固定**：`x → core.dispatch → selected plugin → core`；`core` 禁止反向导入 `x`
+- **插件按需加载**：顶层 version/help/未知命令不导入具体插件
 - **数据存储**：x-cli 独立于外部系统（`%LOCALAPPDATA%\x-cli\` Windows / `~/.local/share/x-cli/` Unix）
 
 ### 1.2 Phase 4 历史：从单文件到插件（已完成 v0.5.0）
@@ -64,12 +79,11 @@ def run(args: Sequence[str]) -> int:
 v0.4.y 之前 `x.py` 是 1739 行单文件，所有 18 个 handler inline。Phase 4 拆分：
 - v0.2.0-v0.4.y：单文件 + `SUBCOMMAND_HANDLERS` 字典分发（1739 行）
 - v0.5.0：拆出 `plugins/todo.py` + `plugins/secret.py`，`x.py` 降到 215 行
-- 526 tests / 0 fail / 7 skip（拆分前后一致）
+- 拆分前后均由完整 pytest 回归保护；具体数量不在架构文档中硬编码
 
 未来可能的扩展（**不**在当前 scope — 见 COMMANDS.md backlog）：
 - `plugins/foo.py` 加新子命令（流程见 1.1）
-└── 自动更新（未来）
-```
+- 可选后台提醒服务复用 core API，不改变 CLI 主进程架构
 
 ### 1.3 数据流（MVP 实际）
 
@@ -78,11 +92,13 @@ v0.4.y 之前 `x.py` 是 1739 行单文件，所有 18 个 handler inline。Phas
     ↓
 x.py build_parser: 解析 --version / subcommand
     ↓
-SUBCOMMAND_HANDLERS["todo"]("list --status pending")
+core.dispatch.load_subcommand_handler("todo")
     ↓
-_todo_run: argparse 解析 list 的子参数（--status/--priority/--tag/--all）
+plugins.todo.run("list --status pending")
     ↓
-_todo_list: 调 TaskStore().list_tasks() 拿所有 active 任务
+plugins.todo: argparse 解析 list 的子参数（--status/--priority/--tag/--all）
+    ↓
+plugins.todo_queries._todo_list: 调 TaskStore().list_tasks() 拿所有 active 任务
     ↓
 core/storage.py: glob 任务/<name>/TODO.md → parse_frontmatter → Task
     ↓
@@ -97,102 +113,78 @@ core/models.py: Task dataclass（未知字段在 extra，round-trip 不丢）
 
 ## 2. 命令分发机制
 
-### 2.1 MVP 实现：字典分发（实际）
+### 2.1 静态白名单 + importlib 延迟加载
 
-**主入口 `x.py`**（实际代码，不是伪代码）：
+插件注册表使用完整模块名，不根据用户输入直接拼接路径：
 
 ```python
-SUBCOMMAND_HANDLERS: dict[str, Callable[[Sequence[str]], int]] = {
-    "todo": _todo_run,
+SUBCOMMAND_MODULES = {
+    "todo": "plugins.todo",
+    "secret": "plugins.secret",
+    "diary": "plugins.diary",
+    "note": "plugins.note",
+    "web": "plugins.web",
 }
 
-def main(argv: Sequence[str] | None = None) -> int:
-    parser = build_parser()
-    parsed, remaining = parser.parse_known_args(argv if argv is not None else None)
-    if parsed.version:
-        print(f"x {__version__}")
-        return 0
-    if not parsed.subcommand:
-        parser.print_help()
-        return 0
-    handler = SUBCOMMAND_HANDLERS.get(parsed.subcommand)
-    if handler is None:
-        print(f"❌ 错误：未知子命令：{parsed.subcommand}", file=sys.stderr)
-        return 1
-    return handler(remaining)
+def load_subcommand_handler(name: str):
+    module_name = SUBCOMMAND_MODULES.get(name)
+    if module_name is None:
+        return None
+    module = importlib.import_module(module_name)
+    handler = getattr(module, "run", None)
+    if not callable(handler):
+        raise TypeError(f"plugin {module_name!r} has no callable run")
+    return handler
 ```
 
-**优点**：简单、可静态分析、IDE 跳转方便
-**缺点**：加子命令要改 x.py（不像 importlib 那样纯插件化）
+`x.py` 先处理 `--version`、顶层 help、配置和未知命令；只有合法子命令真正需要执行时才调用 loader。具体行为见 `docs/behaviors/cli-lazy-dispatch-behavior.md`，决策背景见 ADR-0001。
 
-### 2.2 Phase 4 目标：importlib 动态加载
+**优点**：
 
-```python
-# 伪代码（Phase 4 实现后）
-import importlib
-handler_module = importlib.import_module(f"plugins.{subcommand}")
-return handler_module.run(remaining)
-```
+- version/help 启动路径不加载无关子系统。
+- 白名单保留可审计性，不允许任意模块导入。
+- `x.py` 不再承担插件私有函数的兼容出口。
 
-### 2.3 todo 子命令分发（inline）
+**代价**：PyInstaller 无法只靠 AST 发现字符串导入，因此发行 spec 和 EXE 冒烟测试必须覆盖所有内建插件。
 
-x.py 里 `_todo_run` 解析 todo_action 后按名字分发：
+### 2.2 插件内部动作分发
+
+每个插件的 `run(args)` 自己构建 argparse 并分发子动作。例如 TODO 插件：
 
 ```python
 if parsed.todo_action == "list":
     return _todo_list(parsed)
 elif parsed.todo_action == "add":
     return _todo_add(parsed)
-# ... 5 个 action
+# ...其余 TODO actions
 ```
+
+顶层入口不理解 `list/add/archive` 等插件内部动作。
 
 ---
 
-## 3. 配置管理（**未实现**）
+## 3. 配置管理（已实现）
 
-### 3.1 计划中的配置文件
+`core.config.AppConfig` 管理四个字段：`todo_dir`、`secrets_path`、
+`log_level`、`log_path`。配置仍使用手写 YAML parser，不引入 PyYAML。
 
-**全局配置**：`<xcli_config_path>`（**未实现**）
+默认文件位于 `<xcli_data_dir>/config.yaml`，可用 `x --config-init` 创建。
+解析优先级从高到低：
+
+1. CLI `--config <path>`
+2. `XCLI_CONFIG` 环境变量
+3. 默认 `config.yaml`
+4. `core.paths` 提供的跨平台默认值
 
 ```yaml
-# <xcli_config_path> （计划格式）
-todo:
-  default_status: pending
-  default_priority: medium
-  tasks_dir: <xcli_todo_dir>/任务
-
-log:
-  level: INFO
-  file: <xcli_data_dir>/x.log
+todo_dir: D:/data/x-cli/todo
+secrets_path: D:/data/x-cli/secrets.json
+log_level: WARNING
+log_path: D:/data/x-cli/x.log
 ```
 
-### 3.2 临时替代：`XCLI_TODO_DIR` 环境变量
-
-**MVP 阶段**没有 config 加载，只支持一个环境变量覆盖 TODO 根目录（主要给测试用）：
-
-```bash
-XCLI_TODO_DIR=/tmp/test_todo python x.py todo list
-```
-
-代码位置：`core/storage.py:_default_todo_dir()`
-
-### 3.3 计划中的 `core/config.py`（**未实现**）
-
-```python
-# 伪代码（未实现）
-import yaml
-import os
-
-def load_config(config_path=None):
-    if config_path is None:
-        config_path = os.path.expanduser("<xcli_config_path>")
-    if not os.path.exists(config_path):
-        return {}
-    with open(config_path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
-```
-
-> 注：即使将来实现，也**不引 PyYAML** — 用 `core/parser.py` 已有的 YAML 解析能力（仅限标量/列表/字典场景）。
+`XCLI_TODO_DIR`、`XCLI_SECRETS_DIR`、`XCLI_DIARY_DIR`、`XCLI_NOTES_DIR`
+仍可用于单个数据子系统的路径覆盖和测试隔离。未知配置字段被忽略，以保留向前兼容性；显式配置文件不存在或字段非法时返回配置错误。
 
 ---
 
@@ -226,8 +218,8 @@ tags: ["驾照", "暑假"]
 - 预约考试日期
 ```
 
-**已知字段**（`core/models.py:_KNOWN_FIELDS`）：
-`id` / `name` / `status` / `priority` / `created` / `updated` / `deadline` / `folder` / `tags` / `subtasks` / `reason`
+**已知字段**以 `core.models.Task` 为准，包括基础字段以及 `time`、
+`end_time`、`duration_min`、`parent`、`remind`、`repeat`、`depends` 和正文。
 
 **未知字段**：落到 `Task.extra`，dump 时按原顺序写出。
 
@@ -263,27 +255,24 @@ tags: ["驾照", "暑假"]
 
 **构造方式**：
 ```python
-TaskStore()                              # 用 <legacy-config-dir>/TODO
+TaskStore()                              # 用 core.paths.xcli_todo_dir()
 TaskStore(todo_dir=Path("/tmp/test"))    # 测试用
 ```
 
-`XCLI_TODO_DIR` 环境变量优先级最高（覆盖构造参数）。
+显式 `todo_dir` 构造参数优先；未传入时由 `core.paths.xcli_todo_dir()` 解析环境变量和跨平台默认目录。
 
 ---
 
-## 5. 日志系统（**未实现**）
+## 5. 日志系统（已实现）
 
-### 5.1 计划
+`core.logging.setup_logging()` 配置 `x` 命名空间 logger，支持
+`DEBUG / INFO / WARNING / ERROR / CRITICAL`。默认级别为 `WARNING`；
+`--log-level` 可以覆盖配置文件。
 
-**日志级别**（从低到高）：`DEBUG` / `INFO` / `WARNING` / `ERROR`
-
-**日志输出**：
-- 控制台：≥ `WARNING`（只显示错误和警告）— **未实现**（MVP 用 print）
-- 文件：`<xcli_data_dir>/x.log`（≥ `INFO`）— **未实现**
-
-### 5.2 MVP 替代
-
-直接 `print()` 到 `stdout`（成功信息、表格）或 `stderr`（错误信息）。退出码区分成功/失败，不写日志文件。
+- stderr handler 与当前有效级别一致。
+- `log_path` 非空时追加 UTF-8 文件日志；父目录自动创建。
+- 重复初始化会先移除旧 handler，避免同一条日志重复输出。
+- 用户命令的正常结果仍通过 stdout 输出；错误提示和安全警告走 stderr。
 
 ---
 
@@ -327,18 +316,28 @@ x todo add: error: argument --priority: invalid choice: 'urgent' (choose from 'h
 
 | 层次 | 工具 | 当前覆盖 |
 |------|------|---------|
-| **核心库单元测试** | `pytest` | test_models / test_parser / test_storage（~150 tests）|
-| **CLI 集成测试** | `pytest` + 子进程 | test_todo_list / test_todo_add / test_todo_update / test_todo_archive / test_todo_stats（~90 tests）|
-| **主入口测试** | `pytest` | test_x（覆盖 argparse / SUBCOMMAND_HANDLERS 分发）|
-| **BDD 行为规格** | Given-When-Then 文档 | 5 个文件，39 场景（与测试用例一一对应）|
+| **核心库单元测试** | `pytest` | models / parser / storage / secrets / note / diary |
+| **CLI 集成测试** | `pytest` + 子进程 | todo / secret / diary / note / help / config |
+| **主入口与架构测试** | `pytest` | `test_x.py` + `test_dispatch.py`（argparse、延迟加载、依赖方向）|
+| **BDD 行为规格** | Given-When-Then 文档 | 只描述需要长期保留的用户行为与关键非功能契约 |
 
 ### 7.2 覆盖率目标
 
-- **核心库**（`core/`）：≥ 90%（**当前 91%+**）
-- **CLI handler**（`x.py` 里的 `_todo_*`）：≥ 80%
-- **全局**：≥ 80%（**当前 91%**）
+- **核心库**（`core/`）：目标 ≥ 90%
+- **CLI handler**（`plugins/`）：≥ 80%
+- **全局**：目标 ≥ 80%
 
-### 7.3 测试运行
+### 7.3 按风险选择流程
+
+| 改动 | 计划与规格 | 验证边界 |
+|------|------------|----------|
+| 小型文档/help/局部修复 | 不写计划；BDD 可选 | 行为变化时补回归测试，只跑 focused tests |
+| 用户功能或多模块改动 | 简短临时计划；新用户行为写 BDD；TDD | 开发时 focused tests，交付前全量一次 |
+| 架构/数据/安全/后台/发行 | 完整临时计划；必要 ADR；BDD + TDD 按需 | focused + 全量 + 与改动相关的安全、EXE 或发行检查 |
+
+不按固定任务数量暂停，也不在每个小步骤重复跑全量测试。临时计划完成后删除；永久结论保留在 BDD、ADR、本文档或 changelog。准确规则以仓库根目录 `AGENTS.md` 为准。
+
+### 7.4 测试运行
 
 ```bash
 pytest                    # 全量
@@ -349,26 +348,65 @@ pytest --cov=core --cov=x  # 带覆盖率
 
 ---
 
-## 8. 打包与发布（**未实现**）
+## 8. 打包与发布（v0.7.0 已实现）
 
-### 8.1 PyInstaller 打包（计划）
+### 8.1 单一版本来源
 
-```bash
-# release/build.py 未实现
-pyinstaller --onefile --name x x.py
+`core/version.py:__version__` 是唯一版本常量。`x.py` 直接导入它，
+setuptools 通过 `[tool.setuptools.dynamic]` 读取它，WinGet 生成器会拒绝
+与它不一致的版本。这样 CLI、wheel、EXE、tag 和 WinGet 不会各自漂移。
+
+### 8.2 Python 包
+
+`pyproject.toml` 使用递归包发现：`core*` + `plugins*`，并显式包含
+`core.web/static/**`。运行时依赖仍然为零；`build`、`PyInstaller` 只属于
+`release` 可选依赖。
+
+```powershell
+.venv\Scripts\python.exe -m build --no-isolation
 ```
 
-**产物**：
-- Windows: `dist/x.exe`（~10 MB）
-- macOS / Linux: `dist/x`（~10 MB）
+产物为 wheel 和 sdist。wheel 构建测试会检查 Web handlers 和静态资源，
+防止 editable install 正常、正式安装缺文件。
 
-### 8.2 GitHub Release（计划）
+### 8.3 Windows 独立程序
 
-通过 GitHub Actions：
-1. 打 tag（`v0.3.0`）
-2. 跑 pytest
-3. 跑 PyInstaller
-4. 上传二进制到 Release
+`packaging/x-cli.spec` 使用 PyInstaller one-file console 模式生成：
+
+```text
+dist/x-windows-x86_64.exe
+dist/x-windows-x86_64.exe.sha256
+```
+
+完整入口是 `scripts/build-windows.ps1`。它按顺序执行 pytest、Python 包构建、
+PyInstaller、版本帮助冒烟测试、真实 Web 首页 HTTP 冒烟测试和 SHA-256 生成。
+EXE 不申请管理员权限，不启用 UPX，用户不需要安装 Python。
+
+### 8.4 WinGet
+
+`scripts/generate_winget_manifest.py` 使用 stdlib 生成 WinGet 1.12.0 singleton
+清单。当前只有一个 Windows x64 安装文件，所以采用 `portable`：WinGet 负责
+放置 EXE、注册 `x` 命令别名、升级和卸载。
+
+```text
+PackageIdentifier: XuanyuanLuoxue.XCLI
+InstallerType: portable
+Architecture: x64
+Command: x
+```
+
+GitHub Release 是不可变下载源。清单提交前必须运行 `winget validate`；微软
+默认源接受前，README 不得声称安装命令当前可用。
+
+### 8.5 GitHub Actions
+
+`.github/workflows/release.yml` 分成两个权限边界：
+
+1. `build`：`contents: read`，全量测试、构建、生成并验证清单、上传私有 artifact。
+2. `release`：仅 tag 触发，`contents: write`，下载已验证 artifact 并创建 Release。
+
+`workflow_dispatch` 永远只走 build。只有 `vX.Y.Z` tag 与源码版本完全一致时
+才允许进入 release job。
 
 ---
 
@@ -397,10 +435,11 @@ pyinstaller --onefile --name x x.py
 | YAML 解析 | 手写 parser | 未知字段 round-trip；零依赖 |
 | 拼音转换 | 硬编码 + unicodedata | 不引 pypinyin（保持 stdlib-only）|
 | CLI 框架 | argparse | 够用；不引 click |
-| 插件加载 | 字典分发（MVP）→ importlib（Phase 4）| 5 个 action 不值得拆 |
+| 插件加载 | 静态白名单 + importlib 延迟加载 | version/help 不加载无关插件，同时阻止任意模块导入 |
 | 数据存储 | 文件系统（todo） + JSON DB（secret） | todo 兼容 `<xcli_todo_dir>/`；secret 用独立 JSON（不与 legacy TODO system耦合）|
 | 测试框架 | pytest + pytest-cov | Python 生态标准 |
-| 打包 | PyInstaller | 单文件可执行，跨平台 |
+| 打包 | PyInstaller one-file（Windows x64） | 首次发行简单；约 10 MiB，无需预装 Python |
+| Windows 分发 | GitHub Release + WinGet portable | 安装、升级、卸载由系统包管理器接管 |
 
 ---
 
@@ -426,14 +465,13 @@ x-cli 的密钥管理子命令。**不**与 legacy TODO system的 `<legacy-crede
 core/
   paths.py          ← 跨平台路径解析（xcli_data_dir / xcli_secrets_path）
   secrets.py        ← SecretStore 类（CRUD + search + import + export）
-  importer.py       ← 从 .md 迁移的解析器（YAML frontmatter + text 代码块）
 
-x.py                ← _secret_run + 8 个 _secret_* handler（inline MVP）
+plugins/
+  secret.py         ← argparse、命令 handler 与 SecretStore 调用
 
 tests/
   test_paths.py     ← 路径解析（跨平台 mock）
   test_secrets.py   ← SecretStore 单元测试
-  test_importer.py  ← .md 迁移解析单元测试
   test_e2e_secret.py← E2E 子进程测试
 ```
 
@@ -462,4 +500,4 @@ tests/
 
 ---
 
-*本文档是活文档，随架构演进更新。MVP 实际状态时间：2026-06-21。*
+*本文档是活文档，随架构演进更新。当前实际状态时间：2026-07-17。*

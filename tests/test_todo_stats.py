@@ -22,12 +22,9 @@ import pytest
 
 from core.models import Priority, Task, TaskStatus
 from core.storage import TaskStore
-from x import (
-    _find_broken_tasks,
-    _render_stats,
-    _todo_stats,
-    main,
-)
+from plugins.todo_queries import _find_broken_tasks, _todo_stats
+from plugins.todo_presenters import _render_stats
+from x import main
 
 
 # ============================================================
@@ -650,7 +647,7 @@ def test_list_with_all_archived_tasks_show_archived_status(store):
     out = io.StringIO()
     err = io.StringIO()
     with redirect_stdout(out), redirect_stderr(err):
-        from x import _todo_list
+        from plugins.todo_queries import _todo_list
         import argparse
 
         args = argparse.Namespace(
@@ -686,7 +683,7 @@ def test_update_legacy_archived_task_is_blocked(store):
         status="in_progress",  # stale
     )
 
-    from x import _todo_update
+    from plugins.todo_mutations import _todo_update
     import argparse
 
     args = argparse.Namespace(
