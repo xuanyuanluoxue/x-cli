@@ -31,6 +31,23 @@ from core.version import __version__
 # ============================================================
 
 
+def _configure_utf8_standard_streams() -> None:
+    """Prefer UTF-8 for localized CLI output when the host allows it.
+
+    English Windows runners can expose redirected text streams as cp1252,
+    including inside a PyInstaller executable.  Reconfigure before argparse
+    prints help, while leaving StringIO and host-managed streams untouched.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not callable(reconfigure):
+            continue
+        try:
+            reconfigure(encoding="utf-8")
+        except (OSError, TypeError, ValueError):
+            continue
+
+
 def build_parser() -> argparse.ArgumentParser:
     """构造主解析器：--version / --config / --log-level / --config-init / <subcommand> [args...]
 
@@ -77,6 +94,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     """主入口：解析 → 加载配置 + 日志 → 分发到子命令 handler"""
+    _configure_utf8_standard_streams()
     argv = list(argv) if argv is not None else None
     parser = build_parser()
     parsed, remaining = parser.parse_known_args(argv)

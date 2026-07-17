@@ -51,6 +51,18 @@ And 完成后必须恢复调用者原有的编码环境变量
 
 And EXE 冒烟测试必须显式按 UTF-8 捕获 stdout 和 stderr，不依赖 PowerShell 宿主代码页
 
+### 场景：CLI 覆盖英文 Windows 的 cp1252 标准流
+
+Given Windows CLI 进程继承的 stdout 和 stderr 编码为 cp1252
+
+When 用户运行包含中文和 Emoji 的 `x note --help`
+
+Then CLI 必须在构造解析器前把可重配置的文本标准流切换为 UTF-8
+
+And 命令必须以退出码 0 输出可按 UTF-8 解码的帮助文本
+
+And 不支持重配置的测试流或宿主流不得导致 CLI 启动失败
+
 ### 场景：独立程序可直接运行
 
 Given Windows x64 发行构建完成
