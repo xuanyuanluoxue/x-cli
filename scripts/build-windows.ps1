@@ -106,6 +106,8 @@ $Python = Join-Path $RepoRoot ".venv\Scripts\python.exe"
 $Spec = Join-Path $RepoRoot "packaging\x-cli.spec"
 $Exe = Join-Path $RepoRoot "dist\x-windows-x86_64.exe"
 $HashFile = Join-Path $RepoRoot "dist\x-windows-x86_64.exe.sha256"
+$PreviousPythonUtf8 = $env:PYTHONUTF8
+$PreviousPythonIoEncoding = $env:PYTHONIOENCODING
 
 if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
     throw "Missing project Python: $Python. Create .venv and install .[dev,release]."
@@ -113,6 +115,12 @@ if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
 
 Push-Location $RepoRoot
 try {
+    # GitHub's English Windows runners may default Python subprocesses to a
+    # legacy code page such as cp1252. x-cli intentionally prints Chinese and
+    # emoji, so every test, build, and smoke-test child must use UTF-8.
+    $env:PYTHONUTF8 = "1"
+    $env:PYTHONIOENCODING = "utf-8"
+
     $Version = (& $Python -c "from core.version import __version__; print(__version__)").Trim()
     if ($LASTEXITCODE -ne 0 -or -not $Version) {
         throw "Unable to read the release version from core.version."
@@ -165,4 +173,16 @@ try {
 }
 finally {
     Pop-Location
+    if ($null -eq $PreviousPythonUtf8) {
+        Remove-Item Env:PYTHONUTF8 -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:PYTHONUTF8 = $PreviousPythonUtf8
+    }
+    if ($null -eq $PreviousPythonIoEncoding) {
+        Remove-Item Env:PYTHONIOENCODING -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:PYTHONIOENCODING = $PreviousPythonIoEncoding
+    }
 }
