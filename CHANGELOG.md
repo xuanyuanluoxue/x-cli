@@ -39,7 +39,7 @@
 
 ### Fixed
 - 修复 GitHub Windows Runner 预装旧版 WinGet 时跳过升级、无法验证 1.12 清单的
-  问题；发布工作流现在会通过微软官方模块安装最新稳定验证器。
+  问题；发布工作流现在会通过微软官方模块为 Runner 用户安装最新稳定验证器。
 - 修复 PyInstaller 独立 EXE 在英文 Windows 的 `cp1252` 标准流中输出中文帮助时
   崩溃的问题；CLI 现在会在参数解析和插件分发前安全切换到 UTF-8。
 - 修复英文 Windows Runner 使用 `cp1252` 时无法测试中文和 Emoji CLI 输出的问题；

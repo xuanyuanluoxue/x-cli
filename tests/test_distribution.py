@@ -274,7 +274,8 @@ def test_release_workflow_upgrades_stale_winget_before_validation():
     )
 
     assert "Install-Module -Name Microsoft.WinGet.Client" in workflow
-    assert "Repair-WinGetPackageManager -Force -Latest -AllUsers" in workflow
+    assert "Repair-WinGetPackageManager -Force -Latest" in workflow
+    assert "-AllUsers" not in workflow
     assert "GITHUB_TOKEN: ${{ github.token }}" in workflow
     assert "if (-not (Get-Command winget" not in workflow
 

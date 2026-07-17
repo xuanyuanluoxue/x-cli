@@ -119,6 +119,8 @@ Then 工作流必须通过微软官方 PowerShell 模块把 WinGet 升级到最�
 
 And 不得因为 Runner 已存在旧版 `winget` 命令而跳过升级
 
+And 升级必须使用 Runner 当前用户范围，不得进入 `-AllUsers` AppX 预配路径
+
 And `winget validate` 的警告或错误必须继续阻止发布
 
 ### 场景：拒绝不可复现的清单输入
