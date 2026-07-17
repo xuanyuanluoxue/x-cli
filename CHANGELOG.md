@@ -39,7 +39,8 @@
 
 ### Fixed
 - 修复英文 Windows Runner 使用 `cp1252` 时无法测试中文和 Emoji CLI 输出的问题；
-  发布脚本现在为子进程启用 UTF-8，并在完成后恢复调用者环境。
+  发布脚本现在为子进程启用 UTF-8、显式捕获 EXE 的 UTF-8 输出，并在完成后
+  恢复调用者环境。
 - 修复 `pyproject.toml` 仍为 `0.5.0`、CLI 已为 `0.6.0` 的版本漂移。
 - 修复手写 `packages = ["plugins", "core"]` 导致正式安装包遗漏 Web 子包的问题。
 - 修复 PyInstaller one-file Web 冒烟测试结束后残留子进程、锁住旧 EXE 的问题。
