@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>x web</title>
+  <link rel="stylesheet" href="css/base.css">
+  <link rel="stylesheet" href="css/layout.css">
+  <link rel="stylesheet" href="css/components.css">
+  <link rel="stylesheet" href="css/tasks.css">
+  <link rel="stylesheet" href="css/secrets.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%93%EF%B8%8F%3C/text%3E%3C/svg%3E">
+</head>
+<body>
+
+  <!-- 顶部 nav（登录后才显示） -->
+  <nav id="topbar" aria-label="主导航">
+    <div class="brand">
+      <span class="dot"></span>
+      <span>x web</span>
+    </div>
+    <div class="nav-links">
+      <a class="nav-link" data-route="#tasks" href="#tasks">📋 任务</a>
+      <a class="nav-link" data-route="#secrets" href="#secrets">🔐 密钥</a>
+      <a class="nav-link" data-route="#stats" href="#stats">📊 统计</a>
+    </div>
+    <div class="nav-actions">
+      <button class="icon-btn" aria-label="退出登录" title="退出登录">⎋</button>
+    </div>
+  </nav>
+
+  <!-- view 容器 -->
+  <main id="main"></main>
+
+  <!-- toast 容器（fixed 定位） -->
+  <div id="toast-container" aria-live="polite"></div>
+
+  <!-- modal 容器（fixed 定位） -->
+  <div id="modal-container"></div>
+
+  <script type="module" src="js/router.js"></script>
+</body>
+</html>

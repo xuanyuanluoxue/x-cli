@@ -200,6 +200,112 @@ def validate_deadline(value: str) -> str:
     return value
 
 
+# ============================================================
+#  Time / duration validation (v0.5 Phase A)
+# ============================================================
+
+
+_TIME_RE = re.compile(r"^([01]\d|2[0-3]):([0-5]\d)$")
+# Allow optional leading minus so we can distinguish format-error
+# (e.g. ``abc``) from sign-error (e.g. ``-5m``).
+# Supports ``Nd`` / ``Nh`` / ``Nm`` (days / hours / minutes). Decimal allowed.
+_DURATION_RE = re.compile(r"^(-?)(\d+(?:\.\d+)?)([dhm])?$")
+
+
+def validate_time(value: str) -> str:
+    """Validate a ``HH:MM`` time string (24h).
+
+    Returns the input string unchanged on success. Raises ``ValueError``
+    with a human-readable message (per BDD §场景 9) on failure.
+
+    Examples::
+
+        >>> validate_time("08:20")
+        '08:20'
+        >>> validate_time("23:59")
+        '23:59'
+        >>> validate_time("25:00")  # doctest: +IGNORE_EXCEPTION_DETAIL
+        Traceback (most recent call last):
+        ValueError: ...
+    """
+    if not isinstance(value, str) or not _TIME_RE.match(value):
+        raise ValueError(
+            f"❌ time 格式错误：{value}（必须为 HH:MM，如 08:20）"
+        )
+    return value
+
+
+def _time_to_minutes(hhmm: str) -> int:
+    """Convert ``HH:MM`` to total minutes since midnight (00:00 = 0)."""
+    h, m = hhmm.split(":")
+    return int(h) * 60 + int(m)
+
+
+def _minutes_to_time(total: int) -> str:
+    """Convert minutes since midnight back to ``HH:MM``."""
+    return f"{total // 60:02d}:{total % 60:02d}"
+
+
+def parse_duration(raw: str) -> int:
+    """Parse a duration string into an integer number of minutes.
+
+    Supported formats (per BDD §场景 4):
+        - ``N``         → N minutes (default unit = minutes)
+        - ``Nm``        → N minutes
+        - ``Nh``        → N hours (decimal allowed, e.g. ``1.5h`` = 90)
+
+    Raises ``ValueError`` on invalid format or non-positive value
+    (per BDD §场景 10 — ``-5m`` yields a distinct "must be positive"
+    error, ``abc`` yields a format error).
+
+    Examples::
+
+        >>> parse_duration("90")
+        90
+        >>> parse_duration("90m")
+        90
+        >>> parse_duration("1.5h")
+        90
+        >>> parse_duration("2h")
+        120
+    """
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError(
+            f"❌ duration 格式错误：{raw!r}（合法：N / Nm / Nh，支持小数）"
+        )
+    m = _DURATION_RE.match(raw.strip())
+    if not m:
+        raise ValueError(
+            f"❌ duration 格式错误：{raw}（合法：N / Nm / Nh，支持小数）"
+        )
+    sign = -1 if m.group(1) == "-" else 1
+    number = float(m.group(2))
+    unit = m.group(3) or "m"  # default = minutes
+    if unit == "d":
+        minutes = sign * number * 24 * 60
+    elif unit == "h":
+        minutes = sign * number * 60
+    else:  # m
+        minutes = sign * number
+    if minutes <= 0:
+        raise ValueError(
+            f"❌ duration 必须为正数：{raw}"
+        )
+    return int(minutes)
+
+
+def compute_end_time(time_str: str, duration_min: int) -> str:
+    """Given a ``HH:MM`` start time and duration in minutes, return ``HH:MM`` end time.
+
+    End time wraps around midnight if the duration exceeds 24h
+    (modulo 24h, since tasks are daily). Per BDD §场景 14 we display
+    the wrapped result, e.g. ``23:30 + 60m → 00:30``.
+    """
+    start = _time_to_minutes(time_str)
+    end = (start + duration_min) % (24 * 60)
+    return _minutes_to_time(end)
+
+
 def parse_tags(raw: str) -> list[str]:
     """Split a comma-separated tag string into a clean list.
 
@@ -209,9 +315,108 @@ def parse_tags(raw: str) -> list[str]:
     return [t.strip() for t in raw.split(",") if t.strip()]
 
 
+# ============================================================
+#  Repeat rule parser (v0.5 Phase D)
+# ============================================================
+
+
+_VALID_REPEAT_KINDS = frozenset({"daily", "weekly", "weekdays", "monthly"})
+_CRON_5FIELD_RE = re.compile(
+    r"^(\*|[0-9,\-/]+)(\s+)(\*|[0-9,\-/]+)(\s+)(\*|[0-9,\-/]+)(\s+)(\*|[0-9,\-/]+)(\s+)(\*|[0-9,\-/]+)$"
+)
+
+
+def parse_repeat(raw: str) -> dict[str, str]:
+    """Parse a ``--repeat`` value into a structured rule.
+
+    Supports two shapes:
+    - **Named kind**: ``daily`` / ``weekly`` / ``weekdays`` / ``monthly``
+    - **5-field cron**: ``"<m> <h> <dom> <mon> <dow>"`` (e.g. ``"0 8 * * 1-5"``)
+
+    Returns ``{"kind": "daily"}`` or ``{"cron": "0 8 * * 1-5"}`` so the
+    YAML serialization is unambiguous.
+
+    Raises ``ValueError`` with a human-readable message on bad input.
+    6-field cron (with seconds) is explicitly rejected per v0.5 scope.
+
+    Examples::
+
+        >>> parse_repeat("daily")
+        {'kind': 'daily'}
+        >>> parse_repeat("0 8 * * 1-5")
+        {'cron': '0 8 * * 1-5'}
+    """
+    if not raw or not raw.strip():
+        raise ValueError(
+            "❌ repeat 格式错误：（支持：daily / weekly / weekdays / monthly / 标准 5 字段 cron）"
+        )
+    val = raw.strip()
+    if val in _VALID_REPEAT_KINDS:
+        return {"kind": val}
+    # Check if it's 5-field cron (whitespace-separated tokens)
+    tokens = val.split()
+    if len(tokens) == 6:
+        raise ValueError(
+            "❌ repeat cron 必须为 5 字段（不支持秒级）"
+        )
+    if len(tokens) == 5 and _CRON_5FIELD_RE.match(val):
+        return {"cron": val}
+    # Fall through: not a valid kind, not a valid cron
+    raise ValueError(
+        f"❌ repeat 格式错误：{val}（支持：daily / weekly / weekdays / monthly / 标准 5 字段 cron）"
+    )
+
+
+# Reuse the duration parser for remind offsets (Nd / Nh / Nm format).
+def parse_remind(raw: str) -> list[str]:
+    """Parse a comma-separated remind offset string into a validated list.
+
+    Each entry must be a positive duration in ``Nd`` / ``Nh`` / ``Nm``
+    format (same as :func:`parse_duration`). Re-uses the duration regex
+    so format errors are consistent with ``--duration``.
+
+    Error messages specifically say "remind" (not "duration") so the
+    user sees which flag is at fault.
+
+    Examples::
+
+        >>> parse_remind("1d")
+        ['1d']
+        >>> parse_remind("1d,2h,30m")
+        ['1d', '2h', '30m']
+    """
+    if not raw or not raw.strip():
+        raise ValueError(
+            "❌ remind 格式错误：（合法：Nd / Nh / Nm，支持小数）"
+        )
+    entries = [e.strip() for e in raw.split(",") if e.strip()]
+    if not entries:
+        raise ValueError(
+            "❌ remind 格式错误：（合法：Nd / Nh / Nm，支持小数）"
+        )
+    # Validate each entry against the duration regex directly so we
+    # control the error message wording (mention "remind" not "duration").
+    for e in entries:
+        if not _DURATION_RE.match(e.strip()):
+            raise ValueError(
+                f"❌ remind 格式错误：{e}（合法：Nd / Nh / Nm，支持小数）"
+            )
+        # Reuse parse_duration for the actual minutes calc (also
+        # validates sign — negatives raise ValueError too).
+        sign = -1 if e.strip().startswith("-") else 1
+        if sign < 0:
+            raise ValueError(f"❌ remind 必须为正数：{e}")
+    return entries
+
+
 __all__ = [
     "slugify",
     "unique_slug",
     "validate_deadline",
+    "validate_time",
+    "parse_duration",
+    "compute_end_time",
     "parse_tags",
+    "parse_remind",
+    "parse_repeat",
 ]

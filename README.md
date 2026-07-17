@@ -1,64 +1,73 @@
 # x-cli
 
-> A small personal CLI toolset for **task tracking** and **credential management**.
-> One `x` command, two subsystems, zero third-party dependencies.
+> A small personal CLI toolset for tasks, credentials, daily records, topic notes, and a local web UI.
+> One `x` command, five subsystems, zero runtime dependencies.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests: 526](https://img.shields.io/badge/tests-526%20passing-brightgreen.svg)](tests/)
+[![Tests: pytest](https://img.shields.io/badge/tests-pytest-brightgreen.svg)](tests/)
 [![Coverage: 93%](https://img.shields.io/badge/coverage-93%25-brightgreen.svg)](tests/)
 
 ## What is x-cli?
 
-A single binary `x` that ships two focused subsystems:
+A single binary `x` that ships five focused subsystems:
 
 - **`x todo`** — Personal TODO management backed by YAML-frontmatter Markdown files.
   Full lifecycle: add, list, update, archive, restore, search, done, stats, init, import.
   CJK-friendly (中文 task names supported). Audit trail (archived tasks are never deleted).
 - **`x secret`** — Local credential store backed by a single JSON file (POSIX mode 600).
   list / get / set / update / rm / search / import / export. Auto-copies to clipboard.
+- **`x diary`** — Local daily Markdown notes. Append an entry or list recent diary dates.
+- **`x note`** — Topic-oriented Markdown notes with tags and local search.
+- **`x web`** — Authenticated local web UI for the todo and secret data.
 
-Both subsystems store data **independently** under per-user data directories:
+The data subsystems store data **independently** under per-user data directories:
 
-| Platform | TODO | Secrets |
-|---|---|---|
-| Windows | `%LOCALAPPDATA%\x-cli\todo\` | `%LOCALAPPDATA%\x-cli\secrets.json` |
-| Unix | `$XDG_DATA_HOME/x-cli/todo/` | `$XDG_DATA_HOME/x-cli/secrets.json` |
+| Platform | TODO | Secrets | Diary | Notes |
+|---|---|---|---|---|
+| Windows | `%LOCALAPPDATA%\x-cli\todo\` | `%LOCALAPPDATA%\x-cli\secrets.json` | `%LOCALAPPDATA%\x-cli\diary\` | `%LOCALAPPDATA%\x-cli\notes\` |
+| Unix | `$XDG_DATA_HOME/x-cli/todo/` | `$XDG_DATA_HOME/x-cli/secrets.json` | `$XDG_DATA_HOME/x-cli/diary/` | `$XDG_DATA_HOME/x-cli/notes/` |
 
 No cloud sync, no telemetry, no encryption (yet). Designed for one user, one machine.
 
-## Quick start
+## Install
+
+### WinGet (planned public channel)
+
+> **Status:** x-cli is not yet available in the default WinGet source. The
+> manifest and release pipeline are ready locally, but the first public GitHub
+> Release and `microsoft/winget-pkgs` submission have not been made yet.
+
+After Microsoft accepts the package, Windows users will install and upgrade it
+without installing Python:
+
+```powershell
+winget install --id XuanyuanLuoxue.XCLI -e
+winget upgrade --id XuanyuanLuoxue.XCLI -e
+```
+
+The portable EXE stores user data under `%LOCALAPPDATA%\x-cli\`; upgrading the
+program does not replace todo, secret, diary, or note data.
+
+### Development install
 
 ```bash
-# Clone and install (editable mode, source changes take effect immediately)
-git clone https://github.com/xavier-pen/x-cli
+git clone https://github.com/xuanyuanluoxue/x-cli.git
 cd x-cli
-
-# Use a virtualenv — Python 3.14 system-wide installs can be polluted by
-# hydra-core / antlr4 (auto-loaded as pytest plugins).
 python -m venv .venv
 .venv/bin/pip install -e ".[dev]"      # Unix
 .venv\Scripts\pip install -e ".[dev]"  # Windows
 
-# Verify
 x --version
-x todo --help        # Hmm — see "Known quirks" below
-
-# Try it out
+x todo --help
 x todo add "驾照考取" --priority high --deadline 2026-08-31
-x todo list
-x todo stats
+x diary "Started using x diary"
+x note add "MiniMax API setup" --body "Configuration details" --tags AI,API
 ```
 
-### Known quirks
-
-- **`x --help` and `x todo --help` return the same top-level help.** The outer
-  argparse parser swallows `--help` before the subcommand dispatcher. To see
-  the action list for a subcommand, run `x todo` (no args) or `x secret`
-  (no args). See [docs/behaviors/e2e-cli-behavior.md](docs/behaviors/e2e-cli-behavior.md).
-- **`x` must be on your PATH.** On Windows, the venv-installed `x.exe`
-  lives at `.venv\Scripts\x.exe`. If that directory is not on your PATH,
-  add it (or wrap it in `C:\Users\X\.local\bin\x.bat`).
+Top-level and subcommand help are separate: `x --help`, `x todo --help`,
+`x secret --help`, `x diary --help`, `x note --help`, and `x web --help` all
+show the relevant command scope.
 
 ## Usage
 
@@ -116,6 +125,32 @@ The JSON DB has file mode `0600` on POSIX. On Windows the ACL is inherited
 from the user's profile (no special hardening beyond that). For encryption
 at rest, see [Roadmap](#roadmap).
 
+### `x diary` — local daily notes
+
+```bash
+x diary "Finished the x diary P0 implementation"  # append to today's Markdown file
+x diary list                                       # latest 7 diary dates
+x diary list --limit 3                             # custom result count
+```
+
+Diary files live under `<xcli_data_dir>/diary/YYYY-MM-DD.md`. Set
+`XCLI_DIARY_DIR` to use a different directory. P0 lists dates only; it does
+not edit, delete, search, or sync entries.
+
+### `x note` — topic notes
+
+```bash
+x note add "MiniMax API setup" --body "Configuration details" --tags AI,API
+x note list --tag AI --limit 10
+x note show n-20260717-143012
+x note search minimax --limit 5
+```
+
+Each note is stored at `<xcli_data_dir>/notes/<id>.md` with YAML frontmatter
+and a Markdown body. Set `XCLI_NOTES_DIR` to use a different directory.
+P0 is read-mostly: create, list, show, and search; editing and deletion are
+left for a later version.
+
 ### Global flags
 
 ```bash
@@ -147,8 +182,9 @@ both one-way and read-only.
 | [COMMANDS.md](COMMANDS.md) | Canonical command inventory (user-edited spec source) |
 | [docs/TODO-SPEC.md](docs/TODO-SPEC.md) | On-disk format spec for `x todo` |
 | [docs/architecture.md](docs/architecture.md) | Design decisions, storage layers, hard invariants |
+| [docs/releasing.md](docs/releasing.md) | Windows build, GitHub Release, and WinGet submission runbook |
 | [docs/commands.md](docs/commands.md) | Full command reference (mirror of `COMMANDS.md`) |
-| [docs/behaviors/](docs/behaviors/) | BDD specs (Given-When-Then) — 14 files, 100+ scenarios |
+| [docs/behaviors/](docs/behaviors/) | Durable BDD specs (Given-When-Then) |
 | [AGENTS.md](AGENTS.md) | Rules for AI agents working on x-cli |
 
 ## Development
@@ -159,33 +195,39 @@ both one-way and read-only.
 .venv\Scripts\python.exe -m pytest                 # Windows
 .venv\Scripts\python.exe -m pytest --cov=core --cov=x  # with coverage
 
-# BDD-first, commit-before-code workflow
-# (1) Edit COMMANDS.md to add a command to the "⏳ Implemented" or backlog section
-# (2) Write BDD spec in docs/behaviors/<command>-behavior.md
-# (3) Commit the spec (single doc commit)
-# (4) Write tests in tests/test_<command>.py  → run, see Red
-# (5) Implement in x.py or core/*.py        → run, see Green
-# (6) Commit implementation + tests
+# ⚠️ Windows pytest tmpdir workaround (2026-06-30):
+# If pytest fails with `PermissionError: [WinError 5]` on
+# `C:\Users\...\AppData\Local\Temp\pytest-of-...\pytest-current`,
+# override TMP/TEMP to a writable path:
+$env:TMP = "D:\Temp\pytest_tmp"
+$env:TEMP = "D:\Temp\pytest_tmp"
+# (root cause: some process holds the default tmp dir open,
+#  suppressing the actual test failure detail with a cleanup traceback.)
+
+# Risk-based workflow
+# Small: no plan; focused regression test when behavior changes
+# Medium: short plan; BDD for user behavior; TDD; full suite once at handoff
+# High-risk: full plan + ADR when needed; full suite + relevant release/security checks
 ```
 
-See [AGENTS.md](AGENTS.md) for the full dev conventions, including the
-"COMMANDS.md is the spec source" rule.
+See [AGENTS.md](AGENTS.md) for the exact classification and mandatory checks.
+`COMMANDS.md` remains the user-owned feature specification.
 
 ## Roadmap
 
-**Done** (v0.4.y, current):
-- 21 commands across `x todo` (10) and `x secret` (8) plus 3 global flags
-- 526 tests passing, 4 platform-conditional skips, 93% coverage
-- CJK task names + icons in output
-- Clipboard integration on `x secret get`
-- Configurable log level + log path
-- One-way import from a legacy TODO directory / 密钥 Markdown directory
+**Done in the current local v0.7.0 tree:**
+- TODO lifecycle, time precision, subtasks, reminders, repeat rules, batch operations, templates, dependencies, recycle-bin removal, and JSON/CSV/Markdown export
+- Secret storage with protected list/search output and clipboard integration
+- Local diary entries, topic notes, and the authenticated Web UI
+- Single-source version shared by CLI, Python metadata, EXE, and WinGet manifest
+- PyInstaller Windows x64 portable EXE with packaged Web assets
+- Reproducible SHA-256 and WinGet 1.12.0 manifest generation
+- GitHub Actions build/release workflow with tag-version protection
 
-**Next** (candidates, not committed):
+**Next** (post-v0.7 candidates, not committed):
 - Encrypted-at-rest secret store (currently plain JSON)
 - Git-based version control of the TODO directory (`git init` + auto-commit hooks)
-- Plugin split (`plugins/todo.py` extracted from `x.py`)
-- PyInstaller single-file binary distribution
+- Optional background daemon for reminders and AI-assisted local workflows
 
 **Won't** (by design):
 - Cloud sync, multi-device support

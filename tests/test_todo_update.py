@@ -211,12 +211,13 @@ def test_update_invalid_priority_errors(store: TaskStore) -> None:
     """对 priority 同样做合法性校验（场景 4 隐含的同类规则）。"""
     _write_task(store, "kemu1")
 
-    exit_code, _, stderr = _invoke("kemu1", "--priority", "urgent")
+    # v0.5 Phase D: "urgent" is now valid; use a clearly-invalid value
+    exit_code, _, stderr = _invoke("kemu1", "--priority", "critical")
 
     assert exit_code == 2
     assert "❌ 无效的 priority 值" in stderr
-    assert "urgent" in stderr
-    for legal in ("high", "medium", "low"):
+    assert "critical" in stderr
+    for legal in ("high", "medium", "low", "urgent"):
         assert legal in stderr
 
 
@@ -311,13 +312,17 @@ def test_update_no_options_errors() -> None:
 def test_update_no_options_error_message_via_capsys(
     store: TaskStore, capsys: pytest.CaptureFixture
 ) -> None:
-    """对应 BDD 场景 8：标准错误里要出现「至少一个选项」的提示文本。"""
+    """对应 BDD 场景 8：标准错误里要出现「至少一个选项」的提示文本。
+
+    v0.5 起 error message 也包含 --time / --end-time / --duration。
+    """
     _write_task(store, "kemu1")
     with pytest.raises(SystemExit) as exc_info:
         main(["todo", "update", "kemu1"])
     assert exc_info.value.code == 2
     captured = capsys.readouterr()
-    assert "at least one of --status / --priority / --deadline / --tags is required" in captured.err
+    assert "at least one of" in captured.err
+    assert "--time" in captured.err and "--end-time" in captured.err and "--duration" in captured.err
 
 
 # ============================================================

@@ -1,8 +1,11 @@
 """x - Personal CLI toolset for task tracking and credential management.
 
-A small, focused CLI built around two subsystems:
+A small, focused CLI built around five subsystems:
   * x todo  - personal task tracking (YAML-frontmatter folders)
   * x secret - local credential store (single JSON file, file mode 600)
+  * x diary - local daily Markdown notes
+  * x note - topic-oriented Markdown notes
+  * x web - local authenticated web UI
 
 Entry point only. Subcommand handlers live in :mod:`plugins.todo` and
 :mod:`plugins.secret`. See README.md for usage and COMMANDS.md for the
@@ -15,88 +18,12 @@ import argparse
 import os
 import sys
 from pathlib import Path
-from typing import Callable, Sequence
+from typing import Sequence
 
 from core.config import AppConfig, ConfigError
+from core.dispatch import SUBCOMMAND_MODULES, load_subcommand_handler
 from core.logging import get_logger, setup_logging
-
-# Plugin handlers (Phase 4 split — see AGENTS.md "Phase 4 plugin split")
-from plugins import todo as _todo_plugin
-from plugins import secret as _secret_plugin
-
-__version__ = "0.6.0"
-
-
-# ============================================================
-#  Subcommand dispatch (Phase 4 plugin registry)
-# ============================================================
-
-# Each plugin exposes a ``run`` callable that takes ``Sequence[str]``
-# (everything after ``x <subcommand>``) and returns an exit code.
-# Adding a new subcommand = drop a file in plugins/ + register here.
-SUBCOMMAND_HANDLERS: dict[str, Callable[[Sequence[str]], int]] = {
-    "todo": _todo_plugin.run,
-    "secret": _secret_plugin.run,
-}
-
-
-# ============================================================
-#  Backward-compat re-exports (for existing tests + scripts)
-# ============================================================
-
-# Tests import handler functions directly from ``x`` (e.g.
-# ``from x import _todo_list``). Re-export them here so test code
-# doesn't need to know about the plugin split.
-from plugins.todo import (  # noqa: E402,F401 — re-exports
-    _todo_list,
-    _todo_add,
-    _todo_update,
-    _todo_archive,
-    _todo_restore,
-    _todo_search,
-    _todo_done,
-    _todo_stats,
-    _todo_init,
-    _todo_import,
-    _todo_register,
-    run as _todo_run,
-    _render_stats,
-    _find_broken_tasks,
-    _LIST_COLUMNS,
-    _coerce_status,
-    _coerce_priority,
-    _list_status_cell,
-    _list_priority_cell,
-    _matches_list_filters,
-    _VALID_STATUS_HINT,
-    _VALID_PRIORITY_HINT,
-    TODO_ACTIONS,
-)
-
-from plugins.secret import (  # noqa: E402,F401 — re-exports
-    _secret_list,
-    _secret_get,
-    _secret_set,
-    _secret_update,
-    _secret_rm,
-    _secret_search,
-    _secret_import,
-    _secret_export,
-    run as _secret_run,
-    _copy_to_clipboard,
-    _render_secret_table,
-    _SECRET_LIST_COLUMNS,
-    SECRET_ACTIONS,
-)
-
-# Shared display helpers — were in x.py before the split; tests + other
-# modules import them as ``from x import _display_width``.
-from core.formatting import display_width as _display_width  # noqa: E402,F401
-from core.formatting import pad as _pad  # noqa: E402,F401
-
-# Icon dicts — kept here for backward compat (they live in plugins/todo.py
-# but were originally module-level globals in x.py).
-from plugins.todo import _STATUS_ICONS, _PRIORITY_ICONS  # noqa: E402,F401
+from core.version import __version__
 
 
 # ============================================================
@@ -105,10 +32,17 @@ from plugins.todo import _STATUS_ICONS, _PRIORITY_ICONS  # noqa: E402,F401
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """构造主解析器：--version / --config / --log-level / --config-init / <subcommand> [args...]"""
+    """构造主解析器：--version / --config / --log-level / --config-init / <subcommand> [args...]
+
+    v0.6.1: ``add_help=False`` **不**手动注册 ``-h/--help`` flag — 这样 argparse
+    不会消费 ``--help``，让它落到 ``remaining`` 转给子命令 handler（每个 plugin
+    自带 ArgumentParser，原生处理 ``--help``）。顶层 help 由 ``main()`` 在没有
+    subcommand 时显式打印（看 ``argv`` 里有没有 ``--help`` / ``-h``）。
+    """
     parser = argparse.ArgumentParser(
         prog="x",
         description="Xavier 个人工具集的统一 CLI 入口",
+        add_help=False,
     )
     parser.add_argument(
         "-v", "--version",
@@ -136,15 +70,26 @@ def build_parser() -> argparse.ArgumentParser:
         "subcommand",
         nargs="?",
         metavar="SUBCOMMAND",
-        help=f"子命令（{', '.join(SUBCOMMAND_HANDLERS)}）",
+        help=f"子命令（{', '.join(SUBCOMMAND_MODULES)}）",
     )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     """主入口：解析 → 加载配置 + 日志 → 分发到子命令 handler"""
+    argv = list(argv) if argv is not None else None
     parser = build_parser()
-    parsed, remaining = parser.parse_known_args(argv if argv is not None else None)
+    parsed, remaining = parser.parse_known_args(argv)
+
+    # v0.6.1: 顶层 help 只在 *没有* subcommand 时打印；有 subcommand 时
+    # ``--help`` / ``-h`` 应原样传给子命令 handler（plugin 自己的 argparse
+    # 打印对应 help）。``x help`` 是 ``x --help`` 的位置别名（git/npm 习惯）。
+    if not parsed.subcommand and ("--help" in (argv or []) or "-h" in (argv or [])):
+        parser.print_help()
+        return 0
+    if parsed.subcommand == "help":
+        parser.print_help()
+        return 0
 
     # --version 优先（最便宜的 early-exit）
     if parsed.version:
@@ -202,10 +147,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.print_help()
         return 0
 
-    handler = SUBCOMMAND_HANDLERS.get(parsed.subcommand)
+    handler = load_subcommand_handler(parsed.subcommand)
     if handler is None:
         print(f"❌ 错误：未知子命令：{parsed.subcommand}", file=sys.stderr)
-        print(f"提示：支持 {', '.join(SUBCOMMAND_HANDLERS)}", file=sys.stderr)
+        print(f"提示：支持 {', '.join(SUBCOMMAND_MODULES)}", file=sys.stderr)
         return 1
 
     return handler(remaining)

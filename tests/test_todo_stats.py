@@ -22,12 +22,9 @@ import pytest
 
 from core.models import Priority, Task, TaskStatus
 from core.storage import TaskStore
-from x import (
-    _find_broken_tasks,
-    _render_stats,
-    _todo_stats,
-    main,
-)
+from plugins.todo_queries import _find_broken_tasks, _todo_stats
+from plugins.todo_presenters import _render_stats
+from x import main
 
 
 # ============================================================
@@ -386,20 +383,35 @@ def test_stats_due_within_7_days_inclusive_boundaries(store):
 
 
 def test_stats_due_window_in_command_output(store):
-    """The formatted output reflects the same boundary."""
-    make_task(store, "soon1", deadline="2026-06-25")
-    make_task(store, "soon2", deadline="2026-06-28")
-    make_task(store, "later", deadline="2026-06-29")
+    """The formatted output reflects the same boundary.
+
+    Deadlines are computed relative to ``date.today()`` so this test
+    doesn't drift with the calendar. The "7 天内" window is INCLUSIVE
+    (per ``test_stats_due_within_7_days_inclusive_boundaries``), so this
+    test plants one task 3 days out (in), one 8 days out (out), and
+    one 30 days out (out). Only the first should be counted.
+    """
+    from datetime import date, timedelta
+
+    today = date.today()
+    in_window = (today + timedelta(days=3)).isoformat()
+    just_out = (today + timedelta(days=8)).isoformat()  # past inclusive 7d
+    far_out = (today + timedelta(days=30)).isoformat()
+
+    make_task(store, "soon1", deadline=in_window)
+    make_task(store, "just-out", deadline=just_out)
+    make_task(store, "later", deadline=far_out)
 
     code, stdout, _ = run_stats(store)
     assert code == 0
-    # Extract the count from the rendered output
     m = re.search(r"即将到期（7 天内）：(\d+)", stdout)
-    assert m is not None
+    assert m is not None, f"no due-within-window line in stats output: {stdout!r}"
     count = int(m.group(1))
-    # If today >= 2026-06-28 we miss soon1 but still count soon2; this test
-    # only asserts the "later" task is excluded (count >= 1, count <= 2).
-    assert 1 <= count <= 2
+    # Only soon1 (3 days out) should be counted. 7d window is inclusive.
+    assert count == 1, (
+        f"expected exactly 1 task in 7-day window (3d out), got {count}; "
+        f"setup: soon1={in_window} just-out={just_out} later={far_out} today={today}"
+    )
 
 
 # ============================================================
@@ -635,7 +647,7 @@ def test_list_with_all_archived_tasks_show_archived_status(store):
     out = io.StringIO()
     err = io.StringIO()
     with redirect_stdout(out), redirect_stderr(err):
-        from x import _todo_list
+        from plugins.todo_queries import _todo_list
         import argparse
 
         args = argparse.Namespace(
@@ -671,7 +683,7 @@ def test_update_legacy_archived_task_is_blocked(store):
         status="in_progress",  # stale
     )
 
-    from x import _todo_update
+    from plugins.todo_mutations import _todo_update
     import argparse
 
     args = argparse.Namespace(
@@ -680,6 +692,13 @@ def test_update_legacy_archived_task_is_blocked(store):
         priority="low",
         deadline=None,
         tags=None,
+        time=None,        # v0.5 Phase A
+        end_time=None,    # v0.5 Phase A
+        duration=None,    # v0.5 Phase A
+        parent=None,      # v0.5 Phase B
+        remind=None,      # v0.5 Phase C
+        repeat=None,      # v0.5 Phase D
+        depends=None,     # v0.5 Phase E
     )
     out = io.StringIO()
     err = io.StringIO()
