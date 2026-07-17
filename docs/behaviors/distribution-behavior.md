@@ -109,6 +109,18 @@ And 命令别名为 `x`
 
 And InstallerSha256 等于 EXE 的真实 SHA-256
 
+### 场景：CI 使用兼容 1.12 清单的验证器
+
+Given GitHub Windows Runner 可能预装早于 1.12 的 WinGet
+
+When 发布工作流验证 ManifestVersion 为 `1.12.0` 的清单
+
+Then 工作流必须通过微软官方 PowerShell 模块把 WinGet 升级到最新稳定版
+
+And 不得因为 Runner 已存在旧版 `winget` 命令而跳过升级
+
+And `winget validate` 的警告或错误必须继续阻止发布
+
 ### 场景：拒绝不可复现的清单输入
 
 Given URL 不是 HTTPS、安装文件不存在、版本不是 `X.Y.Z`，或版本与源码不一致
