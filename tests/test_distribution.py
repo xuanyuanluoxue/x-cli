@@ -268,6 +268,17 @@ def test_release_workflow_keeps_manual_runs_from_creating_public_release():
     assert "needs: build" in workflow
 
 
+def test_release_workflow_upgrades_stale_winget_before_validation():
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Install-Module -Name Microsoft.WinGet.Client" in workflow
+    assert "Repair-WinGetPackageManager -Force -Latest -AllUsers" in workflow
+    assert "GITHUB_TOKEN: ${{ github.token }}" in workflow
+    assert "if (-not (Get-Command winget" not in workflow
+
+
 def test_readmes_advertise_winget_without_claiming_unpublished_availability():
     for filename in ("README.md", "README.zh.md"):
         text = (ROOT / filename).read_text(encoding="utf-8")

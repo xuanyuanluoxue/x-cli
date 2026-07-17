@@ -58,15 +58,16 @@ jobs:
             --url $Url `
             --output dist\winget
 
-      - name: Install WinGet when runner image does not provide it
+      - name: Install a manifest-compatible WinGet
         shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
-          if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
-            $ProgressPreference = "SilentlyContinue"
-            Install-PackageProvider -Name NuGet -Force | Out-Null
-            Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery | Out-Null
-            Repair-WinGetPackageManager -AllUsers
-          }
+          $ProgressPreference = "SilentlyContinue"
+          Install-PackageProvider -Name NuGet -Force | Out-Null
+          Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery | Out-Null
+          Import-Module Microsoft.WinGet.Client
+          Repair-WinGetPackageManager -Force -Latest -AllUsers
           winget --version
 
       - name: Validate and archive WinGet manifest
