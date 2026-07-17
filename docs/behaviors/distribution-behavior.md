@@ -49,6 +49,8 @@ Then 发布脚本必须为所有子进程启用 Python UTF-8 模式
 
 And 完成后必须恢复调用者原有的编码环境变量
 
+And EXE 冒烟测试必须显式按 UTF-8 捕获 stdout 和 stderr，不依赖 PowerShell 宿主代码页
+
 ### 场景：独立程序可直接运行
 
 Given Windows x64 发行构建完成

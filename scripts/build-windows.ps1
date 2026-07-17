@@ -6,6 +6,37 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
+function Invoke-CapturedUtf8Process {
+    param(
+        [Parameter(Mandatory = $true)][string]$Executable,
+        [string[]]$ProcessArguments = @()
+    )
+
+    $StartInfo = [System.Diagnostics.ProcessStartInfo]::new()
+    $StartInfo.FileName = $Executable
+    $StartInfo.Arguments = $ProcessArguments -join " "
+    $StartInfo.UseShellExecute = $false
+    $StartInfo.CreateNoWindow = $true
+    $StartInfo.RedirectStandardOutput = $true
+    $StartInfo.RedirectStandardError = $true
+    $StartInfo.StandardOutputEncoding = [System.Text.Encoding]::UTF8
+    $StartInfo.StandardErrorEncoding = [System.Text.Encoding]::UTF8
+
+    $Process = [System.Diagnostics.Process]::new()
+    $Process.StartInfo = $StartInfo
+    [void]$Process.Start()
+    $Stdout = $Process.StandardOutput.ReadToEnd()
+    $Stderr = $Process.StandardError.ReadToEnd()
+    $Process.WaitForExit()
+    $Result = [PSCustomObject]@{
+        ExitCode = $Process.ExitCode
+        Stdout = $Stdout
+        Stderr = $Stderr
+    }
+    $Process.Dispose()
+    return $Result
+}
+
 function Test-PackagedWebUi {
     param(
         [Parameter(Mandatory = $true)][string]$Executable,
@@ -152,14 +183,19 @@ try {
         throw "PyInstaller did not produce $Exe."
     }
 
-    $VersionOutput = (& $Exe --version).Trim()
-    if ($LASTEXITCODE -ne 0 -or $VersionOutput -ne "x $Version") {
-        throw "EXE version smoke test failed: expected 'x $Version', got '$VersionOutput'."
+    $VersionResult = Invoke-CapturedUtf8Process `
+        -Executable $Exe `
+        -ProcessArguments @("--version")
+    $VersionOutput = $VersionResult.Stdout.Trim()
+    if ($VersionResult.ExitCode -ne 0 -or $VersionOutput -ne "x $Version") {
+        throw "EXE version smoke test failed: expected 'x $Version', got '$VersionOutput'; stderr: $($VersionResult.Stderr)"
     }
 
-    $NoteHelp = & $Exe @("note", "--help") 2>&1
-    if ($LASTEXITCODE -ne 0 -or ($NoteHelp -join "`n") -notmatch "usage: x note") {
-        throw "EXE note help smoke test failed."
+    $NoteResult = Invoke-CapturedUtf8Process `
+        -Executable $Exe `
+        -ProcessArguments @("note", "--help")
+    if ($NoteResult.ExitCode -ne 0 -or $NoteResult.Stdout -notmatch "usage: x note") {
+        throw "EXE note help smoke test failed; stdout: $($NoteResult.Stdout); stderr: $($NoteResult.Stderr)"
     }
 
     Test-PackagedWebUi -Executable $Exe -RepositoryRoot $RepoRoot
