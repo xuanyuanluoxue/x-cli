@@ -758,6 +758,11 @@ def test_e2e_default_path_is_independent_from_xavier(
     import re
     env = os.environ.copy()
     env.pop("XCLI_TODO_DIR", None)
+    data_root = tmp_path / "platform-data"
+    if os.name == "nt":
+        env["LOCALAPPDATA"] = str(data_root)
+    else:
+        env["XDG_DATA_HOME"] = str(data_root)
 
     proc = subprocess.run(
         [x_path, "todo", "init"],
@@ -766,12 +771,13 @@ def test_e2e_default_path_is_independent_from_xavier(
     assert proc.returncode == 0, f"stderr={proc.stderr!r}"
 
     # Extract the path from output
-    m = re.search(r"已[存创]在：(.+)", proc.stdout)
+    m = re.search(r"已(?:存在|创建)：(.+)", proc.stdout)
     assert m, f"could not extract path from {proc.stdout!r}"
-    default_path = m.group(1).strip()
+    default_path = Path(m.group(1).strip())
+    assert default_path == data_root / "x-cli" / "todo"
 
     # The path must contain 'x-cli' and must NOT contain a '.xavier' segment
-    parts = Path(default_path).parts
+    parts = default_path.parts
     assert any(p == "x-cli" for p in parts), (
         f"default TODO path {default_path!r} missing 'x-cli' segment"
     )
