@@ -38,6 +38,8 @@
   引用的设计原型；永久规格已迁移到 BDD、API 和架构文档。
 
 ### Fixed
+- 修复 PyInstaller 独立 EXE 在英文 Windows 的 `cp1252` 标准流中输出中文帮助时
+  崩溃的问题；CLI 现在会在参数解析和插件分发前安全切换到 UTF-8。
 - 修复英文 Windows Runner 使用 `cp1252` 时无法测试中文和 Emoji CLI 输出的问题；
   发布脚本现在为子进程启用 UTF-8、显式捕获 EXE 的 UTF-8 输出，并在完成后
   恢复调用者环境。
