@@ -102,6 +102,19 @@ def test_windows_build_script_runs_release_smoke_tests_and_hashes():
     assert "release-smoke-token" in script
 
 
+def test_windows_build_script_forces_utf8_for_child_processes_and_restores_env():
+    script = (ROOT / "scripts" / "build-windows.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert '$env:PYTHONUTF8 = "1"' in script
+    assert '$env:PYTHONIOENCODING = "utf-8"' in script
+    assert "PreviousPythonUtf8" in script
+    assert "PreviousPythonIoEncoding" in script
+    assert "Remove-Item Env:PYTHONUTF8" in script
+    assert "Remove-Item Env:PYTHONIOENCODING" in script
+
+
 def test_windows_build_script_cleans_up_onefile_web_children():
     script = (ROOT / "scripts" / "build-windows.ps1").read_text(
         encoding="utf-8"

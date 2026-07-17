@@ -39,6 +39,16 @@ And 运行时依赖仍为空
 
 ## 功能：Windows 用户无需安装 Python
 
+### 场景：英文 Windows Runner 使用 UTF-8
+
+Given Windows Runner 的系统代码页不能编码中文和 Emoji
+
+When 发布脚本运行 pytest、Python 构建命令和 EXE 冒烟测试
+
+Then 发布脚本必须为所有子进程启用 Python UTF-8 模式
+
+And 完成后必须恢复调用者原有的编码环境变量
+
 ### 场景：独立程序可直接运行
 
 Given Windows x64 发行构建完成
