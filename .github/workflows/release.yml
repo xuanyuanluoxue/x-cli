@@ -67,7 +67,7 @@ jobs:
           Install-PackageProvider -Name NuGet -Force | Out-Null
           Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery | Out-Null
           Import-Module Microsoft.WinGet.Client
-          Repair-WinGetPackageManager -Force -Latest -AllUsers
+          Repair-WinGetPackageManager -Force -Latest
           winget --version
 
       - name: Validate and archive WinGet manifest
