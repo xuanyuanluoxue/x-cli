@@ -115,6 +115,18 @@ def test_windows_build_script_forces_utf8_for_child_processes_and_restores_env()
     assert "Remove-Item Env:PYTHONIOENCODING" in script
 
 
+def test_windows_build_script_captures_exe_output_as_utf8():
+    script = (ROOT / "scripts" / "build-windows.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "Invoke-CapturedUtf8Process" in script
+    assert "System.Diagnostics.ProcessStartInfo" in script
+    assert "StandardOutputEncoding" in script
+    assert "StandardErrorEncoding" in script
+    assert ".ExitCode" in script
+
+
 def test_windows_build_script_cleans_up_onefile_web_children():
     script = (ROOT / "scripts" / "build-windows.ps1").read_text(
         encoding="utf-8"
