@@ -484,7 +484,9 @@ x-cli 的密钥管理子命令。**不**与 legacy TODO system的 `<legacy-crede
   - Windows: `%LOCALAPPDATA%\x-cli\secrets.json`
   - Unix: `$XDG_DATA_HOME/x-cli/secrets.json` → fallback `~/.local/share/x-cli/secrets.json`
 - **覆盖**：环境变量 `XCLI_SECRETS_DIR`
-- **格式**：JSON（单个 dict，`version: "1.0"` + `secrets: [...]`）
+- **格式**：JSON（单个 dict，`version: "1.1"` + `secrets: [...]`）
+- **字段模型**：每条记录使用 `fields[]` 保存多个具名值；kind 仅为 `secret` / `text`，恰好一个 secret 是 primary
+- **兼容**：读取 1.0 顶层 `value` 时映射为主 secret；首次成功写入 1.1 前生成原样迁移备份
 - **权限**：600（Windows 用 ACL）
 - **加密**：MVP 不加密（明文 + 文件权限保护；后期加 `--encrypt` flag）
 
@@ -508,9 +510,10 @@ tests/
 
 | 约束 | 原因 |
 |------|------|
-| `list` 永不显示 value | 避免 `> log.txt` 泄露 |
+| `list` 永不显示 fields/value | 避免 `> log.txt` 泄露 |
 | `get` 永远 stderr 警告 | 提醒用户密钥已离开数据库 |
-| `search` 不搜 value | 避免 grep 撞到 |
+| `search` 不搜任何字段值 | 避免 secret 或普通字符串经 grep 泄露 |
+| JSON 不双写 primary value | 避免 `value` 与 `fields` 漂移；value 仅为领域/API 兼容别名 |
 | 文件权限 600 | OS 级保护 |
 | MVP 不引 `cryptography` | 保持 stdlib-only |
 
@@ -522,10 +525,10 @@ tests/
 |---------|------|
 | `name` | `.md` 文件的 `## <section>` 标题 |
 | `category` | 文件名（去 `.md`）|
-| `value` | 整个 `text` 代码块原文（多行 `key:value`）|
+| `fields[0]` | label=`密钥`、kind=`secret`、primary=true，value 为整个 `text` 代码块原文 |
 | `note` | section 上面的 metadata 表格（如「用途」「状态」）|
 
-**单向**，**不**删除旧文件。详细 BDD 见 `docs/behaviors/secret-behavior.md`（17 场景）。
+**单向**，**不**删除旧文件。详细 BDD 见 `docs/behaviors/secret-behavior.md`。
 
 ---
 

@@ -239,7 +239,7 @@
 
 ---
 
-## 场景 16：列出密钥（不含 value）
+## 场景 16：列出密钥（不含 fields/value）
 
 **Given**：DB 有 minimax 和 openai
 
@@ -249,11 +249,11 @@
 **Then**：
 - HTTP 200
 - Body 的 secrets 数组只含 name + category + updated_at
-- **不含** value 字段（硬性约束）
+- **不含** fields、value 或任何普通/密钥字段值（硬性约束）
 
 ---
 
-## 场景 17：获取单个密钥（含 value + stderr 警告）
+## 场景 17：获取单个密钥（含 fields + value 兼容别名 + stderr 警告）
 
 **Given**：DB 有 minimax，value = `sk-test`
 
@@ -262,7 +262,8 @@
 
 **Then**：
 - HTTP 200
-- Body 含完整对象（含 value）
+- Body 含完整对象（含 fields）
+- Body 的兼容字段 value 等于 primary secret 字段值
 - 服务端 stderr 输出 `🔐 警告：密钥已通过 Web API 输出到客户端`
 
 ---
@@ -289,6 +290,38 @@
 **Then**：
 - HTTP 204（无 body）
 - DB 中 minimax 不存在
+
+---
+
+## 场景 19A：用 fields 创建多字段密钥
+
+**When**：
+- `POST /api/secrets` body 含 URL(text) + 密码(secret, primary=true)
+
+**Then**：
+- HTTP 201
+- 响应含规范化 fields 和主密钥 value 兼容别名
+- DB 只持久化 fields，不重复持久化顶层 value
+
+## 场景 19B：兼容旧 value 请求
+
+- POST 只有 value 时创建一个 label=`密钥` 的主 secret 字段
+- PATCH 只有 value 时只更新主 secret，不删除其他 fields
+
+## 场景 19C：整体替换 fields
+
+**When**：
+- `PATCH /api/secrets/<name>` body 含完整 fields 数组
+
+**Then**：
+- 全部字段先通过领域层校验，再一次原子写入
+- 校验失败返回 HTTP 400 `validation_error`，原条目不变化
+
+## 场景 19D：拒绝歧义或非法 fields
+
+- value 与 fields 同时出现 → 400
+- fields 违反 label/kind/value/primary/数量约束 → 400
+- 错误响应不得回显任何字段值
 
 ---
 
@@ -353,6 +386,8 @@
 | **Content-Type** | 所有 API 返回 `application/json; charset=utf-8` |
 | **CORS** | MVP 不实现（同源：前后端同 8421 端口）|
 | **HTTPS** | MVP 不实现（仅 localhost，明文即可）|
+| **密钥 summary** | 永不返回 fields/value 或任何字段值 |
+| **密钥 detail** | 返回 fields 前记录 stderr 安全警告；value 仅是主密钥兼容别名 |
 
 ---
 

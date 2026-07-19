@@ -2,8 +2,8 @@
 
 > **目标读者**: 接续开发的 AI agent
 > **范围**: `x secret <子命令>` 命令族，独立于 `<legacy-credentials-dir>/`，自管 JSON 数据库
-> **对应测试**: `tests/test_secret.py`（单元）+ `tests/test_e2e_secret.py`（子进程）
-> **状态**: 📋 P0 规划中（2026-06-21）
+> **对应测试**: `tests/test_secrets.py`（单元）+ `tests/test_e2e_secret.py`（子进程）
+> **状态**: 🚧 多字段 schema 1.1 实施中（2026-07-19）
 
 ---
 
@@ -24,12 +24,25 @@
 
 ```json
 {
-  "version": "1.0",
+  "version": "1.1",
   "secrets": [
     {
       "name": "minimax",
       "category": "接口密钥",
-      "value": "sk-test1234",
+      "fields": [
+        {
+          "label": "API Key",
+          "kind": "secret",
+          "value": "sk-test1234",
+          "primary": true
+        },
+        {
+          "label": "Base URL",
+          "kind": "text",
+          "value": "https://api.example.com/v1",
+          "primary": false
+        }
+      ],
       "note": "Migrated from 接口密钥.md",
       "created_at": "2026-06-21T12:34:56",
       "updated_at": "2026-06-21T12:34:56"
@@ -41,7 +54,10 @@
 字段约束：
 - `name` — 唯一，必填，1-64 字符，**不**区分大小写（迁移保留原大小写）
 - `category` — 默认 `"default"`，迁移时填入 `.md` 文件名（去 `.md`）
-- `value` — 必填，可含换行（多行 `key:value` 格式）
+- `fields` — 1-50 个具名字段；label 大小写不敏感唯一，value 非空且可含换行
+- `fields[].kind` — 只允许 `secret` / `text`
+- `fields[].primary` — 恰好一个为 true，且必须属于 `secret` 字段
+- 旧版顶层 `value` — 兼容读取为一个 label=`密钥` 的主 secret 字段，新写入不再重复保存
 - `note` — 可选，备注
 - `created_at` / `updated_at` — ISO 8601 字符串
 
@@ -130,6 +146,34 @@
 - 适用：多行 value 里的纯 API key 直接粘贴到 API 工具。如果用户要看完整 value 仍可以用 `--no-clipboard` 或 `--full`
 
 > **设计动机**：用户粘贴密钥到工具时，多行 value（migration 自旧系统时常见）粘出来是 5 行乱七八糟的文本。自动提取第一个 key 行让"拿来即用"。
+
+### 场景 2.6：get 默认取得主密钥字段
+
+**Given**:
+- DB 条目有普通文本字段 URL 和两个 secret 字段
+- 其中 label=`密码` 的 secret 字段 primary=true
+
+**When**:
+- `x secret get 123pan.webdav`
+
+**Then**:
+- stdout 和剪贴板取得 `密码` 字段的值
+- URL 和非主 secret 的值不输出
+- stderr 仍显示密钥输出警告
+
+### 场景 2.7：get --field 精确取得具名字段
+
+**Given**:
+- DB 条目有 label=`URL`、kind=`text` 的字段
+
+**When**:
+- `x secret get 123pan.webdav --field URL`
+
+**Then**:
+- stdout 和剪贴板取得 URL 原值
+- label 按大小写不敏感精确匹配，不做模糊匹配
+- 不存在的 label 返回退出码 2，错误输出不得包含其他字段值
+- 显式选择字段时不执行旧式多行 key 猜测
 
 ---
 
@@ -364,6 +408,60 @@
 
 ---
 
+## 场景 18：旧 schema 1.0 只读不改写
+
+**Given**:
+- DB version=`1.0`，条目只有顶层 `value`
+
+**When**:
+- 执行 list / get / search 任一只读命令
+
+**Then**:
+- 行为等同一个 label=`密钥`、kind=`secret`、primary=true 的字段
+- DB 文件字节不变
+- 不生成迁移备份
+
+## 场景 19：首次写入旧 DB 自动备份
+
+**Given**:
+- DB version=`1.0`
+
+**When**:
+- 执行 set / update / rm / import 任一成功写操作
+
+**Then**:
+- 写入前生成一个 `secrets-v1.0-backup-YYYYMMDD-HHMMSS.json`
+- 备份内容与写入前 DB 完全一致
+- 新 DB version=`1.1`
+- 后续 1.1 写入不再生成 v1.0 迁移备份
+- 备份失败时原 DB 不得变化
+
+## 场景 20：多字段校验失败时原子拒绝
+
+以下任一输入必须拒绝且 DB 不变化：
+
+- fields 为空或超过 50 个
+- label 为空、超过 64 字符或大小写不敏感重复
+- kind 不是 `secret` / `text`
+- value 不是字符串或为空
+- 没有主字段、多个主字段或 text 被设为主字段
+- 同一调用同时提供 `value` 和 `fields`
+
+## 场景 21：set/update --value 保持兼容
+
+- `set --value` 创建一个 label=`密钥` 的主 secret 字段
+- `update --value` 只更新现有主 secret 字段，不删除 URL 等其他字段
+
+## 场景 22：list/search 不泄露任何字段值
+
+- list 不显示 fields、secret 值或 text 值
+- search 只搜索 name + note，不匹配任何 fields 值
+
+## 场景 23：import 映射到主密钥字段
+
+- 旧 Markdown text 代码块原文保存为一个 label=`密钥` 的主 secret 字段
+- 原来的多行 key 提取兼容行为继续生效
+
 ## 不变量
 
 | 项 | 值 |
@@ -373,9 +471,9 @@
 | **文件权限** | 600（Windows 用 ACL）|
 | **加密** | MVP 不加密（明文 + 文件权限保护） |
 | **依赖** | **零**第三方库（只 stdlib `json` / `pathlib` / `os` / `datetime`）|
-| **list 不显示 value** | 硬性约束（避免 `x secret list > log.txt` 泄露）|
+| **list 不显示 fields/value** | 硬性约束（避免 `x secret list > log.txt` 泄露）|
 | **get 永远带警告** | 硬性约束（不管是否 tty）|
-| **search 不搜 value** | 硬性约束（避免 grep 撞到）|
+| **search 不搜任何 fields/value** | 硬性约束（包括普通文本字段，避免 grep 撞到）|
 
 ---
 
@@ -391,13 +489,15 @@
 
 ---
 
-## 不做（v0.3.0）
+## 不做（多字段 1.1）
 
 - ❌ 加密（master password / Fernet）
 - ❌ 子命令缩写（`x s l`）
 - ❌ TUI（rich / textual）
 - ❌ 标签（用 `category` 分组替代）
 - ❌ 自动备份到云端（用 `export` 手动备份）
+- ❌ CLI 增删/重排多个字段（本期由 Web/API 完成）
+- ❌ 单字段 REST 路由、字段历史版本与多人写锁
 
 ---
 
