@@ -58,6 +58,7 @@
 - 退出码 0
 - HTTP 200
 - Body 包含 `{"status": "ok", "auth_required": false}`
+- Body 包含 `"secret_confirmation_required": true`（默认值）
 
 ---
 
@@ -395,6 +396,43 @@
 
 ---
 
+## 场景 26：关闭后续密钥安全确认
+
+**Given**：
+- 当前配置的 `web_secret_confirmation: true`
+- 用户在查看或编辑密钥的安全确认框中勾选“不再提示”并继续
+
+**When**：
+- 前端发送 `PATCH /api/preferences`，body 为 `{"secret_confirmation_required": false}`
+
+**Then**：
+- HTTP 200，响应返回更新后的 preferences
+- 当前 WebServer 会话立即把 health 中该字段更新为 false
+- 当前有效配置文件原子写入 `web_secret_confirmation: false`
+- 后续查看和编辑密钥不再弹出安全确认
+- 明文 API 的 stderr 安全警告和字段默认隐藏行为不变
+
+## 场景 27：偏好 API 的安全边界
+
+- body 缺字段、字段不是 JSON boolean 或包含不支持字段 → HTTP 400 `validation_error`
+- 校验失败时配置文件和运行时状态均不变化
+- 认证开启时，缺少或错误 Token → HTTP 401
+- `GET /api/preferences` → HTTP 405
+- API 不能修改任意其他配置项
+
+## 场景 28：重新开启密钥安全确认
+
+**Given**：配置文件包含 `web_secret_confirmation: false`
+
+**When**：用户手工改为 `true` 并重启 `x web`
+
+**Then**：
+- health 返回 `secret_confirmation_required: true`
+- 查看和编辑密钥再次显示安全确认
+- 旧后端或缺失能力字段时，前端也按 true 处理
+
+---
+
 ## 不变量
 
 | 项 | 值 |
@@ -402,6 +440,7 @@
 | **默认 host** | `127.0.0.1`（绝不默认 0.0.0.0）|
 | **默认 port** | `8421` |
 | **默认认证** | 关闭；`web_auth: true` 或 `--token` 时开启 |
+| **密钥安全确认** | 默认开启；明确保存偏好后关闭，未知状态按开启处理 |
 | **token 长度** | 认证开启且自动生成时为 32 字节（base64 后 43 字符）|
 | **token 持久化** | 不（每次启动重新生成；MVP 不写盘）|
 | **静态资源根** | `core/web/static/` |

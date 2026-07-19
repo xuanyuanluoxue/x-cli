@@ -19,6 +19,7 @@
 - 认证开启时，后端校验所有受保护的 `/api/*` 请求；缺失/错误 → 401
 - 显式 `--token <value>` 会忽略关闭状态并为本次运行开启认证
 - 可用 `--host 0.0.0.0` 暴露给局域网；无认证模式会打印风险警告
+- 密钥查看/编辑安全确认默认开启；可保存“不再提示”，再通过配置文件恢复
 
 **⚠️ 高风险**：`GET /api/secrets/<name>` 返回全部字段明文。每次调用 stderr 打警告（与 `x secret get` 一致）。
 
@@ -53,6 +54,16 @@ x web --auto-token-url             # 认证开启时自动把 Token 交给浏览
 web_auth: true
 ```
 
+密钥确认偏好使用同一个配置文件：
+
+```yaml
+# true = 查看/编辑密钥明文前弹出安全确认
+web_secret_confirmation: true
+```
+
+在确认框勾选“不再提示”会把它保存为 `false` 并立即生效。要恢复，改回
+`true` 后重启 `x web`。
+
 ---
 
 ## 3. 认证
@@ -76,13 +87,14 @@ X-Web-Token: <token>
 
 ---
 
-## 4. 端点清单（11 个）
+## 4. 端点清单（13 个）
 
 ### 4.1 系统
 
 | 方法 | 路径 | 用途 |
 |------|------|------|
-| `GET` | `/api/health` | 健康检查（无需 token；返回 `auth_required`）|
+| `GET` | `/api/health` | 健康检查（无需 token；返回能力字段）|
+| `PATCH` | `/api/preferences` | 保存受限的 Web 偏好（认证开启时需要 token）|
 
 ### 4.2 任务（todo）
 
@@ -118,9 +130,36 @@ X-Web-Token: <token>
 {
   "status": "ok",
   "version": "0.6.0",
-  "subsystems": ["todo", "secret"]
+  "subsystems": ["todo", "secret"],
+  "auth_required": false,
+  "secret_confirmation_required": true
 }
 ```
+
+### 5.2 `PATCH /api/preferences`
+
+只允许保存密钥安全确认偏好，不是通用配置写入接口。
+
+**Request**：
+
+```json
+{"secret_confirmation_required": false}
+```
+
+**Response 200**：
+
+```json
+{"preferences": {"secret_confirmation_required": false}}
+```
+
+后端原子更新当前有效配置文件中的 `web_secret_confirmation`，保留注释、未知字段和其他设置，并立即更新当前服务状态。
+
+**错误**：
+- `400` — body 缺字段、存在额外字段或值不是 JSON boolean
+- `401` — 认证开启时缺少或提供错误 token
+- `500` — 配置写入失败；运行时状态不变
+
+> 后续章节编号保持历史兼容；本端点是新增的系统端点。
 
 ---
 
