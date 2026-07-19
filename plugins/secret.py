@@ -54,16 +54,21 @@ def register(parser: argparse.ArgumentParser) -> None:
     )
 
     # list [--category <c>]
-    sp = sub.add_parser("list", help="列出所有密钥（不显示 value）")
+    sp = sub.add_parser("list", help="列出所有密钥（不显示任何字段值）")
     sp.add_argument(
         "--category",
         dest="category",
         help="按分组过滤（只显示指定 category 的条目）",
     )
 
-    # get <name> [--full]
-    sp = sub.add_parser("get", help="取一个 value（默认复制到剪贴板 + 输出到 stdout）")
+    # get <name> [--field <label>] [--full]
+    sp = sub.add_parser("get", help="取主密钥或指定字段（默认复制 + 输出）")
     sp.add_argument("name", help="密钥名（精确 / 模糊匹配）")
+    sp.add_argument(
+        "--field",
+        dest="field_label",
+        help="按字段名称精确取值（大小写不敏感；默认取主密钥）",
+    )
     sp.add_argument(
         "--full",
         action="store_true",
@@ -107,7 +112,7 @@ def register(parser: argparse.ArgumentParser) -> None:
     sp.add_argument("name", help="密钥名")
 
     # search <keyword>
-    sp = sub.add_parser("search", help="按 name/note 模糊搜（不搜 value）")
+    sp = sub.add_parser("search", help="按 name/note 模糊搜（不搜任何字段值）")
     sp.add_argument("keyword", help="关键词")
 
     # import --from <dir>
@@ -266,7 +271,7 @@ def _secret_list(args: argparse.Namespace) -> int:
 
 
 def _secret_get(args: argparse.Namespace) -> int:
-    """``x secret get <name> [--full] [--no-clipboard] [--no-stdout]`` — 取一个 value。
+    """``x secret get <name> [--field <label>]`` — 取主密钥或指定字段。
 
     对应 BDD：§场景 2-4 + 用户增强（剪贴板）。
 
@@ -290,11 +295,17 @@ def _secret_get(args: argparse.Namespace) -> int:
         rows: list[tuple[str, str]] = [
             ("name", entry.name),
             ("category", entry.category),
-            ("value", entry.value),
-            ("note", entry.note or ""),
-            ("created_at", entry.created_at),
-            ("updated_at", entry.updated_at),
         ]
+        for item in entry.fields:
+            flags = item.kind + (", primary" if item.primary else "")
+            rows.append((f"field:{item.label}", f"{flags} | {item.value}"))
+        rows.extend(
+            [
+                ("note", entry.note or ""),
+                ("created_at", entry.created_at),
+                ("updated_at", entry.updated_at),
+            ]
+        )
         col0_w = max(
             display_width("Field"),
             max(display_width(r[0]) for r in rows),
@@ -310,24 +321,44 @@ def _secret_get(args: argparse.Namespace) -> int:
         for k, v in rows:
             out.append("  ".join([pad(k, col0_w), pad(v, col1_w)]))
         sys.stdout.write("\n".join(out) + "\n")
+        print(
+            "🔐 警告：密钥已输出到 stdout（可能被 shell 历史 / 日志捕获）",
+            file=sys.stderr,
+        )
         return 0
+
+    selected = (
+        entry.get_field(args.field_label)
+        if args.field_label is not None
+        else entry.primary_field
+    )
+    if selected is None:
+        print(
+            f"❌ 字段不存在：{args.field_label}（密钥：{entry.name}）",
+            file=sys.stderr,
+        )
+        return 2
 
     # 默认流程：stdout + 剪贴板
     # 剪贴板拿到的是「干净」的 token（从多行 value 中提取第一个
     # api_key: / token: / app_secret: / gateway_token: 行的值），方便
     # 直接粘贴。stdout 仍给完整 value（管道 / 调试用户能看到全部）。
     if not args.no_stdout:
-        print(entry.value)
+        print(selected.value)
 
     if not args.no_clipboard:
-        extracted = _extract_first_key(entry.value)
-        if extracted is not None and extracted != entry.value:
+        extracted = (
+            _extract_first_key(selected.value)
+            if args.field_label is None
+            else None
+        )
+        if extracted is not None and extracted != selected.value:
             # 多行 value 且能识别 key 行 → 把第一个 key 写到剪贴板
             clipboard_text = extracted
             extract_note = "（已提取 api_key 行）"
         else:
             # 单行 value 或无 key 模式 → 整块写到剪贴板
-            clipboard_text = entry.value
+            clipboard_text = selected.value
             extract_note = ""
         ok, msg = _copy_to_clipboard(clipboard_text)
         if ok:
