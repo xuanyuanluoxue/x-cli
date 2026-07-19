@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from core.config import AppConfig, ConfigError
+from core.config import AppConfig, ConfigError, set_web_secret_confirmation
 from core.logging import parse_level
 from core.paths import (
     xcli_config_path,
@@ -72,6 +72,7 @@ def test_scenario1_default_when_no_config_file(
     assert cfg.log_level == "WARNING"
     assert cfg.log_path == xcli_log_path()
     assert cfg.web_auth is False
+    assert cfg.web_secret_confirmation is True
 
 
 def test_appconfig_default_factory_returns_hardcoded_values(
@@ -87,6 +88,7 @@ def test_appconfig_default_factory_returns_hardcoded_values(
     assert cfg.log_level == "WARNING"
     assert cfg.log_path == xcli_log_path()
     assert cfg.web_auth is False
+    assert cfg.web_secret_confirmation is True
 
 
 # ============================================================
@@ -114,6 +116,7 @@ def test_scenario2_to_yaml_produces_init_file_content(
     assert "log_level: WARNING" in text
     assert "log_path:" in text
     assert "web_auth: false" in text
+    assert "web_secret_confirmation: true" in text
     # Header comment for traceability
     assert "x-cli configuration" in text
     assert text.startswith("#")
@@ -156,6 +159,70 @@ def test_web_auth_rejects_invalid_boolean(tmp_path: Path) -> None:
 
     with pytest.raises(ConfigError, match="web_auth"):
         AppConfig.from_yaml_file(cfg_file)
+
+
+def test_web_secret_confirmation_can_be_disabled_from_yaml(tmp_path: Path) -> None:
+    """The warning is opt-out and accepts only an explicit boolean."""
+    cfg_file = tmp_path / "web-confirmation.yaml"
+    cfg_file.write_text("web_secret_confirmation: false\n", encoding="utf-8")
+
+    cfg = AppConfig.from_yaml_file(cfg_file)
+
+    assert cfg.web_secret_confirmation is False
+
+
+def test_web_secret_confirmation_rejects_invalid_boolean(tmp_path: Path) -> None:
+    cfg_file = tmp_path / "bad-web-confirmation.yaml"
+    cfg_file.write_text("web_secret_confirmation: later\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="web_secret_confirmation"):
+        AppConfig.from_yaml_file(cfg_file)
+
+
+def test_set_web_secret_confirmation_preserves_user_config(tmp_path: Path) -> None:
+    """The narrow writer must not reformat or discard unrelated content."""
+    cfg_file = tmp_path / "config.yaml"
+    cfg_file.write_text(
+        "# keep this comment\n"
+        "todo_dir: D:\\\\tasks\n"
+        "future_option: custom-value\n"
+        "web_secret_confirmation: true  # user choice\n"
+        "web_auth: false\n",
+        encoding="utf-8",
+    )
+
+    set_web_secret_confirmation(cfg_file, False)
+
+    text = cfg_file.read_text(encoding="utf-8")
+    assert "# keep this comment" in text
+    assert "todo_dir: D:\\\\tasks" in text
+    assert "future_option: custom-value" in text
+    assert "web_auth: false" in text
+    assert "web_secret_confirmation: false  # user choice" in text
+    assert AppConfig.from_yaml_file(cfg_file).web_secret_confirmation is False
+
+
+def test_set_web_secret_confirmation_appends_missing_key(tmp_path: Path) -> None:
+    cfg_file = tmp_path / "config.yaml"
+    original = "# hand-written\nweb_auth: true\n"
+    cfg_file.write_text(original, encoding="utf-8")
+
+    set_web_secret_confirmation(cfg_file, False)
+
+    text = cfg_file.read_text(encoding="utf-8")
+    assert text.startswith(original)
+    assert text.endswith("web_secret_confirmation: false\n")
+
+
+def test_set_web_secret_confirmation_creates_default_config(tmp_path: Path) -> None:
+    cfg_file = tmp_path / "nested" / "config.yaml"
+
+    set_web_secret_confirmation(cfg_file, False)
+
+    assert cfg_file.is_file()
+    loaded = AppConfig.from_yaml_file(cfg_file)
+    assert loaded.web_secret_confirmation is False
+    assert loaded.web_auth is False
 
 
 # ============================================================

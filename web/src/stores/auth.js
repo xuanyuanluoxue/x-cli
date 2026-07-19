@@ -10,6 +10,7 @@ export const useAuthStore = defineStore("auth", {
   state: () => ({
     token: localStorage.getItem(TOKEN_KEY),
     authRequired: null,
+    secretConfirmationRequired: true,
     initialized: false,
   }),
   getters: {
@@ -28,6 +29,9 @@ export const useAuthStore = defineStore("auth", {
     clearToken() {
       this.token = null;
       localStorage.removeItem(TOKEN_KEY);
+    },
+    setSecretConfirmationRequired(required) {
+      this.secretConfirmationRequired = required !== false;
     },
   },
 });

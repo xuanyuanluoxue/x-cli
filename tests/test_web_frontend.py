@@ -128,6 +128,15 @@ def test_frontend_discovers_optional_auth_mode() -> None:
     assert "auth_required" in _all_js(), "optional auth discovery missing"
 
 
+def test_secret_confirmation_can_be_disabled_and_persisted() -> None:
+    """Built UI exposes the opt-out and stores it through the narrow API."""
+    js = _all_js()
+    assert "不再提示" in js
+    assert "secret_confirmation_required" in js
+    assert "/api/preferences" in js
+    assert "web_secret_confirmation" in js
+
+
 # ---- 可访问性 ------------------------------------------------------------
 
 

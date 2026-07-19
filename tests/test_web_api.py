@@ -25,6 +25,7 @@ from urllib.parse import quote
 
 import pytest
 
+from core.config import ConfigError
 from core.secrets import SecretField, SecretStore
 from core.secret_service import SecretService
 from core.storage import TaskStore
@@ -63,7 +64,17 @@ def server(
 
     token = "test-token-abc123"
     port = _free_port()
-    srv = WebServer(host="127.0.0.1", port=port, token=token, store=store, secrets_store=secrets_store)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("# test config\nweb_auth: true\n", encoding="utf-8")
+    srv = WebServer(
+        host="127.0.0.1",
+        port=port,
+        token=token,
+        store=store,
+        secrets_store=secrets_store,
+        config_path=config_path,
+        secret_confirmation_required=True,
+    )
     srv.start()
     # Wait for server to actually be listening (up to 2s)
     deadline = time.time() + 2.0
@@ -77,6 +88,7 @@ def server(
         raise RuntimeError(f"server didn't start within 2s on port {port}")
     srv.test_base_url = f"http://127.0.0.1:{port}"
     srv.test_token = token
+    srv.test_config_path = config_path
     try:
         yield srv
     finally:
@@ -93,12 +105,16 @@ def no_auth_server(
     store = TaskStore()
     secrets_store = SecretStore(db_path=str(tmp_path / "secrets.json"))
     port = _free_port()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("# test config\nweb_auth: false\n", encoding="utf-8")
     srv = WebServer(
         host="127.0.0.1",
         port=port,
         token=None,
         store=store,
         secrets_store=secrets_store,
+        config_path=config_path,
+        secret_confirmation_required=True,
     )
     srv.start()
     deadline = time.time() + 2.0
@@ -112,6 +128,7 @@ def no_auth_server(
         raise RuntimeError(f"server didn't start within 2s on port {port}")
     srv.test_base_url = f"http://127.0.0.1:{port}"
     srv.test_token = ""
+    srv.test_config_path = config_path
     try:
         yield srv
     finally:
@@ -289,6 +306,7 @@ def test_health_no_auth_required(server: WebServer):
     assert "todo" in body["subsystems"]
     assert "secret" in body["subsystems"]
     assert body["auth_required"] is True
+    assert body["secret_confirmation_required"] is True
 
 
 def test_default_mode_allows_api_without_token(no_auth_server: WebServer):
@@ -303,6 +321,98 @@ def test_health_reports_auth_disabled(no_auth_server: WebServer):
     status, body = _request(no_auth_server, "GET", "/api/health", token=None)
     assert status == 200
     assert body["auth_required"] is False
+    assert body["secret_confirmation_required"] is True
+
+
+def test_preferences_can_disable_secret_confirmation(server: WebServer):
+    """A valid preference update persists and changes live health state."""
+    status, body = _request(
+        server,
+        "PATCH",
+        "/api/preferences",
+        body={"secret_confirmation_required": False},
+    )
+
+    assert status == 200
+    assert body == {
+        "preferences": {"secret_confirmation_required": False}
+    }
+    config_text = server.test_config_path.read_text(encoding="utf-8")
+    assert "# test config" in config_text
+    assert "web_auth: true" in config_text
+    assert "web_secret_confirmation: false" in config_text
+    health_status, health = _request(server, "GET", "/api/health", token=None)
+    assert health_status == 200
+    assert health["secret_confirmation_required"] is False
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"secret_confirmation_required": "false"},
+        {"secret_confirmation_required": 0},
+        {"secret_confirmation_required": False, "web_auth": False},
+    ],
+)
+def test_preferences_reject_invalid_payload_without_changes(
+    server: WebServer, payload: dict
+):
+    before = server.test_config_path.read_text(encoding="utf-8")
+
+    status, body = _request(server, "PATCH", "/api/preferences", body=payload)
+
+    assert status == 400
+    assert body["code"] == "validation_error"
+    assert server.test_config_path.read_text(encoding="utf-8") == before
+    _, health = _request(server, "GET", "/api/health", token=None)
+    assert health["secret_confirmation_required"] is True
+
+
+def test_preferences_requires_token_when_auth_enabled(server: WebServer):
+    status, body = _request(
+        server,
+        "PATCH",
+        "/api/preferences",
+        token=None,
+        body={"secret_confirmation_required": False},
+    )
+    assert status == 401
+    assert body["code"] == "missing_token"
+
+
+def test_preferences_get_is_method_not_allowed(server: WebServer):
+    status, body = _request(server, "GET", "/api/preferences")
+    assert status == 405
+    assert body["code"] == "method_not_allowed"
+
+
+def test_preferences_write_failure_keeps_live_state(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+):
+    """Runtime state changes only after the atomic config write succeeds."""
+    from core.web.handlers import preferences
+
+    before = server.test_config_path.read_text(encoding="utf-8")
+
+    def fail_write(_path: Path, _required: bool) -> None:
+        raise ConfigError("disk unavailable")
+
+    monkeypatch.setattr(preferences, "set_web_secret_confirmation", fail_write)
+
+    status, body = _request(
+        server,
+        "PATCH",
+        "/api/preferences",
+        body={"secret_confirmation_required": False},
+    )
+
+    assert status == 500
+    assert body["code"] == "config_error"
+    assert "disk unavailable" not in json.dumps(body)
+    assert server.test_config_path.read_text(encoding="utf-8") == before
+    _, health = _request(server, "GET", "/api/health", token=None)
+    assert health["secret_confirmation_required"] is True
 
 
 def test_api_missing_token_returns_401(server: WebServer):

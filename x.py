@@ -151,10 +151,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 6
     log = get_logger("x.main")
     log.debug(
-        "effective config: todo_dir=%s, log_level=%s, web_auth=%s",
+        "effective config: todo_dir=%s, log_level=%s, web_auth=%s, "
+        "web_secret_confirmation=%s",
         config.todo_dir,
         config.log_level,
         config.web_auth,
+        config.web_secret_confirmation,
     )
 
     # 把 config 派生的路径灌进环境变量，storage 层继续用 XCLI_TODO_DIR /
@@ -164,6 +166,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Web 插件保持稳定的 ``run(args)`` 契约；用进程内环境变量传递已经由
     # 顶层解析完成的配置（包括 ``--config`` 指定的非默认文件）。
     os.environ["XCLI_WEB_AUTH"] = "1" if config.web_auth else "0"
+    os.environ["XCLI_WEB_SECRET_CONFIRMATION"] = (
+        "1" if config.web_secret_confirmation else "0"
+    )
+    if parsed.config:
+        effective_config_path = Path(parsed.config).resolve()
+    elif os.environ.get("XCLI_CONFIG"):
+        effective_config_path = Path(os.environ["XCLI_CONFIG"]).resolve()
+    else:
+        from core.paths import xcli_config_path
+
+        effective_config_path = xcli_config_path().resolve()
+    os.environ["XCLI_CONFIG_PATH"] = str(effective_config_path)
 
     if not parsed.subcommand:
         parser.print_help()

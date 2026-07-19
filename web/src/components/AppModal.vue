@@ -25,6 +25,10 @@ onBeforeUnmount(() => document.removeEventListener("keydown", onKey));
       <div class="modal" role="alertdialog" aria-modal="true" :aria-label="modalState.current.title">
         <h3>{{ modalState.current.title }}</h3>
         <div class="modal-body">{{ modalState.current.body }}</div>
+        <label v-if="modalState.current.checkboxLabel" class="modal-option">
+          <input v-model="modalState.current.checked" type="checkbox">
+          <span>{{ modalState.current.checkboxLabel }}</span>
+        </label>
         <div class="modal-actions">
           <button class="btn" @click="resolveModal(false)">{{ modalState.current.cancelText }}</button>
           <button

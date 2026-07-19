@@ -31,9 +31,13 @@ router.beforeEach(async (to) => {
       const health = await api.health();
       // Older backends omit this field and therefore stay protected.
       auth.setAuthRequired(health.auth_required !== false);
+      auth.setSecretConfirmationRequired(
+        health.secret_confirmation_required !== false,
+      );
     } catch {
       // Service unreachable/unknown: fail closed and keep the login screen.
       auth.setAuthRequired(true);
+      auth.setSecretConfirmationRequired(true);
     }
   }
   if (!auth.isAuthed && !to.meta.public) {

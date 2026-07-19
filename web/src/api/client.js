@@ -72,6 +72,11 @@ function unwrapResource(data, key) {
 
 export const api = {
   health: () => apiFetch("/api/health"),
+  updatePreferences: (data) =>
+    apiFetch("/api/preferences", {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    }).then((d) => unwrapResource(d, "preferences")),
 
   // tasks
   listTasks: (filters = {}) => apiFetch("/api/tasks" + qs(filters)),

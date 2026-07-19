@@ -22,6 +22,7 @@ from urllib.parse import unquote
 
 from core.web.auth import is_valid_token
 from core.web.handlers.health import handle_health
+from core.web.handlers.preferences import handle_preferences
 from core.web.handlers.secrets import handle_secrets_collection, handle_secret_item
 from core.web.handlers.tasks import (
     handle_task_archive,
@@ -149,6 +150,17 @@ class WebHandler(BaseHTTPRequestHandler):
         if path == "/api/health" and method == "GET":
             handle_health(self)
             return
+        if path == "/api/preferences":
+            if method == "PATCH":
+                handle_preferences(self)
+            else:
+                error_response(
+                    self,
+                    HTTPStatus.METHOD_NOT_ALLOWED,
+                    "method_not_allowed",
+                    f"method {method} not allowed on {path}",
+                )
+            return
         if path == "/api/tasks":
             if method == "GET":
                 handle_tasks_collection(self, "list")
@@ -225,12 +237,16 @@ class _Server(ThreadingHTTPServer):
         token: str | None,
         store: Any,  # TaskStore — avoid circular import
         secret_service: Any,  # SecretService
+        config_path: Path,
+        secret_confirmation_required: bool,
     ) -> None:
         super().__init__(server_address, handler_cls)
         self.token = token
         self.store = store
         self.secret_service = secret_service
         self.secrets = secret_service.store
+        self.config_path = config_path
+        self.secret_confirmation_required = secret_confirmation_required
 
 
 class WebServer:
@@ -256,14 +272,21 @@ class WebServer:
         store: Any | None = None,
         secrets_store: Any | None = None,
         secret_service: Any | None = None,
+        config_path: Path | None = None,
+        secret_confirmation_required: bool = True,
     ) -> None:
         from core.secret_service import SecretService  # lazy import
         from core.secrets import SecretStore  # lazy import
         from core.storage import TaskStore  # lazy import
+        from core.paths import xcli_config_path  # lazy import
 
         self.host = host
         self.port = port
         self.token = token
+        self.config_path = (
+            Path(config_path) if config_path is not None else xcli_config_path()
+        )
+        self.secret_confirmation_required = bool(secret_confirmation_required)
         self.store = store if store is not None else TaskStore()
         if secret_service is not None:
             if (
@@ -300,6 +323,8 @@ class WebServer:
             token=self.token,
             store=self.store,
             secret_service=self.secret_service,
+            config_path=self.config_path,
+            secret_confirmation_required=self.secret_confirmation_required,
         )
 
         def _serve_with_logging() -> None:

@@ -1,13 +1,14 @@
 """core/config.py — YAML configuration loader for x-cli (v0.4.x).
 
 The :class:`AppConfig` dataclass is the in-memory representation of one
-``config.yaml`` file. It is intentionally minimal and exposes five knobs:
+``config.yaml`` file. It is intentionally minimal and exposes six knobs:
 
 * ``todo_dir`` — overrides :func:`core.paths.xcli_todo_dir`
 * ``secrets_path`` — overrides :func:`core.paths.xcli_secrets_path`
 * ``log_level`` — passed to :func:`core.logging.setup_logging`
 * ``log_path`` — file path for the log handler (``null`` → no file)
 * ``web_auth`` — opt-in Token authentication for ``x web``
+* ``web_secret_confirmation`` — warn before the browser reads secret values
 
 Anything outside that set is **silently ignored** so a future schema
 extension does not break old clients (forward compatibility).
@@ -31,6 +32,8 @@ This module is **stdlib-only**.
 from __future__ import annotations
 
 import os
+import re
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -66,7 +69,14 @@ class ConfigError(Exception):
 # Fields we know how to interpret. Anything else in the YAML file is
 # silently dropped — forward compatibility (per BDD §"不变量").
 _KNOWN_KEYS: frozenset[str] = frozenset(
-    {"todo_dir", "secrets_path", "log_level", "log_path", "web_auth"}
+    {
+        "todo_dir",
+        "secrets_path",
+        "log_level",
+        "log_path",
+        "web_auth",
+        "web_secret_confirmation",
+    }
 )
 
 # Accepted log-level spellings (case-insensitive). Includes the stdlib
@@ -118,6 +128,9 @@ class AppConfig:
     web_auth:
         Whether ``x web`` requires ``X-Web-Token`` authentication.
         Defaults to ``False`` so the loopback-only UI opens directly.
+    web_secret_confirmation:
+        Whether the Web UI confirms before reading complete secret records.
+        Defaults to ``True`` and fails closed on invalid values.
     """
 
     todo_dir: Path = field(default_factory=xcli_todo_dir)
@@ -125,6 +138,7 @@ class AppConfig:
     log_level: str = "WARNING"
     log_path: Path | None = field(default_factory=xcli_log_path)
     web_auth: bool = False
+    web_secret_confirmation: bool = True
 
     # --------------------------------------------------------
     #  Constructors
@@ -234,6 +248,12 @@ class AppConfig:
             kwargs["web_auth"] = _coerce_config_bool(
                 mapping["web_auth"], key="web_auth", source=source
             )
+        if "web_secret_confirmation" in mapping:
+            kwargs["web_secret_confirmation"] = _coerce_config_bool(
+                mapping["web_secret_confirmation"],
+                key="web_secret_confirmation",
+                source=source,
+            )
 
         return cls(**kwargs)
 
@@ -258,6 +278,7 @@ class AppConfig:
                 log_level=self.log_level,
                 log_path=None,  # explicit "no file" wins over default
                 web_auth=self.web_auth,
+                web_secret_confirmation=self.web_secret_confirmation,
             )
         return self
 
@@ -288,7 +309,91 @@ class AppConfig:
         lines.append("# x web Token 认证（默认关闭；true = 开启）")
         lines.append(f"web_auth: {'true' if self.web_auth else 'false'}")
         lines.append("")
+        lines.append("# 查看/编辑密钥明文前显示安全确认（默认开启）")
+        lines.append(
+            "web_secret_confirmation: "
+            f"{'true' if self.web_secret_confirmation else 'false'}"
+        )
+        lines.append("")
         return "\n".join(lines)
+
+
+_WEB_SECRET_CONFIRMATION_LINE = re.compile(
+    r"^(web_secret_confirmation[ \t]*:[ \t]*)"
+    r"([^#\r\n]*?)"
+    r"([ \t]*(?:#.*)?)(\r?\n)?$"
+)
+
+
+def set_web_secret_confirmation(path: Path, required: bool) -> None:
+    """Atomically persist the one Web secret-confirmation preference.
+
+    This deliberately is not a generic configuration writer. Existing
+    comments, unknown fields, order and unrelated values remain byte-for-byte
+    unchanged; only the top-level target scalar is replaced or appended.
+
+    Raises
+    ------
+    TypeError
+        ``required`` is not a real bool.
+    ConfigError
+        The file cannot be read or atomically replaced.
+    """
+    if not isinstance(required, bool):
+        raise TypeError("required must be a bool")
+
+    target = Path(path)
+    try:
+        if target.is_file():
+            original = target.read_text(encoding="utf-8")
+        else:
+            original = AppConfig.default().to_yaml()
+    except OSError as exc:
+        raise ConfigError(f"配置文件读取失败：{target} ({exc})") from exc
+
+    replacement = "true" if required else "false"
+    lines = original.splitlines(keepends=True)
+    updated_lines: list[str] = []
+    found = False
+    for line in lines:
+        match = _WEB_SECRET_CONFIRMATION_LINE.match(line)
+        if match:
+            found = True
+            line = (
+                f"{match.group(1)}{replacement}{match.group(3)}"
+                f"{match.group(4) or ''}"
+            )
+        updated_lines.append(line)
+
+    updated = "".join(updated_lines)
+    if not found:
+        if updated and not updated.endswith(("\n", "\r")):
+            updated += "\n"
+        updated += f"web_secret_confirmation: {replacement}\n"
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    try:
+        file_descriptor, raw_temp_path = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+        )
+        temp_path = Path(raw_temp_path)
+        with os.fdopen(file_descriptor, "w", encoding="utf-8", newline="") as handle:
+            handle.write(updated)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if target.exists():
+            os.chmod(temp_path, target.stat().st_mode)
+        os.replace(temp_path, target)
+        temp_path = None
+    except OSError as exc:
+        raise ConfigError(f"配置文件写入失败：{target} ({exc})") from exc
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 # ============================================================

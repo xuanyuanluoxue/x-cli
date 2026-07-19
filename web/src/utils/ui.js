@@ -26,7 +26,8 @@ export function toast(message, type = "info", duration = 2400) {
 }
 
 // ---- confirm modal ----
-// modalState.current = { title, body, confirmText, cancelText, danger, resolve }
+// modalState.current = { title, body, confirmText, cancelText, danger,
+//                        checkboxLabel, checked, resolve }
 export const modalState = reactive({ current: null });
 
 export function confirmDialog({
@@ -35,14 +36,29 @@ export function confirmDialog({
   confirmText = "确认",
   cancelText = "取消",
   danger = false,
+  checkboxLabel = "",
 }) {
   return new Promise((resolve) => {
-    modalState.current = { title, body, confirmText, cancelText, danger, resolve };
+    modalState.current = {
+      title,
+      body,
+      confirmText,
+      cancelText,
+      danger,
+      checkboxLabel,
+      checked: false,
+      resolve,
+    };
   });
 }
 
 export function resolveModal(result) {
   const cur = modalState.current;
   modalState.current = null;
-  if (cur) cur.resolve(result);
+  if (!cur) return;
+  if (cur.checkboxLabel) {
+    cur.resolve({ confirmed: Boolean(result), checked: Boolean(cur.checked) });
+  } else {
+    cur.resolve(Boolean(result));
+  }
 }

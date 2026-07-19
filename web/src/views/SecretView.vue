@@ -5,6 +5,7 @@ import { api } from "@/api/client.js";
 import { formatTimestamp } from "@/utils/format.js";
 import { copyToClipboard } from "@/utils/dom.js";
 import { confirmDialog, toast } from "@/utils/ui.js";
+import { confirmSecretAccess } from "@/utils/secret-confirmation.js";
 import AppLoader from "@/components/AppLoader.vue";
 
 const route = useRoute();
@@ -26,7 +27,7 @@ const fields = computed(() => {
 });
 
 onMounted(async () => {
-  const confirmed = await confirmDialog({
+  const confirmed = await confirmSecretAccess({
     title: "你正在查看密钥库参数",
     body:
       "页面将读取这条记录的全部字段，包括密钥明文。内容可能被屏幕录制或浏览器调试工具捕获。\n\n" +

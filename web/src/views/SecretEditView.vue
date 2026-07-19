@@ -2,7 +2,8 @@
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api } from "@/api/client.js";
-import { confirmDialog, toast } from "@/utils/ui.js";
+import { toast } from "@/utils/ui.js";
+import { confirmSecretAccess } from "@/utils/secret-confirmation.js";
 import AppLoader from "@/components/AppLoader.vue";
 import SecretFieldsEditor from "@/components/SecretFieldsEditor.vue";
 
@@ -39,7 +40,7 @@ function normalizedFields() {
 }
 
 async function confirmAndLoad() {
-  const confirmed = await confirmDialog({
+  const confirmed = await confirmSecretAccess({
     title: "编辑将读取全部字段值",
     body:
       "为了编辑多个参数，页面需要从本地密钥库读取普通文本和密钥明文。\n\n" +

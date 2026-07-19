@@ -22,14 +22,18 @@ import os
 import sys
 import time
 import webbrowser
+from pathlib import Path
 from typing import Sequence
 
+from core.paths import xcli_config_path
 from core.web import DEFAULT_HOST, DEFAULT_PORT
 from core.web.auth import generate_token
 from core.web.server import WebServer
 
 
 _WEB_AUTH_ENV = "XCLI_WEB_AUTH"
+_WEB_SECRET_CONFIRMATION_ENV = "XCLI_WEB_SECRET_CONFIRMATION"
+_CONFIG_PATH_ENV = "XCLI_CONFIG_PATH"
 
 
 def _resolve_token(
@@ -131,13 +135,23 @@ def _run(args: Sequence[str]) -> int:
     parsed = parser.parse_args(list(args))
 
     config_auth_enabled = os.environ.get(_WEB_AUTH_ENV, "0") == "1"
+    secret_confirmation_required = (
+        os.environ.get(_WEB_SECRET_CONFIRMATION_ENV, "1") != "0"
+    )
+    config_path = Path(os.environ.get(_CONFIG_PATH_ENV) or xcli_config_path())
     token = _resolve_token(
         parsed.token,
         config_auth_enabled=config_auth_enabled,
     )
 
     try:
-        server = WebServer(host=parsed.host, port=parsed.port, token=token)
+        server = WebServer(
+            host=parsed.host,
+            port=parsed.port,
+            token=token,
+            config_path=config_path,
+            secret_confirmation_required=secret_confirmation_required,
+        )
         server.start()
     except OSError as exc:
         print(f"❌ 启动失败：{exc}", file=sys.stderr)

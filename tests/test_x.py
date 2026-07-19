@@ -151,23 +151,34 @@ def test_build_parser_does_not_crash():
     assert "subcommand" in arg_dests
 
 
-def test_web_auth_config_is_forwarded_to_plugin(
+def test_web_config_is_forwarded_to_plugin(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     """The global config reaches the lazily loaded Web plugin."""
     cfg = tmp_path / "config.yaml"
-    cfg.write_text("web_auth: true\nlog_path: null\n", encoding="utf-8")
+    cfg.write_text(
+        "web_auth: true\nweb_secret_confirmation: false\nlog_path: null\n",
+        encoding="utf-8",
+    )
     monkeypatch.delenv("XCLI_WEB_AUTH", raising=False)
+    monkeypatch.delenv("XCLI_WEB_SECRET_CONFIRMATION", raising=False)
+    monkeypatch.delenv("XCLI_CONFIG_PATH", raising=False)
     captured: dict[str, str | None] = {}
 
     def fake_handler(_args):
         captured["web_auth"] = os.environ.get("XCLI_WEB_AUTH")
+        captured["secret_confirmation"] = os.environ.get(
+            "XCLI_WEB_SECRET_CONFIRMATION"
+        )
+        captured["config_path"] = os.environ.get("XCLI_CONFIG_PATH")
         return 0
 
     monkeypatch.setattr(x_module, "load_subcommand_handler", lambda _name: fake_handler)
 
     assert main(["--config", str(cfg), "web"]) == 0
     assert captured["web_auth"] == "1"
+    assert captured["secret_confirmation"] == "0"
+    assert captured["config_path"] == str(cfg)
 
 
 # ============================================================
