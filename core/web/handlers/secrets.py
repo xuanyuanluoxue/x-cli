@@ -16,6 +16,11 @@ from __future__ import annotations
 import sys
 from http import HTTPStatus
 
+from core.secrets import (
+    SecretAlreadyExistsError,
+    SecretError,
+    SecretNotFoundError,
+)
 from core.web.response import error_response, json_response, read_json_body
 
 
@@ -34,7 +39,7 @@ def _secret_summary(entry) -> dict:
 
 
 def _secret_full(entry) -> dict:
-    """Detail-view: includes value + note. Sensitive — logs warning."""
+    """Detail-view: includes all fields. Sensitive — logs warning."""
     print(
         f"🔐 警告：密钥已通过 Web API 输出到客户端（name={entry.name}）",
         file=sys.stderr,
@@ -42,6 +47,7 @@ def _secret_full(entry) -> dict:
     return {
         "name": entry.name,
         "category": entry.category,
+        "fields": [item.to_dict() for item in entry.fields],
         "value": entry.value,
         "note": entry.note or "",
         "created_at": entry.created_at,
@@ -86,26 +92,57 @@ def _create_secret(handler) -> None:
         return
     assert body is not None
 
-    name = (body.get("name") or "").strip()
-    value = body.get("value") or ""
+    raw_name = body.get("name")
+    name = raw_name.strip() if isinstance(raw_name, str) else ""
     if not name:
         error_response(handler, HTTPStatus.BAD_REQUEST, "validation_error", "name is required")
         return
-    if not value:
-        error_response(handler, HTTPStatus.BAD_REQUEST, "validation_error", "value is required")
+    has_value = "value" in body
+    has_fields = "fields" in body
+    if has_value and has_fields:
+        error_response(
+            handler,
+            HTTPStatus.BAD_REQUEST,
+            "validation_error",
+            "value and fields cannot be provided together",
+        )
+        return
+    if not has_value and not has_fields:
+        error_response(
+            handler,
+            HTTPStatus.BAD_REQUEST,
+            "validation_error",
+            "value or fields is required",
+        )
         return
 
     category = body.get("category") or "default"
     note = body.get("note") or ""
+    if not isinstance(category, str) or not isinstance(note, str):
+        error_response(
+            handler,
+            HTTPStatus.BAD_REQUEST,
+            "validation_error",
+            "category and note must be strings",
+        )
+        return
 
     store = handler.server.secrets
     try:
-        entry = store.set(name=name, value=value, category=category, note=note)
-    except Exception as exc:
-        msg = str(exc).lower()
-        if "already exists" in msg:
-            error_response(handler, HTTPStatus.CONFLICT, "duplicate", f"secret already exists: {name}", name=name)
-            return
+        entry = store.set(
+            name=name,
+            value=body.get("value") if has_value else None,
+            fields=body.get("fields") if has_fields else None,
+            category=category,
+            note=note,
+        )
+    except SecretAlreadyExistsError:
+        error_response(handler, HTTPStatus.CONFLICT, "duplicate", f"secret already exists: {name}", name=name)
+        return
+    except ValueError as exc:
+        error_response(handler, HTTPStatus.BAD_REQUEST, "validation_error", str(exc))
+        return
+    except SecretError as exc:
         error_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, "internal_error", str(exc))
         return
 
@@ -150,9 +187,25 @@ def _update_secret(handler, name: str) -> None:
         error_response(handler, HTTPStatus.BAD_REQUEST, "validation_error", "at least one field required")
         return
 
+    allowed = {"value", "fields", "category", "note"}
+    supplied = allowed.intersection(body)
+    if not supplied:
+        error_response(handler, HTTPStatus.BAD_REQUEST, "validation_error", "at least one supported field required")
+        return
+    if "value" in body and "fields" in body:
+        error_response(
+            handler,
+            HTTPStatus.BAD_REQUEST,
+            "validation_error",
+            "value and fields cannot be provided together",
+        )
+        return
+
     kwargs: dict = {}
     if "value" in body:
         kwargs["value"] = body["value"]
+    if "fields" in body:
+        kwargs["fields"] = body["fields"]
     if "category" in body:
         kwargs["category"] = body["category"]
     if "note" in body:
@@ -161,8 +214,14 @@ def _update_secret(handler, name: str) -> None:
     store = handler.server.secrets
     try:
         entry = store.update(name, **kwargs)
-    except LookupError as exc:
+    except SecretNotFoundError:
         error_response(handler, HTTPStatus.NOT_FOUND, "not_found", f"secret not found: {name}", name=name)
+        return
+    except ValueError as exc:
+        error_response(handler, HTTPStatus.BAD_REQUEST, "validation_error", str(exc))
+        return
+    except SecretError as exc:
+        error_response(handler, HTTPStatus.INTERNAL_SERVER_ERROR, "internal_error", str(exc))
         return
 
     json_response(handler, HTTPStatus.OK, {"secret": _secret_full(entry)})

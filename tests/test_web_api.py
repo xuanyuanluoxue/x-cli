@@ -24,7 +24,7 @@ from typing import Iterator
 
 import pytest
 
-from core.secrets import SecretStore
+from core.secrets import SecretField, SecretStore
 from core.storage import TaskStore
 from core.web.auth import generate_token, is_valid_token
 from core.web.server import WebServer
@@ -374,6 +374,7 @@ def test_list_secrets_no_value_field(server: WebServer):
     assert body["count"] == 2
     for s in body["secrets"]:
         assert "value" not in s
+        assert "fields" not in s
         assert "name" in s
         assert "category" in s
 
@@ -384,6 +385,9 @@ def test_get_secret_includes_value_and_warns(server: WebServer, capsys):
     status, body = _request(server, "GET", "/api/secrets/minimax")
     assert status == 200
     assert body["secret"]["value"] == "sk-test"
+    assert body["secret"]["fields"] == [
+        {"label": "密钥", "kind": "secret", "value": "sk-test", "primary": True}
+    ]
     assert body["secret"]["category"] == "API"
     captured = capsys.readouterr()
     assert "密钥已通过 Web API 输出" in captured.err
@@ -402,6 +406,118 @@ def test_create_secret(server: WebServer):
     entry = server.secrets.get("minimax")
     assert entry is not None
     assert entry.value == "sk-test"
+
+
+def test_create_secret_with_fields(server: WebServer):
+    fields = [
+        {
+            "label": "URL",
+            "kind": "text",
+            "value": "https://webdav.example.test",
+            "primary": False,
+        },
+        {"label": "密码", "kind": "secret", "value": "pw", "primary": True},
+    ]
+
+    status, body = _request(
+        server,
+        "POST",
+        "/api/secrets",
+        body={"name": "webdav", "category": "storage", "fields": fields},
+    )
+
+    assert status == 201
+    assert body["secret"]["fields"] == fields
+    assert body["secret"]["value"] == "pw"
+    stored = json.loads(server.secrets.db_path.read_text(encoding="utf-8"))
+    assert "value" not in stored["secrets"][0]
+
+
+def test_create_secret_rejects_value_and_fields_together(server: WebServer):
+    status, body = _request(
+        server,
+        "POST",
+        "/api/secrets",
+        body={
+            "name": "ambiguous",
+            "value": "must-not-leak",
+            "fields": [
+                {"label": "密钥", "kind": "secret", "value": "other", "primary": True}
+            ],
+        },
+    )
+
+    assert status == 400
+    assert body["code"] == "validation_error"
+    assert "must-not-leak" not in json.dumps(body)
+    assert server.secrets.get("ambiguous") is None
+
+
+def test_create_secret_rejects_invalid_fields_without_writing(server: WebServer):
+    status, body = _request(
+        server,
+        "POST",
+        "/api/secrets",
+        body={
+            "name": "invalid",
+            "fields": [
+                {"label": "URL", "kind": "text", "value": "private-value", "primary": True}
+            ],
+        },
+    )
+
+    assert status == 400
+    assert body["code"] == "validation_error"
+    assert "private-value" not in json.dumps(body)
+    assert server.secrets.get("invalid") is None
+
+
+def test_patch_secret_replaces_fields_atomically(server: WebServer):
+    server.secrets.set(
+        "webdav",
+        fields=[
+            SecretField("URL", "text", "https://old.example"),
+            SecretField("密码", "secret", "old-password", primary=True),
+        ],
+    )
+    replacement = [
+        {"label": "Endpoint", "kind": "text", "value": "https://new.example", "primary": False},
+        {"label": "Token", "kind": "secret", "value": "new-token", "primary": True},
+    ]
+
+    status, body = _request(
+        server, "PATCH", "/api/secrets/webdav", body={"fields": replacement}
+    )
+    assert status == 200
+    assert body["secret"]["fields"] == replacement
+
+    status, error = _request(
+        server,
+        "PATCH",
+        "/api/secrets/webdav",
+        body={"fields": [{"label": "bad", "kind": "text", "value": "do-not-store", "primary": True}]},
+    )
+    assert status == 400
+    assert "do-not-store" not in json.dumps(error)
+    assert [field.to_dict() for field in server.secrets.get("webdav").fields] == replacement
+
+
+def test_patch_legacy_value_updates_only_primary_secret(server: WebServer):
+    server.secrets.set(
+        "webdav",
+        fields=[
+            SecretField("URL", "text", "https://keep.example"),
+            SecretField("密码", "secret", "old", primary=True),
+        ],
+    )
+
+    status, body = _request(
+        server, "PATCH", "/api/secrets/webdav", body={"value": "new"}
+    )
+
+    assert status == 200
+    assert body["secret"]["value"] == "new"
+    assert body["secret"]["fields"][0]["value"] == "https://keep.example"
 
 
 def test_delete_secret_returns_204(server: WebServer):
