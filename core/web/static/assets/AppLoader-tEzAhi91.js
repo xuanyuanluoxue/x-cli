@@ -1,1 +1,0 @@
-import{o as a,c as o,f as t,t as l}from"./vendor-BljGO3v4.js";const r={class:"empty",role:"status"},n={class:"empty-title"},c={__name:"AppLoader",props:{label:{type:String,default:"加载中"}},setup(s){return(p,e)=>(a(),o("div",r,[e[0]||(e[0]=t("span",{class:"loader","aria-hidden":"true"},null,-1)),t("div",n,l(s.label),1)]))}};export{c as _};

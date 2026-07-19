@@ -94,6 +94,31 @@ def test_plaintext_view_requires_confirmation_before_fetch() -> None:
     assert "我已了解" in src, "plaintext reveal confirmation text missing"
 
 
+def test_secret_editor_supports_text_and_secret_fields() -> None:
+    editor = next(STATIC_DIR.glob("assets/SecretEditView-*.js"), None)
+    assert editor, "SecretEditView bundle missing"
+    src = editor.read_text(encoding="utf-8", errors="ignore")
+    for text in ("添加字段", "普通文本", "密钥信息", "设为主密钥"):
+        assert text in src, f"multi-field editor control missing: {text}"
+
+
+def test_secret_edit_requires_confirmation_before_fetching_values() -> None:
+    editor = next(STATIC_DIR.glob("assets/SecretEditView-*.js"), None)
+    assert editor, "SecretEditView bundle missing"
+    src = editor.read_text(encoding="utf-8", errors="ignore")
+    assert "编辑将读取全部字段值" in src
+    assert "我已了解，继续编辑" in src
+
+
+def test_secret_detail_keeps_per_field_reveal_copy_and_safe_links() -> None:
+    view = next(STATIC_DIR.glob("assets/SecretView-*.js"), None)
+    assert view, "SecretView bundle missing"
+    src = view.read_text(encoding="utf-8", errors="ignore")
+    for text in ("普通文本", "密钥信息", "主密钥", "复制字段"):
+        assert text in src, f"per-field detail behavior missing: {text}"
+    assert "noopener noreferrer" in src, "external URL must isolate opener"
+
+
 def test_token_persistence_uses_localstorage_key() -> None:
     assert "x_web_token" in _all_js(), "localStorage token key missing"
 
