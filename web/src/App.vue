@@ -19,6 +19,14 @@ const NAV = [
 
 const isLogin = computed(() => route.name === "login");
 const routeLabel = computed(() => route.meta.label || "控制台");
+const parentTarget = computed(() => {
+  const parentName = route.meta.parent;
+  if (!parentName) return null;
+  if (parentName === "secret-view") {
+    return { name: parentName, params: { name: route.params.name } };
+  }
+  return { name: parentName };
+});
 
 function isActive(item) {
   return route.path === item.to || route.path.startsWith(item.to + "/");
@@ -28,6 +36,10 @@ function logout() {
   auth.clearToken();
   navOpen.value = false;
   router.push({ name: "login" });
+}
+
+function goToParent() {
+  if (parentTarget.value) router.push(parentTarget.value);
 }
 
 // 路由变化时收起移动端抽屉
@@ -77,6 +89,16 @@ watch(() => route.fullPath, () => { navOpen.value = false; });
           aria-label="打开导航"
           @click="navOpen = !navOpen"
         >☰</button>
+        <button
+          v-if="parentTarget"
+          type="button"
+          class="btn btn-ghost btn-sm back-btn"
+          aria-label="返回上一级"
+          @click="goToParent"
+        >
+          <span class="back-icon" aria-hidden="true">←</span>
+          <span class="back-label">返回上一级</span>
+        </button>
         <div class="crumb">
           <span class="crumb-root">x console</span>
           <span class="crumb-sep" aria-hidden="true">/</span>
@@ -207,6 +229,13 @@ watch(() => route.fullPath, () => { navOpen.value = false; });
   z-index: 10;
 }
 .menu-btn { display: none; }
+.back-btn {
+  flex: 0 0 auto;
+  gap: 5px;
+  padding-inline: var(--s2);
+  color: var(--ink-2);
+}
+.back-icon { font-size: var(--text-md); line-height: 1; }
 .crumb {
   display: flex;
   align-items: baseline;
@@ -274,5 +303,10 @@ watch(() => route.fullPath, () => { navOpen.value = false; });
   .menu-btn { display: inline-flex; }
   .topbar { padding: 0 var(--s4); }
   .main { padding: var(--s5) var(--s4) var(--s12); }
+}
+
+@media (max-width: 520px) {
+  .back-btn { width: 32px; padding: 0; }
+  .back-label { display: none; }
 }
 </style>

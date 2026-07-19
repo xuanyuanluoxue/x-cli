@@ -137,6 +137,16 @@ def test_secret_confirmation_can_be_disabled_and_persisted() -> None:
     assert "web_secret_confirmation" in js
 
 
+def test_topbar_offers_hierarchical_parent_navigation() -> None:
+    """Child pages expose one accessible, responsive parent-navigation control."""
+    js = _all_js()
+    css = _all_css()
+    assert "返回上一级" in js
+    assert "back-btn" in js
+    assert ".back-btn" in css
+    assert "parent" in js
+
+
 # ---- 可访问性 ------------------------------------------------------------
 
 
