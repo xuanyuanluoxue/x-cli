@@ -103,9 +103,9 @@ def _serve_static(handler: BaseHTTPRequestHandler, rel_path: str) -> bool:
 class WebHandler(BaseHTTPRequestHandler):
     """Single-handler that routes ``/api/*`` and ``/`` requests.
 
-    Configuration is read from class-level attributes (``server.token``,
-    ``server.store``, ``server.secrets``). The :class:`WebServer` sets
-    these before serving.
+    Configuration is read from server attributes (``server.token``,
+    ``server.store``, ``server.secret_service``). The :class:`WebServer`
+    sets these before serving.
     """
 
     # Suppress default per-request log noise; we use stderr writes ourselves.
@@ -188,7 +188,7 @@ class WebHandler(BaseHTTPRequestHandler):
         if path.startswith("/api/secrets/"):
             # The browser client uses encodeURIComponent for arbitrary secret
             # names. Decode once at the routing boundary so GET/PATCH/DELETE
-            # all address the same SecretStore entry as the CLI.
+            # all address the same SecretService record as the CLI.
             name = unquote(path[len("/api/secrets/"):])
             if method == "GET":
                 handle_secret_item(self, name, "get")
@@ -224,12 +224,13 @@ class _Server(ThreadingHTTPServer):
         handler_cls: type[BaseHTTPRequestHandler],
         token: str | None,
         store: Any,  # TaskStore — avoid circular import
-        secrets_store: Any,  # SecretStore
+        secret_service: Any,  # SecretService
     ) -> None:
         super().__init__(server_address, handler_cls)
         self.token = token
         self.store = store
-        self.secrets = secrets_store
+        self.secret_service = secret_service
+        self.secrets = secret_service.store
 
 
 class WebServer:
@@ -254,7 +255,9 @@ class WebServer:
         token: str | None = None,
         store: Any | None = None,
         secrets_store: Any | None = None,
+        secret_service: Any | None = None,
     ) -> None:
+        from core.secret_service import SecretService  # lazy import
         from core.secrets import SecretStore  # lazy import
         from core.storage import TaskStore  # lazy import
 
@@ -262,7 +265,21 @@ class WebServer:
         self.port = port
         self.token = token
         self.store = store if store is not None else TaskStore()
-        self.secrets = secrets_store if secrets_store is not None else SecretStore()
+        if secret_service is not None:
+            if (
+                secrets_store is not None
+                and secret_service.store is not secrets_store
+            ):
+                raise ValueError(
+                    "secret_service and secrets_store must reference the same store"
+                )
+            self.secret_service = secret_service
+            self.secrets = secret_service.store
+        else:
+            self.secrets = (
+                secrets_store if secrets_store is not None else SecretStore()
+            )
+            self.secret_service = SecretService(self.secrets)
         self._server: _Server | None = None
         self._thread: threading.Thread | None = None
 
@@ -282,7 +299,7 @@ class WebServer:
             WebHandler,
             token=self.token,
             store=self.store,
-            secrets_store=self.secrets,
+            secret_service=self.secret_service,
         )
 
         def _serve_with_logging() -> None:

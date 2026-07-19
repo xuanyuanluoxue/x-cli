@@ -26,6 +26,7 @@ from urllib.parse import quote
 import pytest
 
 from core.secrets import SecretField, SecretStore
+from core.secret_service import SecretService
 from core.storage import TaskStore
 from core.web.auth import generate_token, is_valid_token
 from core.web.server import WebServer
@@ -56,7 +57,7 @@ def server(
     else:
         monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
 
-    # Use the same TaskStore / SecretStore instances the handler will use
+    # Use the same TaskStore / SecretStore instances wrapped by the server.
     store = TaskStore()
     secrets_store = SecretStore(db_path=str(tmp_path / "secrets.json"))
 
@@ -193,6 +194,85 @@ def _make_task_via_cli(server: WebServer, name: str, **kwargs) -> None:
 def _make_secret_via_store(server: WebServer, name: str, value: str, **kwargs) -> None:
     """Helper: create a secret via the store directly."""
     server.secrets.set(name=name, value=value, **kwargs)
+
+
+def test_web_secret_handlers_use_injected_shared_service(tmp_path: Path):
+    class RecordingSecretService(SecretService):
+        def __init__(self, store: SecretStore) -> None:
+            super().__init__(store)
+            self.calls = []
+
+        def list(self, category=None):
+            self.calls.append("list")
+            return super().list(category=category)
+
+        def find(self, name):
+            self.calls.append("find")
+            return super().find(name)
+
+        def create(self, name, value=None, category="default", note="", *, fields=None):
+            self.calls.append("create")
+            return super().create(
+                name,
+                value=value,
+                category=category,
+                note=note,
+                fields=fields,
+            )
+
+        def update(self, name, value=None, note=None, category=None, *, fields=None):
+            self.calls.append("update")
+            return super().update(
+                name,
+                value=value,
+                note=note,
+                category=category,
+                fields=fields,
+            )
+
+        def delete(self, name):
+            self.calls.append("delete")
+            return super().delete(name)
+
+    store = SecretStore(db_path=tmp_path / "secrets.json")
+    service = RecordingSecretService(store)
+    port = _free_port()
+    srv = WebServer(
+        host="127.0.0.1",
+        port=port,
+        token=None,
+        store=object(),
+        secret_service=service,
+    )
+    srv.test_token = ""
+    srv.start()
+    try:
+        status, body = _request(srv, "GET", "/api/secrets", token=None)
+        assert status == 200
+        assert body == {"secrets": [], "count": 0}
+
+        assert _request(
+            srv,
+            "POST",
+            "/api/secrets",
+            token=None,
+            body={"name": "demo", "value": "secret-value"},
+        )[0] == 201
+        assert _request(srv, "GET", "/api/secrets/demo", token=None)[0] == 200
+        assert _request(
+            srv,
+            "PATCH",
+            "/api/secrets/demo",
+            token=None,
+            body={"note": "changed"},
+        )[0] == 200
+        assert _request(srv, "DELETE", "/api/secrets/demo", token=None)[0] == 204
+
+        assert service.calls == ["list", "create", "find", "update", "delete"]
+        assert srv.secret_service is service
+        assert srv.secrets is store
+    finally:
+        srv.stop()
 
 
 # ============================================================

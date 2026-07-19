@@ -38,7 +38,9 @@ Scenario       Tests
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
+import time
 from datetime import date
 from pathlib import Path
 
@@ -934,6 +936,135 @@ def test_full_lifecycle_add_update_remove(store: SecretStore) -> None:
     removed = store.rm("minimax")
     assert removed.name == "minimax"
     assert store.get("minimax") is None
+
+
+# ============================================================
+#  BDD scenario 25: cross-process mutation locking
+# ============================================================
+
+
+def test_lock_sidecar_contains_no_secret_data(
+    store: SecretStore,
+) -> None:
+    store.set("sensitive-name", value="sensitive-value")
+
+    assert store.lock_path == store.db_path.with_suffix(".json.lock")
+    assert store.lock_path.read_bytes() == b"\0"
+
+
+def test_cross_process_lock_serializes_a_mutation(tmp_path: Path) -> None:
+    db_path = tmp_path / "secrets.json"
+    ready_path = tmp_path / "holder-ready"
+    SecretStore(db_path=db_path)
+    repo_root = Path(__file__).resolve().parents[1]
+
+    holder_code = """
+import sys
+import time
+from pathlib import Path
+from core.secrets import SecretStore
+
+store = SecretStore(db_path=Path(sys.argv[1]))
+with store._mutation_lock():
+    Path(sys.argv[2]).write_text("ready", encoding="utf-8")
+    time.sleep(0.8)
+"""
+    writer_code = """
+import sys
+from pathlib import Path
+from core.secrets import SecretStore
+
+SecretStore(db_path=Path(sys.argv[1])).set("writer", value="secret-value")
+"""
+
+    holder = subprocess.Popen(
+        [sys.executable, "-c", holder_code, str(db_path), str(ready_path)],
+        cwd=repo_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not ready_path.exists() and time.monotonic() < deadline:
+            if holder.poll() is not None:
+                stdout, stderr = holder.communicate()
+                pytest.fail(
+                    f"lock holder exited early ({holder.returncode}): "
+                    f"stdout={stdout!r}, stderr={stderr!r}"
+                )
+            time.sleep(0.02)
+        assert ready_path.exists(), "lock holder did not become ready"
+
+        started = time.monotonic()
+        writer = subprocess.run(
+            [sys.executable, "-c", writer_code, str(db_path)],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        elapsed = time.monotonic() - started
+
+        assert writer.returncode == 0, writer.stderr
+        assert elapsed >= 0.5
+        assert SecretStore(db_path=db_path).get("writer") is not None
+    finally:
+        if holder.poll() is None:
+            holder.terminate()
+        holder.wait(timeout=5)
+
+
+def test_concurrent_process_mutations_preserve_every_successful_write(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "secrets.json"
+    start_path = tmp_path / "start"
+    repo_root = Path(__file__).resolve().parents[1]
+    worker_code = """
+import sys
+import time
+from pathlib import Path
+from core.secrets import SecretStore
+
+db_path = Path(sys.argv[1])
+start_path = Path(sys.argv[2])
+while not start_path.exists():
+    time.sleep(0.01)
+SecretStore(db_path=db_path).set(sys.argv[3], value="worker-value")
+"""
+
+    workers = [
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                worker_code,
+                str(db_path),
+                str(start_path),
+                f"worker-{index}",
+            ],
+            cwd=repo_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for index in range(6)
+    ]
+    start_path.write_text("go", encoding="utf-8")
+
+    failures: list[str] = []
+    for worker in workers:
+        stdout, stderr = worker.communicate(timeout=10)
+        if worker.returncode != 0:
+            failures.append(
+                f"returncode={worker.returncode}, stdout={stdout!r}, stderr={stderr!r}"
+            )
+
+    assert failures == []
+    assert {entry.name for entry in SecretStore(db_path=db_path).list()} == {
+        f"worker-{index}" for index in range(6)
+    }
 
 
 if __name__ == "__main__":

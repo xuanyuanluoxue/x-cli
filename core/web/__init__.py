@@ -1,7 +1,8 @@
 """core.web — HTTP server + REST API for x web subcommand.
 
-Exposes :class:`core.storage.TaskStore` and :class:`core.secrets.SecretStore`
-as JSON over HTTP. Stdlib-only (no Flask/FastAPI dependency).
+Exposes :class:`core.storage.TaskStore` and the shared
+:class:`core.secret_service.SecretService` as JSON over HTTP. Stdlib-only
+(no Flask/FastAPI dependency).
 
 Module map:
 

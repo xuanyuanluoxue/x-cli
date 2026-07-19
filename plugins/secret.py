@@ -46,8 +46,8 @@ def register(parser: argparse.ArgumentParser) -> None:
     对应 BDD：``docs/behaviors/secret-behavior.md``（17 个场景）。
 
     子命令：list / get / set / update / rm / search / import / export。
-    所有 core.secrets / core.paths 调用都在 handler 内做 lazy import，
-    保证 x.py 顶层 import 始终成功（core.secrets 正在并行实现）。
+    SecretService 与领域异常都在 handler 路径内做 lazy import，
+    保证 x.py 顶层 import 不加载密钥存储实现。
     """
     sub = parser.add_subparsers(
         dest="secret_action", required=False, metavar="ACTION"
@@ -255,6 +255,14 @@ def _extract_first_key(value: str) -> str | None:
     return match.group(1) if match else None
 
 
+def _secret_service():
+    """Create the shared secret application service without eager imports."""
+
+    from core.secret_service import SecretService
+
+    return SecretService()
+
+
 def _secret_list(args: argparse.Namespace) -> int:
     """``x secret list [--category <c>]`` — 列出所有密钥（不显示 value）。
 
@@ -262,10 +270,8 @@ def _secret_list(args: argparse.Namespace) -> int:
     ``--category`` 过滤：只返回匹配的条目（大小写不敏感）。
     退出码 0（包含空仓库）。
     """
-    from core.secrets import SecretStore  # lazy import
-
-    store = SecretStore()
-    entries = store.list(category=args.category)
+    service = _secret_service()
+    entries = service.list(category=args.category)
     sys.stdout.write(_render_secret_table(entries))
     return 0
 
@@ -282,10 +288,8 @@ def _secret_get(args: argparse.Namespace) -> int:
 
     退出码：0 成功 / 3 找不到。
     """
-    from core.secrets import SecretStore  # lazy import
-
-    store = SecretStore()
-    entry = store.find(args.name)
+    service = _secret_service()
+    entry = service.find(args.name)
     if entry is None:
         print(f"❌ 密钥不存在：{args.name}", file=sys.stderr)
         return 3
@@ -414,11 +418,11 @@ def _secret_set(args: argparse.Namespace) -> int:
 
     对应 BDD：§场景 5-7。已存在 → 退出码 4（用 update 改）。
     """
-    from core.secrets import SecretAlreadyExistsError, SecretStore  # lazy import
+    from core.secrets import SecretAlreadyExistsError  # lazy import
 
-    store = SecretStore()
+    service = _secret_service()
     try:
-        entry = store.set(
+        entry = service.create(
             args.name,
             args.value,
             category=args.category,
@@ -450,11 +454,11 @@ def _secret_update(args: argparse.Namespace) -> int:
         )
         return 2
 
-    from core.secrets import SecretNotFoundError, SecretStore  # lazy import
+    from core.secrets import SecretNotFoundError  # lazy import
 
-    store = SecretStore()
+    service = _secret_service()
     try:
-        entry = store.update(
+        entry = service.update(
             args.name, value=args.value, note=args.note, category=args.category
         )
     except SecretNotFoundError:
@@ -470,11 +474,11 @@ def _secret_rm(args: argparse.Namespace) -> int:
 
     对应 BDD：§场景 10-11。找不到 → 退出码 3。
     """
-    from core.secrets import SecretNotFoundError, SecretStore  # lazy import
+    from core.secrets import SecretNotFoundError  # lazy import
 
-    store = SecretStore()
+    service = _secret_service()
     try:
-        entry = store.rm(args.name)
+        entry = service.delete(args.name)
     except SecretNotFoundError:
         print(f"❌ 密钥不存在：{args.name}", file=sys.stderr)
         return 3
@@ -489,10 +493,8 @@ def _secret_search(args: argparse.Namespace) -> int:
     对应 BDD：§场景 12。搜索范围 = name + note，硬性**不**搜 value
     （避免 grep 撞到密钥）。输出格式与 list 一致。
     """
-    from core.secrets import SecretStore  # lazy import
-
-    store = SecretStore()
-    entries = sorted(store.search(args.keyword), key=lambda e: e.name)
+    service = _secret_service()
+    entries = sorted(service.search(args.keyword), key=lambda e: e.name)
     sys.stdout.write(_render_secret_table(entries))
     return 0
 
@@ -503,15 +505,13 @@ def _secret_import(args: argparse.Namespace) -> int:
     对应 BDD：§场景 13-14。源目录不存在 → 退出码 5。
     旧 .md 文件**保留**（单向导入，不删源文件）。
     """
-    from core.secrets import SecretStore  # lazy import
-
     src = Path(args.src_dir)
     if not src.is_dir():
         print(f"❌ 源目录不存在：{src}", file=sys.stderr)
         return 5
 
-    store = SecretStore()
-    imported, skipped = store.import_from_dir(src)
+    service = _secret_service()
+    imported, skipped = service.import_from_dir(src)
     print(f"📥 迁移完成：导入 {imported} 条，跳过 {skipped} 条（重复）")
     return 0
 
@@ -521,11 +521,9 @@ def _secret_export(args: argparse.Namespace) -> int:
 
     对应 BDD：§场景 15。默认路径 = ``<db_dir>/secrets-backup-YYYYMMDD-HHMMSS.json``。
     """
-    from core.secrets import SecretStore  # lazy import
-
     dest = Path(args.dest) if args.dest else None
-    store = SecretStore()
-    path = store.export(dest)
-    n = len(store.list())
+    service = _secret_service()
+    path = service.export(dest)
+    n = len(service.list())
     print(f"✅ 已备份 {n} 条到 {path}")
     return 0

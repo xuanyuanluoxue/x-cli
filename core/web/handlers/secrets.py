@@ -70,8 +70,8 @@ def handle_secrets_collection(handler, action: str) -> None:
 
 
 def _list_secrets(handler) -> None:
-    store = handler.server.secrets
-    entries = store.list()
+    service = handler.server.secret_service
+    entries = service.list()
     json_response(
         handler,
         HTTPStatus.OK,
@@ -127,9 +127,9 @@ def _create_secret(handler) -> None:
         )
         return
 
-    store = handler.server.secrets
+    service = handler.server.secret_service
     try:
-        entry = store.set(
+        entry = service.create(
             name=name,
             value=body.get("value") if has_value else None,
             fields=body.get("fields") if has_fields else None,
@@ -166,8 +166,8 @@ def handle_secret_item(handler, name: str, action: str) -> None:
 
 
 def _get_secret(handler, name: str) -> None:
-    store = handler.server.secrets
-    entry = store.find(name)
+    service = handler.server.secret_service
+    entry = service.find(name)
     if entry is None:
         error_response(handler, HTTPStatus.NOT_FOUND, "not_found", f"secret not found: {name}", name=name)
         return
@@ -211,9 +211,9 @@ def _update_secret(handler, name: str) -> None:
     if "note" in body:
         kwargs["note"] = body["note"]
 
-    store = handler.server.secrets
+    service = handler.server.secret_service
     try:
-        entry = store.update(name, **kwargs)
+        entry = service.update(name, **kwargs)
     except SecretNotFoundError:
         error_response(handler, HTTPStatus.NOT_FOUND, "not_found", f"secret not found: {name}", name=name)
         return
@@ -228,9 +228,9 @@ def _update_secret(handler, name: str) -> None:
 
 
 def _delete_secret(handler, name: str) -> None:
-    store = handler.server.secrets
+    service = handler.server.secret_service
     try:
-        store.rm(name)
+        service.delete(name)
     except LookupError as exc:
         error_response(handler, HTTPStatus.NOT_FOUND, "not_found", f"secret not found: {name}", name=name)
         return
