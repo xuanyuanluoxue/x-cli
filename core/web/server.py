@@ -18,6 +18,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from core.web.auth import is_valid_token
 from core.web.handlers.health import handle_health
@@ -185,7 +186,10 @@ class WebHandler(BaseHTTPRequestHandler):
                 error_response(self, HTTPStatus.METHOD_NOT_ALLOWED, "method_not_allowed", f"method {method} not allowed on {path}")
             return
         if path.startswith("/api/secrets/"):
-            name = path[len("/api/secrets/"):]
+            # The browser client uses encodeURIComponent for arbitrary secret
+            # names. Decode once at the routing boundary so GET/PATCH/DELETE
+            # all address the same SecretStore entry as the CLI.
+            name = unquote(path[len("/api/secrets/"):])
             if method == "GET":
                 handle_secret_item(self, name, "get")
             elif method == "PATCH":

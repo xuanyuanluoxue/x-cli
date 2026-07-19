@@ -21,6 +21,7 @@ from contextlib import contextmanager
 from http.client import HTTPConnection
 from pathlib import Path
 from typing import Iterator
+from urllib.parse import quote
 
 import pytest
 
@@ -526,6 +527,31 @@ def test_delete_secret_returns_204(server: WebServer):
     status, body = _request(server, "DELETE", "/api/secrets/minimax")
     assert status == 204
     assert server.secrets.get("minimax") is None
+
+
+def test_secret_item_routes_decode_url_encoded_name(server: WebServer):
+    """GET/PATCH/DELETE must decode names encoded by the browser client."""
+    name = "MiniMax Coding Plan"
+    _make_secret_via_store(server, name, "sk-test")
+    path = f"/api/secrets/{quote(name, safe='')}"
+
+    status, body = _request(server, "GET", path)
+    assert status == 200
+    assert body["secret"]["name"] == name
+
+    status, body = _request(
+        server,
+        "PATCH",
+        path,
+        body={"category": "API"},
+    )
+    assert status == 200
+    assert body["secret"]["category"] == "API"
+
+    status, body = _request(server, "DELETE", path)
+    assert status == 204
+    assert body == {}
+    assert server.secrets.get(name) is None
 
 
 # ============================================================
