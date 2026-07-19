@@ -17,8 +17,8 @@
 - **`x todo`** — 个人 TODO 管理，后端是 YAML frontmatter 的 Markdown 文件。
   全生命周期：add / list / update / archive / restore / search / done / stats / init / import。
   CJK 友好（支持中文任务名）。归档留痕（archive 任务永不被删除）。
-- **`x secret`** — 本地凭证存储，后端是单一 JSON 文件（POSIX mode 600）。
-  list / get / set / update / rm / search / import / export。默认复制到剪贴板。
+- **`x secret`** — 本地多字段凭证存储，后端是单一 JSON 文件（POSIX mode 600）。
+  URL、账号和密钥信息可放在同一条记录中；CLI 默认复制选中的字段。
 - **`x diary`** — 本地每日 Markdown 日记，可追加内容或列出最近的日记日期。
 - **`x note`** — 带标签和本地搜索的主题型 Markdown 笔记。
 - **`x web`** — 本地 Web UI，用于访问 todo 和 secret 数据；Token 认证按需开启。
@@ -103,9 +103,10 @@ Markdown body（YAML frontmatter 之后的部分）原样保留 — 当笔记本
 
 ```bash
 x secret list                                         # 只列 name + category（**永不**显示 value）
-x secret get minimax                                  # value 写到剪贴板 + stdout + stderr 警告
+x secret get minimax                                  # 主密钥写到剪贴板 + stdout + stderr 警告
+x secret get webdav --field URL                       # 读取指定的普通文本/密钥字段
 x secret set minimax --value sk-xxx --category 接口密钥
-x secret update minimax --value sk-new --note "rotated 2026-06"
+x secret update minimax --value sk-new --note "rotated 2026-06"  # 只更新主密钥
 x secret rm oldkey                                    # 删除
 x secret search api                                   # name + note，**永不**搜 value
 x secret import --from /path/to/legacy-markdown-dir   # 单向迁移，源保留
@@ -114,10 +115,15 @@ x secret export                                       # JSON 备份
 
 **硬性约束**（CLI 强制，破坏会立即坏测试）：
 
-- `x secret list` **永不**显示 value。测试：`test_e2e_list_never_shows_value`。
+- `x secret list` **永不**显示任何字段值。测试：`test_e2e_list_never_shows_value`。
 - `x secret get` **永远**在 stdout 之前写 stderr 警告。测试：`test_e2e_get_returns_value`。
-- `x secret search` **永不**匹配 value 字段。测试：`test_e2e_search_does_not_match_value`。
+- `x secret search` **永不**匹配任何字段值。测试：`test_e2e_search_does_not_match_value`。
 - `x secret import` 只读 — 源文件永不被修改。
+
+Web 页面可新增、删除、排序并整体保存 1–50 个具名字段。字段分为直接显示的普通
+文本和默认掩码的密钥信息，并且必须指定一个密钥信息作为 CLI 默认读取的主密钥。
+旧 schema 1.0 可继续读取；首次写入前会先生成带时间戳的备份，再升级为 schema 1.1。
+所有值仍以明文保存在本地 JSON 中，页面掩码不等于静态加密。
 
 JSON DB 在 POSIX 上文件 mode `0600`。Windows 上 ACL 继承自用户 profile（除了这之外无额外加固）。如需静态加密，见 [Roadmap](#roadmap)。
 

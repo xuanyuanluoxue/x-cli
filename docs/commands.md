@@ -2,7 +2,7 @@
 
 > **目标读者**：使用 x-cli 的人类（包括未来的你）
 > **说明**：本文档列出所有命令的完整参考
-> **状态**：v0.5.0 实际实现（2026-06-21，含 2026-06-26 的 `x secret` --category 增强）
+> **状态**：v0.7.0 实际实现（含多字段密钥 schema 1.1）
 
 ---
 
@@ -382,7 +382,7 @@ x todo search <关键词> [选项]
 | 子命令 | 状态 | 说明 |
 |--------|------|------|
 | `x secret list` | ✅ | 列出条目 | `--category` |
-| `x secret get <name>` | ✅ | 取 value（自动复制到剪贴板） | `--full` / `--no-clipboard` / `--no-stdout` |
+| `x secret get <name>` | ✅ | 取主密钥或指定字段（自动复制到剪贴板） | `--field` / `--full` / `--no-clipboard` / `--no-stdout` |
 | `x secret set <name>` | ✅ | 新增条目 | `--value` / `--category` / `--note` |
 | `x secret update <name>` | ✅ | 修改 value / note / category | `--value` / `--note` / `--category` |
 | `x secret rm <name>` | ✅ | 删除条目 | — |
@@ -392,6 +392,14 @@ x todo search <关键词> [选项]
 
 存储：`%LOCALAPPDATA%\x-cli\secrets.json`（Win）/ `~/.local/share/x-cli/secrets.json`（Unix）。
 覆盖：`XCLI_SECRETS_DIR` 环境变量指向 JSON 文件。
+
+schema 1.1 中，每条记录有 1–50 个具名字段。字段类型为 `text`（普通文本）或
+`secret`（密钥信息），字段名忽略大小写后必须唯一；必须且只能有一个 `secret`
+字段标记为主密钥。CLI 的 `set/update --value` 保持兼容，分别创建或修改主密钥；
+多字段增删、排序和类型调整可在 `x web` 中完成。
+
+旧 schema 1.0 可直接读取，不会因查询自动改写。首次写入时，程序先在同目录创建
+`secrets-v1.0-backup-YYYYMMDD-HHMMSS.json`，备份成功后才升级为 1.1。
 
 ---
 
@@ -418,7 +426,35 @@ x secret list --category 接口密钥
 
 ---
 
-### 3.3 `x secret update <name>` — 修改条目
+### 3.3 `x secret get <name>` — 获取主密钥或指定字段
+
+**用法**：
+```bash
+x secret get <name> [--field <字段名>] [--full] [--no-clipboard] [--no-stdout]
+```
+
+- 不传 `--field` 时读取主密钥字段。
+- `--field` 按字段名精确匹配，匹配时忽略大小写；普通文本字段也可读取。
+- `--full` 输出字段名称、类型和主密钥标记等完整元数据。
+- 每次取值都先向 stderr 输出安全警告；`list/search` 永不输出或检索任何字段值。
+- 旧版单值记录会被视为一个名为“密钥”的主密钥字段。旧多行 value 的默认剪贴板
+  提取行为保持不变；显式 `--field` 返回字段原值。
+
+**示例**：
+```bash
+x secret get 123pan.webdav                 # 主密钥
+x secret get 123pan.webdav --field URL     # 普通文本字段
+x secret get 123pan.webdav --field 账号 --no-clipboard
+```
+
+**退出码**：
+- 0：成功
+- 2：指定字段不存在
+- 3：密钥记录不存在
+
+---
+
+### 3.4 `x secret update <name>` — 修改条目
 
 **用法**：
 ```bash
@@ -429,7 +465,7 @@ x secret update <name> [--value <v>] [--note <n>] [--category <c>]
 
 | 选项 | 说明 |
 |------|------|
-| `--value <v>` | 新 value |
+| `--value <v>` | 新主密钥值（不删除其他字段）|
 | `--note <n>` | 新 note（传 `""` 显式清空）|
 | `--category <c>` | 新 category（覆盖原分组）|
 

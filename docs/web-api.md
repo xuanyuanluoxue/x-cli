@@ -20,7 +20,7 @@
 - 显式 `--token <value>` 会忽略关闭状态并为本次运行开启认证
 - 可用 `--host 0.0.0.0` 暴露给局域网；无认证模式会打印风险警告
 
-**⚠️ 高风险**：`GET /api/secrets/<name>` 返回明文 value。每次调用 stdout 打警告（与 `x secret get` 一致）。
+**⚠️ 高风险**：`GET /api/secrets/<name>` 返回全部字段明文。每次调用 stderr 打警告（与 `x secret get` 一致）。
 
 ---
 
@@ -99,10 +99,10 @@ X-Web-Token: <token>
 
 | 方法 | 路径 | 用途 |
 |------|------|------|
-| `GET` | `/api/secrets` | 列出密钥（**不含 value**）|
-| `GET` | `/api/secrets/<name>` | 获取 value（**明文** + stderr 警告）|
-| `POST` | `/api/secrets` | 创建密钥（body: `{name, value, category?, note?}`）|
-| `PATCH` | `/api/secrets/<name>` | 更新密钥（body: `{value?, category?, note?}`）|
+| `GET` | `/api/secrets` | 列出密钥（**不含 fields/value**）|
+| `GET` | `/api/secrets/<name>` | 获取全部 fields（**明文** + stderr 警告）|
+| `POST` | `/api/secrets` | 创建密钥（`fields` 或兼容 `value`，二选一）|
+| `PATCH` | `/api/secrets/<name>` | 整体替换 `fields`，或兼容更新主密钥 `value` |
 | `DELETE` | `/api/secrets/<name>` | 删除密钥 |
 
 ---
@@ -270,7 +270,7 @@ X-Web-Token: <token>
 }
 ```
 
-**关键约束**：`value` 字段**绝不**返回（与 CLI `x secret list` 一致）。
+**关键约束**：`fields` 和 `value` 字段**绝不**返回（与 CLI `x secret list` 一致）。
 
 ---
 
@@ -279,14 +279,25 @@ X-Web-Token: <token>
 **Response 200**：
 ```json
 {
-  "name": "minimax",
-  "category": "接口密钥",
-  "value": "sk-test1234",
-  "note": "Migrated from 接口密钥.md",
-  "created_at": "2026-06-21T12:34:56",
-  "updated_at": "2026-06-21T12:34:56"
+  "secret": {
+    "name": "123pan.webdav",
+    "category": "123pan",
+    "fields": [
+      {"label": "URL", "kind": "text", "value": "https://webdav.example.test", "primary": false},
+      {"label": "账号", "kind": "text", "value": "user@example.test", "primary": false},
+      {"label": "密码", "kind": "secret", "value": "example-password", "primary": true}
+    ],
+    "value": "example-password",
+    "note": "WebDAV",
+    "created_at": "2026-07-19T12:34:56",
+    "updated_at": "2026-07-19T12:34:56"
+  }
 }
 ```
+
+`value` 是主密钥的向后兼容别名；新客户端应读取 `fields`。字段约束：1–50 个，
+`label` 长度 1–64 且忽略大小写后唯一，`kind` 只能是 `text` / `secret`，值不能为空；
+必须且只能有一个 `primary: true`，且该字段必须是 `secret`。
 
 **副作用**：每次调用 stderr 打警告（与 `x secret get` 一致）：
 ```
@@ -304,17 +315,27 @@ X-Web-Token: <token>
 **Request body**：
 ```json
 {
-  "name": "minimax",
-  "value": "sk-test1234",
-  "category": "接口密钥",   // 可选，默认 "default"
-  "note": "备注"             // 可选
+  "name": "123pan.webdav",
+  "category": "123pan",
+  "note": "WebDAV",
+  "fields": [
+    {"label": "URL", "kind": "text", "value": "https://webdav.example.test", "primary": false},
+    {"label": "密码", "kind": "secret", "value": "example-password", "primary": true}
+  ]
 }
 ```
+
+兼容旧客户端的单值请求仍可使用：
+```json
+{"name": "minimax", "value": "sk-test1234", "category": "接口密钥"}
+```
+
+`fields` 与 `value` 不可同时提供。`value` 会映射为一个名为“密钥”的主密钥字段。
 
 **Response 201**：新创建的 secret 对象（同 GET 单个结构）。
 
 **错误**：
-- `400` — name 为空 / value 为空
+- `400` — name 为空、未提供 `fields/value`、同时提供二者或字段校验失败；错误响应不回显字段值
 - `409` — name 已存在
 - `401` — 缺/错 token
 
@@ -322,15 +343,25 @@ X-Web-Token: <token>
 
 ### 5.11 `PATCH /api/secrets/<name>`
 
-**Request body**（至少 1 个字段）：
+**Request body**（至少 1 个受支持字段）：
 ```json
-{"value": "sk-new", "category": "新分组", "note": null}
+{
+  "fields": [
+    {"label": "Endpoint", "kind": "text", "value": "https://new.example.test", "primary": false},
+    {"label": "Token", "kind": "secret", "value": "new-token", "primary": true}
+  ],
+  "category": "新分组"
+}
 ```
+
+传 `fields` 时会进行完整校验并原子替换整组字段，顺序按数组保留；校验失败时旧记录
+完全不变。兼容请求 `{"value": "sk-new"}` 只更新当前主密钥，不删除其他字段。
+`fields` 与 `value` 同样不可同时提供。
 
 **Response 200**：更新后的 secret 对象。
 
 **错误**：
-- `400` — body 空
+- `400` — body 空、无受支持字段、同时提供 `fields/value` 或字段校验失败；错误响应不回显字段值
 - `404` — 不存在
 - `401` — 缺/错 token
 

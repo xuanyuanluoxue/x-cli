@@ -15,8 +15,8 @@ A single binary `x` that ships five focused subsystems:
 - **`x todo`** — Personal TODO management backed by YAML-frontmatter Markdown files.
   Full lifecycle: add, list, update, archive, restore, search, done, stats, init, import.
   CJK-friendly (中文 task names supported). Audit trail (archived tasks are never deleted).
-- **`x secret`** — Local credential store backed by a single JSON file (POSIX mode 600).
-  list / get / set / update / rm / search / import / export. Auto-copies to clipboard.
+- **`x secret`** — Local multi-field credential store backed by one JSON file (POSIX mode 600).
+  Keep URLs, account names, and masked secret fields together; the CLI auto-copies the selected field.
 - **`x diary`** — Local daily Markdown notes. Append an entry or list recent diary dates.
 - **`x note`** — Topic-oriented Markdown notes with tags and local search.
 - **`x web`** — Local web UI for todo and secret data; Token auth is opt-in.
@@ -105,9 +105,10 @@ it as your notebook. Unknown frontmatter fields round-trip on save. See
 
 ```bash
 x secret list                                         # names + categories only (NEVER values)
-x secret get minimax                                  # writes value to clipboard + stdout + stderr warning
+x secret get minimax                                  # primary secret → clipboard + stdout + stderr warning
+x secret get webdav --field URL                       # retrieve a named text/secret field
 x secret set minimax --value sk-xxx --category 接口密钥
-x secret update minimax --value sk-new --note "rotated 2026-06"
+x secret update minimax --value sk-new --note "rotated 2026-06"  # updates the primary secret
 x secret rm oldkey                                     # delete
 x secret search api                                    # name + note, NEVER value
 x secret import --from /path/to/legacy-markdown-dir   # one-way, source preserved
@@ -116,10 +117,16 @@ x secret export                                        # JSON backup
 
 **Hard invariants** (enforced by the CLI, do not violate):
 
-- `x secret list` NEVER shows values. Test: `test_e2e_list_never_shows_value`.
+- `x secret list` NEVER shows any field value. Test: `test_e2e_list_never_shows_value`.
 - `x secret get` ALWAYS writes a stderr warning before stdout. Test: `test_e2e_get_returns_value`.
-- `x secret search` NEVER matches against the `value` field. Test: `test_e2e_search_does_not_match_value`.
+- `x secret search` NEVER matches against field values. Test: `test_e2e_search_does_not_match_value`.
 - `x secret import` is read-only — source files are never modified.
+
+The Web UI can add, remove, reorder, and replace 1–50 named fields. Each field is
+either plain text or a masked secret, and exactly one secret field is the primary
+CLI value. Legacy schema 1.0 files remain readable; the first write creates a
+timestamped backup before upgrading the database to schema 1.1. Values are still
+stored as plaintext JSON—the mask only controls browser display.
 
 The JSON DB has file mode `0600` on POSIX. On Windows the ACL is inherited
 from the user's profile (no special hardening beyond that). For encryption

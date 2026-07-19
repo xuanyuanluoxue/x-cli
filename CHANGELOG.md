@@ -22,15 +22,20 @@
 - **GitHub Release workflow**：手动运行只构建 artifact，匹配源码版本的 tag
   才创建公开 Release。
 - `docs/releasing.md`：Windows 构建、版本检查、WinGet 验证和外部发布边界手册。
+- **多字段密钥库（ADR-0003）**：每条密钥记录可保存 1–50 个具名参数，区分
+  普通文本与默认掩码的密钥信息，并指定唯一主密钥；Web 页面支持新增、删除、排序、
+  类型切换、逐字段显示/复制和安全 URL 链接。CLI 新增 `x secret get --field`。
 
 ### Changed
 - 版本升级为 `0.7.0`，并集中到 `core/version.py` 单一来源。
 - **`x web` 默认直接访问**：默认关闭 Token 校验，浏览器启动后直接进入控制台；
   用户可在 `config.yaml` 设置 `web_auth: true`，或通过 `--token` 为单次运行开启认证。
   默认绑定仍保持 `127.0.0.1`，非回环无认证启动会显示风险警告。
-- **`x web` 整页重构**：改为深色本地指挥台视觉，统一重写登录、任务、
-  密钥、统计和编辑页；桌面端使用侧边导航，移动端使用底部导航和卡片化数据表。
+- **`x web` 整页重构**：改为简约浅色本地控制台视觉，统一重写登录、任务、
+  密钥、统计和编辑页；桌面端使用侧边导航，移动端使用折叠导航和卡片化数据表。
   保持零第三方运行依赖，并补齐键盘焦点与 `prefers-reduced-motion` 支持。
+- Secret DB 升级到 schema 1.1。旧 1.0 数据保持只读兼容，首次写入前自动创建
+  `secrets-v1.0-backup-<timestamp>.json`；兼容的 `set/update --value` 只操作主密钥。
 - setuptools 改为递归发现 `core*` / `plugins*`，正式 wheel 现在包含
   `core.web.handlers` 和全部 Web 静态资源。
 - 项目 license 元数据改用 SPDX `MIT`，清除 setuptools 弃用警告。
@@ -64,6 +69,10 @@
 - 修复手写 `packages = ["plugins", "core"]` 导致正式安装包遗漏 Web 子包的问题。
 - 修复 PyInstaller one-file Web 冒烟测试结束后残留子进程、锁住旧 EXE 的问题。
 - 修复 E2E 测试把版本硬编码为 `0.6.0`、发版后产生假失败的问题。
+
+### Security
+- 密钥列表与搜索继续排除所有字段值；Web 详情/编辑在请求明文前要求当前页面确认，
+  每个密钥字段独立掩码，隐藏状态下明文不渲染进 DOM。字段校验错误也不回显值。
 
 ---
 
