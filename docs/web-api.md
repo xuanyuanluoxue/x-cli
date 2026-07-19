@@ -2,7 +2,7 @@
 
 > **目标读者**：前端 AI（实现） + 后端实现者 + 集成者
 > **范围**：`x web` 子命令的 REST API
-> **状态**：🚧 开发中（feature/web-backend，2026-06-27）
+> **状态**：✅ 已实现（Web 前后端，2026-07-18）
 > **基础**：v0.6.0 的 `x todo` + `x secret` CLI 命令全部 API 化
 
 ---
@@ -13,10 +13,12 @@
 
 **安全模型**：
 - 默认绑定 `127.0.0.1`（仅本机可访问）
-- 启动时生成 **一次性随机 token**（32 字节 base64），打印到 stdout
-- 浏览器必须输入 token → 存 `localStorage` → 后续请求带 `X-Web-Token` header
-- 后端校验所有 `/api/*` 请求的 header；缺失/错误 → 401
-- 可选 `--host 0.0.0.0` + `--port 8421` 暴露给局域网（仍需 token）
+- 默认 `web_auth: false`，不生成 Token，浏览器直接访问 API
+- 配置 `web_auth: true` 时生成一次性随机 Token（32 字节 base64）并打印到 stderr
+- 认证开启时，浏览器保存 Token 到 `localStorage`，请求携带 `X-Web-Token`
+- 认证开启时，后端校验所有受保护的 `/api/*` 请求；缺失/错误 → 401
+- 显式 `--token <value>` 会忽略关闭状态并为本次运行开启认证
+- 可用 `--host 0.0.0.0` 暴露给局域网；无认证模式会打印风险警告
 
 **⚠️ 高风险**：`GET /api/secrets/<name>` 返回明文 value。每次调用 stdout 打警告（与 `x secret get` 一致）。
 
@@ -25,29 +27,38 @@
 ## 2. 启动
 
 ```bash
-x web                              # 默认 127.0.0.1:8421
-x web --host 0.0.0.0               # 暴露给局域网（需 token）
+x web                              # 默认 127.0.0.1:8421，无认证
+x web --host 0.0.0.0               # 暴露给局域网（建议先开启认证）
 x web --port 9000                  # 自定义端口
-x web --token my-secret-token      # 自定义 token（默认随机生成）
+x web --token my-secret-token      # 本次运行显式开启认证
 x web --no-browser                 # 不自动打开浏览器
+x web --auto-token-url             # 认证开启时自动把 Token 交给浏览器
 ```
 
 启动后输出：
 
 ```
 🌐 x web 服务已启动
-   地址:  http://127.0.0.1:8421
-   Token: a1b2c3d4e5f6...（32 字节）
-   停止:  Ctrl+C
+   地址: http://127.0.0.1:8421
+   认证: 关闭（浏览器可直接访问）
+   停止: Ctrl+C
 
-🔐 请在浏览器输入上面的 Token（首次访问会提示）
+🌐 已关闭 Token 验证；任务和密钥可由本机浏览器直接访问
+```
+
+要默认开启认证，编辑 `%LOCALAPPDATA%\x-cli\config.yaml`（Unix 为
+`~/.local/share/x-cli/config.yaml`）：
+
+```yaml
+web_auth: true
 ```
 
 ---
 
 ## 3. 认证
 
-所有 `/api/*` 端点要求请求头：
+默认模式不要求认证。`web_auth: true` 或显式 `--token` 开启认证后，除健康检查
+和静态资源外的 `/api/*` 端点要求请求头：
 
 ```
 X-Web-Token: <token>
@@ -71,7 +82,7 @@ X-Web-Token: <token>
 
 | 方法 | 路径 | 用途 |
 |------|------|------|
-| `GET` | `/api/health` | 健康检查（无需 token）|
+| `GET` | `/api/health` | 健康检查（无需 token；返回 `auth_required`）|
 
 ### 4.2 任务（todo）
 
@@ -341,7 +352,9 @@ X-Web-Token: <token>
 
 `GET /<path>` → 返回 `core/web/static/<path>`（防止路径穿越）
 
-静态文件目录在 backend 阶段是占位的 `index.html`（"Frontend coming soon"）。前端 branch 替换整个 `core/web/static/` 目录。
+静态目录包含完整的零依赖前端：`index.html` 提供 app shell，CSS 按基础变量、
+布局、通用组件与业务视图分层，JavaScript 使用原生 ES modules + hash router。
+前端不请求 CDN、Web Font 或第三方脚本，因此正常运行只依赖 `x web` 自身的静态服务。
 
 ---
 
@@ -357,8 +370,8 @@ X-Web-Token: <token>
 ```
 
 常见 error code：
-- `missing_token` — 缺 X-Web-Token header
-- `invalid_token` — token 不匹配
+- `missing_token` — 认证开启时缺 X-Web-Token header
+- `invalid_token` — 认证开启时 token 不匹配
 - `not_found` — 资源不存在
 - `validation_error` — 参数校验失败
 - `duplicate` — 资源已存在（创建时）

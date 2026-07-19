@@ -1,7 +1,7 @@
 # x web 行为规格
 
 > **目标读者**：接续开发的 AI agent
-> **范围**：`x web` 子命令 — stdlib HTTP server + REST API + token auth
+> **范围**：`x web` 子命令 — stdlib HTTP server + REST API + 可选 token auth
 > **对应测试**：`tests/test_web_api.py`（单元 + 端到端）
 > **状态**：🚧 开发中（feature/web-backend，2026-06-27）
 
@@ -11,9 +11,12 @@
 
 **路径**：
 - 静态资源：`core/web/static/`（前端 branch 会替换此目录）
-- 配置：`xcli_data_dir()/web-token.txt`（v0.7.0 MVP **不持久化**，每次启动重新生成）
+- 配置：`xcli_data_dir()/config.yaml` 中的 `web_auth`（Token 本身不持久化）
 
-**Token 生成**：`secrets.token_urlsafe(32)`（32 字节 = 43 字符 base64）
+**默认认证**：关闭。配置文件设置 `web_auth: true` 或显式传入 `--token` 时开启。
+
+**Token 生成**：认证开启且未传 `--token` 时调用 `secrets.token_urlsafe(32)`
+（32 字节 = 43 字符 base64）。
 
 **默认绑定**：`127.0.0.1:8421`（端口 8421 = "x-cli web" 键盘记忆）
 
@@ -26,8 +29,21 @@
 
 **Then**：
 - 启动 HTTP server 在 127.0.0.1:8421
-- stdout 打印服务地址 + token
-- 不自动打开浏览器（用 `--no-browser=false` 才自动打开）
+- stderr 打印服务地址 + `认证: 关闭（仅建议本机使用）`
+- 自动打开浏览器，直接进入任务页，不显示 Token 登录页
+
+### 场景 1A：通过配置开启认证
+
+**Given**：
+- 有效配置文件包含 `web_auth: true`
+
+**When**：
+- `x web`
+
+**Then**：
+- 启动时生成随机 Token 并显示在终端
+- 浏览器需要 Token 才能访问任务和密钥 API
+- 仍可用 `--auto-token-url` 自动把 Token 交给浏览器
 
 ---
 
@@ -41,13 +57,26 @@
 **Then**：
 - 退出码 0
 - HTTP 200
-- Body: `{"status": "ok", "version": "0.6.0", "subsystems": ["todo", "secret"]}`
+- Body 包含 `{"status": "ok", "auth_required": false}`
 
 ---
 
-## 场景 3：API 请求缺 token → 401
+## 场景 3：默认模式无需 token
 
-**Given**：服务已启动，token = `abc123`
+**Given**：服务以默认配置启动（`web_auth: false`）
+
+**When**：
+- `GET /api/tasks`（无 X-Web-Token header）
+
+**Then**：
+- HTTP 200
+- 返回任务列表
+
+---
+
+## 场景 3A：认证模式下 API 请求缺 token → 401
+
+**Given**：服务以认证模式启动，token = `abc123`
 
 **When**：
 - `GET /api/tasks`（无 X-Web-Token header）
@@ -58,9 +87,9 @@
 
 ---
 
-## 场景 4：API 请求错 token → 401
+## 场景 4：认证模式下 API 请求错 token → 401
 
-**Given**：服务已启动，token = `abc123`
+**Given**：服务以认证模式启动，token = `abc123`
 
 **When**：
 - `GET /api/tasks` 带 `X-Web-Token: wrong`
@@ -314,7 +343,8 @@
 |---|---|
 | **默认 host** | `127.0.0.1`（绝不默认 0.0.0.0）|
 | **默认 port** | `8421` |
-| **token 长度** | 32 字节（base64 后 43 字符）|
+| **默认认证** | 关闭；`web_auth: true` 或 `--token` 时开启 |
+| **token 长度** | 认证开启且自动生成时为 32 字节（base64 后 43 字符）|
 | **token 持久化** | 不（每次启动重新生成；MVP 不写盘）|
 | **静态资源根** | `core/web/static/` |
 | **静态资源白名单** | 不限制（前端目录所有文件都可访问）|
@@ -340,11 +370,11 @@
 
 - ❌ HTTPS / TLS（仅 localhost）
 - ❌ 多用户支持 / 用户管理
-- ❌ Session / Cookie（每次请求带 X-Web-Token 即可）
+- ❌ Session / Cookie（认证模式下每次请求带 X-Web-Token 即可）
 - ❌ 速率限制（个人工具，无滥用风险）
 - ❌ WebSocket（只用 REST）
 - ❌ CORS（前后端同源）
-- ❌ token 持久化（每次启动重生成；要持久化用 `--token <固定值>`）
+- ❌ token 持久化（认证模式每次启动重生成；要固定用 `--token <固定值>`）
 - ❌ 实时通知（前端轮询即可）
 
 ---

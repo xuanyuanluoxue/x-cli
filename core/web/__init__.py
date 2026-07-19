@@ -12,7 +12,7 @@ Module map:
     │   ├── health
     │   ├── tasks
     │   └── secrets
-    └── static/       — frontend assets (placeholder; replaced by feature/web-frontend)
+    └── static/       — Vue 3 SPA build artifacts (source in ``web/``; see ADR-0002)
 
 The :mod:`plugins.web` module wires :class:`core.web.server.WebServer`
 into the ``x web`` CLI subcommand.

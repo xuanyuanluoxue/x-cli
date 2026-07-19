@@ -21,7 +21,7 @@
   list / get / set / update / rm / search / import / export。默认复制到剪贴板。
 - **`x diary`** — 本地每日 Markdown 日记，可追加内容或列出最近的日记日期。
 - **`x note`** — 带标签和本地搜索的主题型 Markdown 笔记。
-- **`x web`** — 带认证的本地 Web UI，用于访问 todo 和 secret 数据。
+- **`x web`** — 本地 Web UI，用于访问 todo 和 secret 数据；Token 认证按需开启。
 
 数据子系统彼此**独立存储**在每用户数据目录下：
 
@@ -145,6 +145,25 @@ x note search minimax --limit 5
 保存元数据，正文保持 Markdown。可通过 `XCLI_NOTES_DIR` 切换目录。
 P0 只做创建、列表、显示和搜索；编辑与删除留到后续版本。
 
+### `x web` — 本地浏览器界面
+
+```bash
+x web                       # 默认 127.0.0.1:8421，不再要求输入 Token
+x web --no-browser          # 启动但不自动打开浏览器
+x web --token my-token      # 本次运行显式开启认证
+```
+
+默认配置为 `web_auth: false`，浏览器会直接进入控制台。如需重新开启随机
+Token 认证，编辑 `<xcli_data_dir>/config.yaml`（Windows：
+`%LOCALAPPDATA%\x-cli\config.yaml`）：
+
+```yaml
+web_auth: true
+```
+
+如果把 host 绑定到非本机回环地址，建议开启认证；否则能访问该地址的设备都能
+读取和修改任务、密钥数据。
+
 ### 全局 flag
 
 ```bash
@@ -199,7 +218,7 @@ x --config-init              # 写默认配置到 <xcli_data_dir>/config.yaml
 **当前本地 v0.7.0 已完成：**
 - TODO 全生命周期、时间精度、子任务、提醒字段、重复规则、批量操作、模板、依赖、回收站删除和 JSON/CSV/Markdown 导出
 - Secret 本地存储、列表/搜索隐私保护和剪贴板集成
-- 本地日记、主题笔记和带认证的 Web UI
+- 本地日记、主题笔记和可选认证的 Web UI
 - CLI、Python 元数据、EXE 和 WinGet 清单共用一个版本来源
 - Windows x64 单文件 EXE，内含 Web 静态资源，无需预装 Python
 - 自动生成 SHA-256 和 WinGet 1.12.0 portable 清单

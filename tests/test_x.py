@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import io
+import os
 from contextlib import redirect_stderr, redirect_stdout
+from pathlib import Path
 
 import pytest
 
+import x as x_module
 from x import __version__, build_parser, main
 
 
@@ -146,6 +149,25 @@ def test_build_parser_does_not_crash():
     arg_dests = {a.dest for a in parser._actions}
     assert "version" in arg_dests
     assert "subcommand" in arg_dests
+
+
+def test_web_auth_config_is_forwarded_to_plugin(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The global config reaches the lazily loaded Web plugin."""
+    cfg = tmp_path / "config.yaml"
+    cfg.write_text("web_auth: true\nlog_path: null\n", encoding="utf-8")
+    monkeypatch.delenv("XCLI_WEB_AUTH", raising=False)
+    captured: dict[str, str | None] = {}
+
+    def fake_handler(_args):
+        captured["web_auth"] = os.environ.get("XCLI_WEB_AUTH")
+        return 0
+
+    monkeypatch.setattr(x_module, "load_subcommand_handler", lambda _name: fake_handler)
+
+    assert main(["--config", str(cfg), "web"]) == 0
+    assert captured["web_auth"] == "1"
 
 
 # ============================================================

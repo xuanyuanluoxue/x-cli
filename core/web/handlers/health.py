@@ -17,5 +17,6 @@ def handle_health(handler) -> None:
             "status": "ok",
             "version": __version__,
             "subsystems": ["todo", "secret"],
+            "auth_required": handler.server.token is not None,
         },
     )

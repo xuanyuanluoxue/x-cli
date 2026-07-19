@@ -2,7 +2,7 @@
 
 Wraps :class:`http.server.HTTPServer` with:
 
-* Token-based authentication for ``/api/*`` endpoints
+* Optional Token-based authentication for ``/api/*`` endpoints
 * Static file serving from ``core/web/static/`` (for ``/`` and ``/<file>``)
 * Path-traversal protection on static files
 * JSON request parsing + JSON response formatting
@@ -128,13 +128,19 @@ class WebHandler(BaseHTTPRequestHandler):
     def _dispatch(self, method: str) -> None:
         path = self.path.split("?", 1)[0]  # strip query string
 
-        # Auth (except /api/health and static)
-        if path.startswith("/api/") and path != "/api/health":
+        # Auth (except /api/health and static). ``token=None`` is the default
+        # direct-access mode; a string enables the original X-Web-Token gate.
+        expected_token = self.server.token  # type: ignore[attr-defined]
+        if (
+            expected_token is not None
+            and path.startswith("/api/")
+            and path != "/api/health"
+        ):
             token = self.headers.get("X-Web-Token")
             if token is None:
                 error_response(self, HTTPStatus.UNAUTHORIZED, "missing_token", "X-Web-Token header required")
                 return
-            if not is_valid_token(token, self.server.token):  # type: ignore[attr-defined]
+            if not is_valid_token(token, expected_token):
                 error_response(self, HTTPStatus.UNAUTHORIZED, "invalid_token", "invalid token")
                 return
 
@@ -212,7 +218,7 @@ class _Server(ThreadingHTTPServer):
         self,
         server_address: tuple[str, int],
         handler_cls: type[BaseHTTPRequestHandler],
-        token: str,
+        token: str | None,
         store: Any,  # TaskStore — avoid circular import
         secrets_store: Any,  # SecretStore
     ) -> None:
@@ -241,7 +247,7 @@ class WebServer:
         self,
         host: str,
         port: int,
-        token: str,
+        token: str | None = None,
         store: Any | None = None,
         secrets_store: Any | None = None,
     ) -> None:
@@ -259,6 +265,11 @@ class WebServer:
     @property
     def base_url(self) -> str:
         return f"http://{self.host}:{self.port}"
+
+    @property
+    def auth_required(self) -> bool:
+        """Whether API requests must include ``X-Web-Token``."""
+        return self.token is not None
 
     def start(self) -> None:
         """Start the server in a background thread. Non-blocking."""

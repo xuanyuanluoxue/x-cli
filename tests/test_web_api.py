@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import socket
 import argparse
+import time
 import webbrowser
 from contextlib import contextmanager
 from http.client import HTTPConnection
@@ -63,7 +64,6 @@ def server(
     srv = WebServer(host="127.0.0.1", port=port, token=token, store=store, secrets_store=secrets_store)
     srv.start()
     # Wait for server to actually be listening (up to 2s)
-    import time
     deadline = time.time() + 2.0
     while time.time() < deadline:
         try:
@@ -75,6 +75,41 @@ def server(
         raise RuntimeError(f"server didn't start within 2s on port {port}")
     srv.test_base_url = f"http://127.0.0.1:{port}"
     srv.test_token = token
+    try:
+        yield srv
+    finally:
+        srv.stop()
+
+
+@pytest.fixture
+def no_auth_server(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Iterator[WebServer]:
+    """Spin up the default Web server mode with Token auth disabled."""
+    monkeypatch.setenv("XCLI_TODO_DIR", str(tmp_path / "todo"))
+    monkeypatch.setenv("XCLI_SECRETS_DIR", str(tmp_path / "secrets.json"))
+    store = TaskStore()
+    secrets_store = SecretStore(db_path=str(tmp_path / "secrets.json"))
+    port = _free_port()
+    srv = WebServer(
+        host="127.0.0.1",
+        port=port,
+        token=None,
+        store=store,
+        secrets_store=secrets_store,
+    )
+    srv.start()
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                break
+        except OSError:
+            time.sleep(0.02)
+    else:  # pragma: no cover
+        raise RuntimeError(f"server didn't start within 2s on port {port}")
+    srv.test_base_url = f"http://127.0.0.1:{port}"
+    srv.test_token = ""
     try:
         yield srv
     finally:
@@ -172,6 +207,21 @@ def test_health_no_auth_required(server: WebServer):
     assert "version" in body
     assert "todo" in body["subsystems"]
     assert "secret" in body["subsystems"]
+    assert body["auth_required"] is True
+
+
+def test_default_mode_allows_api_without_token(no_auth_server: WebServer):
+    """Default ``x web`` mode allows direct API access without a header."""
+    status, body = _request(no_auth_server, "GET", "/api/tasks", token=None)
+    assert status == 200
+    assert body == {"tasks": [], "count": 0}
+
+
+def test_health_reports_auth_disabled(no_auth_server: WebServer):
+    """The frontend can discover that it should skip the login view."""
+    status, body = _request(no_auth_server, "GET", "/api/health", token=None)
+    assert status == 200
+    assert body["auth_required"] is False
 
 
 def test_api_missing_token_returns_401(server: WebServer):
@@ -454,6 +504,30 @@ def _build_web_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="x web")
     _web_plugin.register(parser)
     return parser
+
+
+def test_resolve_web_token_defaults_to_disabled() -> None:
+    """No config and no CLI token means no authentication token exists."""
+    assert _web_plugin._resolve_token(None, config_auth_enabled=False) is None
+
+
+def test_resolve_web_token_generates_when_config_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``web_auth: true`` generates a fresh token when none is supplied."""
+    monkeypatch.setattr(_web_plugin, "generate_token", lambda: "generated-token")
+    assert (
+        _web_plugin._resolve_token(None, config_auth_enabled=True)
+        == "generated-token"
+    )
+
+
+def test_resolve_web_token_cli_value_enables_auth() -> None:
+    """An explicit ``--token`` enables auth even when config is disabled."""
+    assert (
+        _web_plugin._resolve_token("custom-token", config_auth_enabled=False)
+        == "custom-token"
+    )
 
 
 def test_auto_token_url_flag_in_register() -> None:

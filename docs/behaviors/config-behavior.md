@@ -47,6 +47,7 @@ x-cli 现在每次启动都从 `core/paths.py` 读硬编码的默认路径。但
   secrets_path: <xcli_secrets_path()>
   log_level: WARNING
   log_path: <xcli_data_dir()>/x.log
+  web_auth: false
   ```
 - 日志不写文件（`log_level: WARNING` 时不主动写）
 
@@ -244,6 +245,9 @@ log_level: WARNING
 
 # 日志文件路径（null = 不写文件）
 log_path: "C:\Users\X\AppData\Local\x-cli\x.log"
+
+# x web Token 认证（默认 false；true 时开启）
+web_auth: false
 ```
 
 **未实现的字段**（v0.5+ 候选）：
@@ -277,6 +281,7 @@ todo_dir: C:\Users\X\AppData\Local\x-cli\todo
 secrets_path: C:\Users\X\AppData\Local\x-cli\secrets.json
 log_level: WARNING
 log_path: C:\Users\X\AppData\Local\x-cli\x.log
+web_auth: false
 ```
 
 ### --log-level DEBUG

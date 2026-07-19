@@ -71,6 +71,7 @@ def test_scenario1_default_when_no_config_file(
     assert cfg.secrets_path == xcli_secrets_path()
     assert cfg.log_level == "WARNING"
     assert cfg.log_path == xcli_log_path()
+    assert cfg.web_auth is False
 
 
 def test_appconfig_default_factory_returns_hardcoded_values(
@@ -85,6 +86,7 @@ def test_appconfig_default_factory_returns_hardcoded_values(
     assert cfg.secrets_path == xcli_secrets_path()
     assert cfg.log_level == "WARNING"
     assert cfg.log_path == xcli_log_path()
+    assert cfg.web_auth is False
 
 
 # ============================================================
@@ -111,6 +113,7 @@ def test_scenario2_to_yaml_produces_init_file_content(
     assert "secrets_path:" in text
     assert "log_level: WARNING" in text
     assert "log_path:" in text
+    assert "web_auth: false" in text
     # Header comment for traceability
     assert "x-cli configuration" in text
     assert text.startswith("#")
@@ -134,6 +137,25 @@ def test_to_yaml_round_trips_through_from_yaml_file(
 
     loaded = AppConfig.from_yaml_file(target)
     assert loaded == original
+
+
+def test_web_auth_can_be_enabled_from_yaml(tmp_path: Path) -> None:
+    """``web_auth: true`` explicitly enables Web Token authentication."""
+    cfg_file = tmp_path / "web-auth.yaml"
+    cfg_file.write_text("web_auth: true\n", encoding="utf-8")
+
+    cfg = AppConfig.from_yaml_file(cfg_file)
+
+    assert cfg.web_auth is True
+
+
+def test_web_auth_rejects_invalid_boolean(tmp_path: Path) -> None:
+    """A typo must fail closed instead of silently disabling protection."""
+    cfg_file = tmp_path / "bad-web-auth.yaml"
+    cfg_file.write_text("web_auth: tru\n", encoding="utf-8")
+
+    with pytest.raises(ConfigError, match="web_auth"):
+        AppConfig.from_yaml_file(cfg_file)
 
 
 # ============================================================

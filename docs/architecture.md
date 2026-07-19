@@ -109,6 +109,32 @@ core/models.py: Task dataclass（未知字段在 extra，round-trip 不丢）
 退出码 0
 ```
 
+### 1.4 Web 前端架构
+
+自 v0.8.0 起，Web 前端是一个 **Vue 3 SPA**（ADR-0002）。源码集中在仓库根目录的 `web/`
+文件夹内（`web/src/**`），用 Vite 构建；构建产物输出到 `core/web/static/`，由
+`core/web/server.py` 以 `Cache-Control: no-store` 同源服务。Python 运行时仍保持
+stdlib-only——Node/Vite 仅是**开发期**工具链，最终用户无需安装。
+
+- **技术栈**：Vue 3 `<script setup>` SFC + Vue Router 4（hash 模式）+ Pinia。
+- **构建**：`cd web && npm run build` → `core/web/static/`（`emptyOutDir`，产物提交进 git，
+  保证 `pip install` 后无需 Node 即可 `x web`）。
+- **路由**：hash 模式（`#/tasks`、`#/secrets/:name` …），与旧版形态一致，无需服务端
+  history fallback。路由守卫先查询 `/api/health`；`auth_required: false` 时直接进入，
+  为 `true` 时才启用登录守卫，401 全局跳 `#/login`。
+- **服务端**：`core/web/server.py` 仍以 `core/web/static/` 为静态根；`token=None` 表示
+  默认直访模式，字符串 Token 表示认证模式。
+
+前端的安全边界：
+
+- 默认配置 `web_auth: false`，依靠 `127.0.0.1` 回环绑定限制访问；配置为 `true` 或
+  显式传 `--token` 后恢复 Token 保护。
+- 认证模式下 Token 仅存于 `localStorage["x_web_token"]`，每个 API 请求通过
+  `X-Web-Token` 传递。
+- 密钥列表只请求 summary，不获取或渲染 `value`（`getSecret` 不出现在列表 bundle）。
+- 密钥详情页必须先弹出明文警告，用户确认后才请求单条记录。
+- 所有静态资源同源本地加载，不连接 CDN 或外部字体服务。
+
 ---
 
 ## 2. 命令分发机制
@@ -165,8 +191,8 @@ elif parsed.todo_action == "add":
 
 ## 3. 配置管理（已实现）
 
-`core.config.AppConfig` 管理四个字段：`todo_dir`、`secrets_path`、
-`log_level`、`log_path`。配置仍使用手写 YAML parser，不引入 PyYAML。
+`core.config.AppConfig` 管理五个字段：`todo_dir`、`secrets_path`、
+`log_level`、`log_path`、`web_auth`。配置仍使用手写 YAML parser，不引入 PyYAML。
 
 默认文件位于 `<xcli_data_dir>/config.yaml`，可用 `x --config-init` 创建。
 解析优先级从高到低：
@@ -181,6 +207,7 @@ todo_dir: D:/data/x-cli/todo
 secrets_path: D:/data/x-cli/secrets.json
 log_level: WARNING
 log_path: D:/data/x-cli/x.log
+web_auth: false
 ```
 
 `XCLI_TODO_DIR`、`XCLI_SECRETS_DIR`、`XCLI_DIARY_DIR`、`XCLI_NOTES_DIR`
@@ -319,6 +346,7 @@ x todo add: error: argument --priority: invalid choice: 'urgent' (choose from 'h
 | **核心库单元测试** | `pytest` | models / parser / storage / secrets / note / diary |
 | **CLI 集成测试** | `pytest` + 子进程 | todo / secret / diary / note / help / config |
 | **主入口与架构测试** | `pytest` | `test_x.py` + `test_dispatch.py`（argparse、延迟加载、依赖方向）|
+| **Web 前端契约** | `pytest`（断言构建产物）+ 本地浏览器 | SPA 入口/hashed assets、相对路径、无 CDN、密钥列表不泄露明文、明文查看需确认、可访问性 |
 | **BDD 行为规格** | Given-When-Then 文档 | 只描述需要长期保留的用户行为与关键非功能契约 |
 
 ### 7.2 覆盖率目标
@@ -359,8 +387,9 @@ setuptools 通过 `[tool.setuptools.dynamic]` 读取它，WinGet 生成器会拒
 ### 8.2 Python 包
 
 `pyproject.toml` 使用递归包发现：`core*` + `plugins*`，并显式包含
-`core.web/static/**`。运行时依赖仍然为零；`build`、`PyInstaller` 只属于
-`release` 可选依赖。
+`core.web/static/**`（Vue SPA 构建产物）。运行时依赖仍然为零；`build`、`PyInstaller`
+只属于 `release` 可选依赖。前端源码在 `web/`（不进 Python 包）；改动前端后须先
+`cd web && npm run build` 重新生成 `core/web/static/` 再打包。
 
 ```powershell
 .venv\Scripts\python.exe -m build --no-isolation

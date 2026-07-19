@@ -1,8 +1,8 @@
 """core.web.auth — token generation + validation.
 
-Used by :mod:`core.web.server` to gate all ``/api/*`` endpoints behind
-a startup-generated token. Constant-time comparison (hmac.compare_digest)
-to prevent timing attacks on the token.
+Used by :mod:`core.web.server` when optional Web authentication is enabled.
+Constant-time comparison (hmac.compare_digest) prevents timing attacks on
+the token.
 """
 
 from __future__ import annotations

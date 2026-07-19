@@ -151,15 +151,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 6
     log = get_logger("x.main")
     log.debug(
-        "effective config: todo_dir=%s, log_level=%s",
+        "effective config: todo_dir=%s, log_level=%s, web_auth=%s",
         config.todo_dir,
         config.log_level,
+        config.web_auth,
     )
 
     # 把 config 派生的路径灌进环境变量，storage 层继续用 XCLI_TODO_DIR /
     # XCLI_SECRETS_DIR 读。setdefault —— 已经 set 的（用户显式 export 的）保留。
     os.environ.setdefault("XCLI_TODO_DIR", str(config.todo_dir))
     os.environ.setdefault("XCLI_SECRETS_DIR", str(config.secrets_path))
+    # Web 插件保持稳定的 ``run(args)`` 契约；用进程内环境变量传递已经由
+    # 顶层解析完成的配置（包括 ``--config`` 指定的非默认文件）。
+    os.environ["XCLI_WEB_AUTH"] = "1" if config.web_auth else "0"
 
     if not parsed.subcommand:
         parser.print_help()
