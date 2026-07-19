@@ -462,6 +462,35 @@
 - 旧 Markdown text 代码块原文保存为一个 label=`密钥` 的主 secret 字段
 - 原来的多行 key 提取兼容行为继续生效
 
+## 场景 24：CLI 与 Web 共享密钥业务入口
+
+**Given**:
+- CLI 与 Web 指向同一个密钥 DB
+
+**When**:
+- 任一入口执行 list/get/find/search/create/update/delete/import/export
+
+**Then**:
+- 两端都通过 `SecretService` 执行业务操作
+- 字段校验、重复判断、不存在判断和持久化语义一致
+- CLI 退出码/剪贴板/终端提示与 Web HTTP 状态/JSON 响应仍由各自适配器处理
+- Web 未启动时 CLI 仍可独立工作
+
+## 场景 25：独立进程并发写入不丢失
+
+**Given**:
+- CLI 进程与 Web 进程（或两个 CLI 进程）指向同一个 `secrets.json`
+
+**When**:
+- 两个进程几乎同时成功创建或修改不同条目
+
+**Then**:
+- 完整读—校验—写事务通过 `<db>.lock` 串行执行
+- 两个已报告成功的修改都保留在 DB 中
+- DB 始终是完整合法 JSON
+- lock sidecar 不包含名称、fields 或任何 value
+- 持锁进程退出后操作系统释放锁，sidecar 文件存在不代表仍被占用
+
 ## 不变量
 
 | 项 | 值 |
@@ -470,7 +499,8 @@
 | **覆盖** | 环境变量 `XCLI_SECRETS_DIR` |
 | **文件权限** | 600（Windows 用 ACL）|
 | **加密** | MVP 不加密（明文 + 文件权限保护） |
-| **依赖** | **零**第三方库（只 stdlib `json` / `pathlib` / `os` / `datetime`）|
+| **依赖** | **零**第三方库（stdlib JSON + `threading` + `msvcrt`/`fcntl`）|
+| **并发写入** | `<db>.lock` 排他锁覆盖完整读—校验—写事务 |
 | **list 不显示 fields/value** | 硬性约束（避免 `x secret list > log.txt` 泄露）|
 | **get 永远带警告** | 硬性约束（不管是否 tty）|
 | **search 不搜任何 fields/value** | 硬性约束（包括普通文本字段，避免 grep 撞到）|
@@ -497,7 +527,7 @@
 - ❌ 标签（用 `category` 分组替代）
 - ❌ 自动备份到云端（用 `export` 手动备份）
 - ❌ CLI 增删/重排多个字段（本期由 Web/API 完成）
-- ❌ 单字段 REST 路由、字段历史版本与多人写锁
+- ❌ 单字段 REST 路由、字段历史版本与多用户权限模型
 
 ---
 

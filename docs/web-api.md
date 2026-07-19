@@ -9,7 +9,7 @@
 
 ## 1. 总览
 
-`x web` 启动一个 stdlib HTTP server（**0 第三方依赖**），把 `TaskStore` + `SecretStore` 暴露为 REST API。浏览器前端通过这些端点读写数据。
+`x web` 启动一个 stdlib HTTP server（**0 第三方依赖**），把 `TaskStore` 与共享的 `SecretService` 暴露为 REST API。密钥 service 与 CLI 共用同一个 `SecretStore` 持久化边界，浏览器前端通过这些端点读写数据。
 
 **安全模型**：
 - 默认绑定 `127.0.0.1`（仅本机可访问）

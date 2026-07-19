@@ -370,6 +370,31 @@
 
 ---
 
+## 场景 24：Web 与 CLI 共享密钥业务入口
+
+**Given**：WebServer 与 CLI 指向同一个 SecretStore
+
+**When**：Web API 执行密钥 list/get/create/update/delete
+
+**Then**：
+- Web handler 通过 `SecretService` 调用业务操作，不直接发起 SecretStore CRUD
+- CLI 使用同一个 `SecretService` API，业务异常和存储语义一致
+- Web 继续把领域异常映射为 HTTP 状态，CLI 继续映射为退出码
+- CLI 不依赖 WebServer 运行
+
+---
+
+## 场景 25：Web 与 CLI 并发修改同一 DB
+
+**When**：Web 请求和独立 CLI 进程几乎同时成功修改密钥库
+
+**Then**：
+- SecretStore 在持久化边界串行执行完整写事务
+- 每个已成功响应的修改都保留，不发生静默覆盖
+- API summary 与 lock sidecar 均不泄露任何字段值
+
+---
+
 ## 不变量
 
 | 项 | 值 |
@@ -388,6 +413,8 @@
 | **HTTPS** | MVP 不实现（仅 localhost，明文即可）|
 | **密钥 summary** | 永不返回 fields/value 或任何字段值 |
 | **密钥 detail** | 返回 fields 前记录 stderr 安全警告；value 仅是主密钥兼容别名 |
+| **密钥业务入口** | CLI / Web 共同使用 `SecretService`；HTTP 只负责协议适配 |
+| **并发写入** | `<db>.lock` 串行化完整写事务，原子替换保证读取完整 JSON |
 
 ---
 

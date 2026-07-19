@@ -41,7 +41,8 @@ core/  (核心库，被 x.py + plugins/ 共享)
 ├── paths.py       ← 跨平台路径解析（todo / secret / diary / notes / config / log）
 ├── formatting.py  ← CJK-aware display helpers（display_width + pad）
 ├── storage.py     ← TaskStore：文件系统 CRUD + 统计 + 索引维护
-├── secrets.py     ← SecretStore：JSON DB CRUD + import + export
+├── secret_service.py ← SecretService：CLI / Web 共用的密钥业务 API
+├── secrets.py     ← SecretStore：JSON DB、事务锁、CRUD + import + export
 ├── diary.py       ← DiaryStore：每日 Markdown 追加 + 日期列表
 ├── note.py        ← NoteStore：主题 Markdown 创建、列表、显示、搜索
 ├── config.py      ← AppConfig + YAML 解析（v0.4.y）
@@ -487,6 +488,7 @@ x-cli 的密钥管理子命令。**不**与 legacy TODO system的 `<legacy-crede
 - **格式**：JSON（单个 dict，`version: "1.1"` + `secrets: [...]`）
 - **字段模型**：每条记录使用 `fields[]` 保存多个具名值；kind 仅为 `secret` / `text`，恰好一个 secret 是 primary
 - **兼容**：读取 1.0 顶层 `value` 时映射为主 secret；首次成功写入 1.1 前生成原样迁移备份
+- **并发**：写事务使用同目录 `secrets.json.lock` sidecar 排他锁；最终落盘仍为临时文件 + `os.replace`
 - **权限**：600（Windows 用 ACL）
 - **加密**：MVP 不加密（明文 + 文件权限保护；后期加 `--encrypt` flag）
 
@@ -495,13 +497,18 @@ x-cli 的密钥管理子命令。**不**与 legacy TODO system的 `<legacy-crede
 ```
 core/
   paths.py          ← 跨平台路径解析（xcli_data_dir / xcli_secrets_path）
-  secrets.py        ← SecretStore 类（CRUD + search + import + export）
+  secret_service.py ← SecretService（CLI / Web 共用应用业务 API）
+  secrets.py        ← SecretStore（schema、跨进程写锁、CRUD + import + export）
 
 plugins/
-  secret.py         ← argparse、命令 handler 与 SecretStore 调用
+  secret.py         ← argparse、命令 handler 与 SecretService 调用
+
+core/web/
+  handlers/secrets.py ← HTTP 适配器与 SecretService 调用
 
 tests/
   test_paths.py     ← 路径解析（跨平台 mock）
+  test_secret_service.py ← 共享业务 API 单元测试
   test_secrets.py   ← SecretStore 单元测试
   test_e2e_secret.py← E2E 子进程测试
 ```
@@ -514,6 +521,8 @@ tests/
 | `get` 永远 stderr 警告 | 提醒用户密钥已离开数据库 |
 | `search` 不搜任何字段值 | 避免 secret 或普通字符串经 grep 泄露 |
 | JSON 不双写 primary value | 避免 `value` 与 `fields` 漂移；value 仅为领域/API 兼容别名 |
+| CLI / Web 只经 `SecretService` 发起 CRUD | 防止业务规则在两个入口漂移 |
+| 写锁覆盖完整读—校验—写事务 | 防止独立 CLI / Web 进程同时写入时丢失更新 |
 | 文件权限 600 | OS 级保护 |
 | MVP 不引 `cryptography` | 保持 stdlib-only |
 
