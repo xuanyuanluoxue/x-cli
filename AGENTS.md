@@ -40,7 +40,7 @@ Use pytest and follow `test_<feature>.py` / `test_<behavior>` naming. Changes to
 
 ## Commit & Pull Request Guidelines
 
-Use Conventional Commits, for example `feat(todo): add export filtering` or `fix(web): reject invalid token`. Keep each commit focused. Develop from `dev` on `feature/<name>` or `fix/<name>` branches; do not push directly to `main` or `dev`. PRs should target `dev`, explain behavior changes, reference the relevant specification or issue, and include test and coverage results. Do not commit, push, amend commits, or bypass hooks unless the user explicitly authorizes it.
+提交信息统一使用中文，格式为 `类型(模块): 描述`，例如 `feat(todo): 新增导出过滤功能` 或 `fix(web): 修复令牌验证失败`。每次提交保持聚焦。从 `dev` 拉 `feature/<name>` 或 `fix/<name>` 分支开发；禁止直接推送到 `main` 或 `dev`。PR 目标为 `dev`，需说明行为变更、引用相关规格或 issue，并附带测试和覆盖率结果。未经用户明确授权，禁止提交、推送、amend 或绕过 hooks。
 
 ## Security & Configuration
 

@@ -74,16 +74,16 @@ Focused tests should be used while iterating. Do not repeatedly run the full sui
 
 ```bash
 git add .
-git commit -m "feat: add your feature description"
+git commit -m "feat: 新增功能描述"
 ```
 
-**Commit Message Format** (conventional commits):
-- `feat:` new feature
-- `fix:` bug fix
-- `docs:` documentation changes
-- `test:` test updates
-- `refactor:` code refactoring
-- `chore:` maintenance tasks
+**提交信息格式**（统一使用中文）：
+- `feat(模块):` 新功能
+- `fix(模块):` 修复
+- `docs(模块):` 文档变更
+- `test(模块):` 测试更新
+- `refactor(模块):` 代码重构
+- `chore(模块):` 维护任务
 
 ### 4. Push to Your Fork
 
@@ -139,7 +139,7 @@ A: See step 4 in "Getting Started" above.
 A: Common reasons:
 - PR was based on `main` instead of `dev`
 - No tests or incomplete test coverage
-- Didn't follow commit message format
+- 未遵循中文提交信息格式
 - Feature is out of scope (see README.md "Won't" section)
 
 ---
