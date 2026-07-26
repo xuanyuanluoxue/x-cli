@@ -3,7 +3,7 @@
 > **对应命令**：`x todo add / update / list`
 > **新增 flag**：`--time HH:MM` / `--end-time HH:MM` / `--duration <N><h|m|空>`
 > **数据规范**：[../TODO-SPEC.md](../TODO-SPEC.md)
-> **来源**：[PLAN-v0.5.md §2.1](../../../PLAN-v0.5.md)
+> **规格状态**：本文档是任务时间字段的永久行为规范。
 >
 > **覆盖范围**：
 > - `--time` 单时间点（add / update）

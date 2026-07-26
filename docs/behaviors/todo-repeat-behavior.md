@@ -4,7 +4,7 @@
 > **新增 flag**：`--repeat <规则>`（daily / weekly / weekdays / monthly / 标准 cron）
 > **新增子命令**：`x todo repeat-fire <id>`（显式触发下一次实例）
 > **数据规范**：`repeat` 字段（dict 形式 `{kind: "daily"}` 或 `{cron: "0 8 * * 1-5"}`）
-> **来源**：[PLAN-v0.5.md §2.3.1](../../../PLAN-v0.5.md)
+> **规格状态**：本文档是重复任务的永久行为规范。
 >
 > **v0.5 范围**：
 > - ✅ `--repeat` 字段写入（5 种语法）

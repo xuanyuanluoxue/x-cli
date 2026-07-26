@@ -1,13 +1,14 @@
 """core/config.py — YAML configuration loader for x-cli (v0.4.x).
 
 The :class:`AppConfig` dataclass is the in-memory representation of one
-``config.yaml`` file. It is intentionally minimal — v0.4.x only
-exposes four knobs:
+``config.yaml`` file. It is intentionally minimal and exposes six knobs:
 
 * ``todo_dir`` — overrides :func:`core.paths.xcli_todo_dir`
 * ``secrets_path`` — overrides :func:`core.paths.xcli_secrets_path`
 * ``log_level`` — passed to :func:`core.logging.setup_logging`
 * ``log_path`` — file path for the log handler (``null`` → no file)
+* ``web_auth`` — opt-in Token authentication for ``x web``
+* ``web_secret_confirmation`` — warn before the browser reads secret values
 
 Anything outside that set is **silently ignored** so a future schema
 extension does not break old clients (forward compatibility).
@@ -31,6 +32,8 @@ This module is **stdlib-only**.
 from __future__ import annotations
 
 import os
+import re
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -66,7 +69,14 @@ class ConfigError(Exception):
 # Fields we know how to interpret. Anything else in the YAML file is
 # silently dropped — forward compatibility (per BDD §"不变量").
 _KNOWN_KEYS: frozenset[str] = frozenset(
-    {"todo_dir", "secrets_path", "log_level", "log_path"}
+    {
+        "todo_dir",
+        "secrets_path",
+        "log_level",
+        "log_path",
+        "web_auth",
+        "web_secret_confirmation",
+    }
 )
 
 # Accepted log-level spellings (case-insensitive). Includes the stdlib
@@ -115,12 +125,20 @@ class AppConfig:
     log_path:
         Path to the log file. ``None`` means no file handler.
         Defaults to :func:`core.paths.xcli_log_path`.
+    web_auth:
+        Whether ``x web`` requires ``X-Web-Token`` authentication.
+        Defaults to ``False`` so the loopback-only UI opens directly.
+    web_secret_confirmation:
+        Whether the Web UI confirms before reading complete secret records.
+        Defaults to ``True`` and fails closed on invalid values.
     """
 
     todo_dir: Path = field(default_factory=xcli_todo_dir)
     secrets_path: Path = field(default_factory=xcli_secrets_path)
     log_level: str = "WARNING"
     log_path: Path | None = field(default_factory=xcli_log_path)
+    web_auth: bool = False
+    web_secret_confirmation: bool = True
 
     # --------------------------------------------------------
     #  Constructors
@@ -226,6 +244,16 @@ class AppConfig:
             kwargs["log_path"] = _coerce_log_path(
                 mapping["log_path"], source=source
             )
+        if "web_auth" in mapping:
+            kwargs["web_auth"] = _coerce_config_bool(
+                mapping["web_auth"], key="web_auth", source=source
+            )
+        if "web_secret_confirmation" in mapping:
+            kwargs["web_secret_confirmation"] = _coerce_config_bool(
+                mapping["web_secret_confirmation"],
+                key="web_secret_confirmation",
+                source=source,
+            )
 
         return cls(**kwargs)
 
@@ -249,6 +277,8 @@ class AppConfig:
                 secrets_path=self.secrets_path,
                 log_level=self.log_level,
                 log_path=None,  # explicit "no file" wins over default
+                web_auth=self.web_auth,
+                web_secret_confirmation=self.web_secret_confirmation,
             )
         return self
 
@@ -276,7 +306,94 @@ class AppConfig:
             f"log_path: {_yaml_scalar(self.log_path) if self.log_path else 'null'}"
         )
         lines.append("")
+        lines.append("# x web Token 认证（默认关闭；true = 开启）")
+        lines.append(f"web_auth: {'true' if self.web_auth else 'false'}")
+        lines.append("")
+        lines.append("# 查看/编辑密钥明文前显示安全确认（默认开启）")
+        lines.append(
+            "web_secret_confirmation: "
+            f"{'true' if self.web_secret_confirmation else 'false'}"
+        )
+        lines.append("")
         return "\n".join(lines)
+
+
+_WEB_SECRET_CONFIRMATION_LINE = re.compile(
+    r"^(web_secret_confirmation[ \t]*:[ \t]*)"
+    r"([^#\r\n]*?)"
+    r"([ \t]*(?:#.*)?)(\r?\n)?$"
+)
+
+
+def set_web_secret_confirmation(path: Path, required: bool) -> None:
+    """Atomically persist the one Web secret-confirmation preference.
+
+    This deliberately is not a generic configuration writer. Existing
+    comments, unknown fields, order and unrelated values remain byte-for-byte
+    unchanged; only the top-level target scalar is replaced or appended.
+
+    Raises
+    ------
+    TypeError
+        ``required`` is not a real bool.
+    ConfigError
+        The file cannot be read or atomically replaced.
+    """
+    if not isinstance(required, bool):
+        raise TypeError("required must be a bool")
+
+    target = Path(path)
+    try:
+        if target.is_file():
+            original = target.read_text(encoding="utf-8")
+        else:
+            original = AppConfig.default().to_yaml()
+    except OSError as exc:
+        raise ConfigError(f"配置文件读取失败：{target} ({exc})") from exc
+
+    replacement = "true" if required else "false"
+    lines = original.splitlines(keepends=True)
+    updated_lines: list[str] = []
+    found = False
+    for line in lines:
+        match = _WEB_SECRET_CONFIRMATION_LINE.match(line)
+        if match:
+            found = True
+            line = (
+                f"{match.group(1)}{replacement}{match.group(3)}"
+                f"{match.group(4) or ''}"
+            )
+        updated_lines.append(line)
+
+    updated = "".join(updated_lines)
+    if not found:
+        if updated and not updated.endswith(("\n", "\r")):
+            updated += "\n"
+        updated += f"web_secret_confirmation: {replacement}\n"
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temp_path: Path | None = None
+    try:
+        file_descriptor, raw_temp_path = tempfile.mkstemp(
+            prefix=f".{target.name}.", suffix=".tmp", dir=target.parent
+        )
+        temp_path = Path(raw_temp_path)
+        with os.fdopen(file_descriptor, "w", encoding="utf-8", newline="") as handle:
+            handle.write(updated)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if target.exists():
+            os.chmod(temp_path, target.stat().st_mode)
+        os.replace(temp_path, target)
+        temp_path = None
+    except OSError as exc:
+        raise ConfigError(f"配置文件写入失败：{target} ({exc})") from exc
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 # ============================================================
@@ -385,6 +502,25 @@ def _coerce_bool(value: Any, default: bool = False) -> bool:
 # ============================================================
 #  Internal helpers
 # ============================================================
+
+
+def _coerce_config_bool(value: Any, key: str, source: str) -> bool:
+    """Parse a user-facing boolean and reject ambiguous spellings.
+
+    Security-related switches must fail closed: a typo such as
+    ``web_auth: tru`` raises instead of silently disabling authentication.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in {0, 1}:
+        return bool(value)
+    if isinstance(value, str):
+        lowered = value.strip().lower()
+        if lowered in {"true", "yes", "on", "1"}:
+            return True
+        if lowered in {"false", "no", "off", "0"}:
+            return False
+    raise ConfigError(f"{source}: {key} 必须是 true 或 false")
 
 
 def _coerce_path(value: Any, key: str, source: str) -> Path:

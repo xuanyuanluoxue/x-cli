@@ -3,41 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>x web</title>
-  <link rel="stylesheet" href="css/base.css">
-  <link rel="stylesheet" href="css/layout.css">
-  <link rel="stylesheet" href="css/components.css">
-  <link rel="stylesheet" href="css/tasks.css">
-  <link rel="stylesheet" href="css/secrets.css">
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='.9em' font-size='90'%3E%E2%9C%93%EF%B8%8F%3C/text%3E%3C/svg%3E">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#fafaf9">
+  <meta name="description" content="x-cli 的本地任务与密钥控制台">
+  <meta name="referrer" content="no-referrer">
+  <title>x console</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%232f5d3a'/%3E%3Ctext x='32' y='44' font-family='monospace' font-size='34' font-weight='700' fill='%23ffffff' text-anchor='middle'%3Ex%3C/text%3E%3C/svg%3E">
+  <script type="module" crossorigin src="./assets/index-rKPNIAT-.js"></script>
+  <link rel="modulepreload" crossorigin href="./assets/vendor-DhNEZ5yA.js">
+  <link rel="stylesheet" crossorigin href="./assets/index-C0ggjQ66.css">
 </head>
 <body>
-
-  <!-- 顶部 nav（登录后才显示） -->
-  <nav id="topbar" aria-label="主导航">
-    <div class="brand">
-      <span class="dot"></span>
-      <span>x web</span>
-    </div>
-    <div class="nav-links">
-      <a class="nav-link" data-route="#tasks" href="#tasks">📋 任务</a>
-      <a class="nav-link" data-route="#secrets" href="#secrets">🔐 密钥</a>
-      <a class="nav-link" data-route="#stats" href="#stats">📊 统计</a>
-    </div>
-    <div class="nav-actions">
-      <button class="icon-btn" aria-label="退出登录" title="退出登录">⎋</button>
-    </div>
-  </nav>
-
-  <!-- view 容器 -->
-  <main id="main"></main>
-
-  <!-- toast 容器（fixed 定位） -->
-  <div id="toast-container" aria-live="polite"></div>
-
-  <!-- modal 容器（fixed 定位） -->
-  <div id="modal-container"></div>
-
-  <script type="module" src="js/router.js"></script>
+  <div id="app"></div>
 </body>
 </html>

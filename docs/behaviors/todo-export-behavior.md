@@ -6,7 +6,7 @@
 > - JSON: 完整 frontmatter + body（dump_frontmatter 输出）
 > - CSV: 扁平表，id / name / status / priority / deadline / time / tags / parent / archived_at
 > - MD: 人类可读表格
-> **来源**：[PLAN-v0.5.md §2.4.3 + §3.4](../../../PLAN-v0.5.md)
+> **规格状态**：本文档是数据导出的永久行为规范。
 >
 > **覆盖范围**：
 > - 3 种格式导出

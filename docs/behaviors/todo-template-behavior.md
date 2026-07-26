@@ -3,7 +3,7 @@
 > **对应命令**：`x todo template create / list / remove`、`x todo add --template`
 > **新增子命令**：`x todo template <action>`
 > **存储**：`templates/<name>.yaml` 存于 `<xcli_data_dir>/templates/`
-> **来源**：[PLAN-v0.5.md §2.4.1](../../../PLAN-v0.5.md)
+> **规格状态**：本文档是任务模板的永久行为规范。
 >
 > **覆盖范围**：
 > - template create / list / remove

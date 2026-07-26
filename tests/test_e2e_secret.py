@@ -12,6 +12,7 @@ NEVER touches the real %LOCALAPPDATA%\\x-cli\\secrets.json.
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sysconfig
@@ -62,6 +63,47 @@ def _run_x(
         timeout=timeout,
     )
     return proc.returncode, proc.stdout, proc.stderr
+
+
+def _write_multifield_db(secrets_dir: Path) -> None:
+    """Seed a schema-1.1 record that cannot yet be created by the CLI."""
+
+    payload = {
+        "version": "1.1",
+        "secrets": [
+            {
+                "name": "123pan.webdav",
+                "category": "123pan",
+                "fields": [
+                    {
+                        "label": "URL",
+                        "kind": "text",
+                        "value": "https://webdav.private.example/unique-path",
+                        "primary": False,
+                    },
+                    {
+                        "label": "备用令牌",
+                        "kind": "secret",
+                        "value": "secondary-secret-value",
+                        "primary": False,
+                    },
+                    {
+                        "label": "密码",
+                        "kind": "secret",
+                        "value": "primary-secret-value",
+                        "primary": True,
+                    },
+                ],
+                "note": "WebDAV test record",
+                "created_at": "2026-07-19T12:00:00",
+                "updated_at": "2026-07-19T12:00:00",
+            }
+        ],
+    }
+    (secrets_dir / "secrets.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
 
 
 # ============================================================
@@ -283,6 +325,89 @@ def test_e2e_get_extracts_api_key_from_multiline_value(x_path, secrets_dir):
     assert "已提取" in err or "api_key" in err, (
         f"expected extraction note in stderr, got: {err!r}"
     )
+
+
+def test_e2e_get_defaults_to_primary_secret_field(x_path, secrets_dir):
+    _write_multifield_db(secrets_dir)
+
+    code, out, err = _run_x(
+        x_path,
+        ["secret", "get", "123pan.webdav", "--no-clipboard"],
+        secrets_dir,
+    )
+
+    assert code == 0
+    assert out.strip() == "primary-secret-value"
+    assert "secondary-secret-value" not in out
+    assert "webdav.private.example" not in out
+    assert "警告" in err
+
+
+def test_e2e_get_field_outputs_named_text_field(x_path, secrets_dir):
+    _write_multifield_db(secrets_dir)
+
+    code, out, _err = _run_x(
+        x_path,
+        ["secret", "get", "123pan.webdav", "--field", "url", "--no-clipboard"],
+        secrets_dir,
+    )
+
+    assert code == 0
+    assert out.strip() == "https://webdav.private.example/unique-path"
+    assert "primary-secret-value" not in out
+
+
+def test_e2e_get_unknown_field_returns_exit_2_without_values(x_path, secrets_dir):
+    _write_multifield_db(secrets_dir)
+
+    code, out, err = _run_x(
+        x_path,
+        ["secret", "get", "123pan.webdav", "--field", "missing"],
+        secrets_dir,
+    )
+
+    assert code == 2
+    assert out == ""
+    for value in (
+        "primary-secret-value",
+        "secondary-secret-value",
+        "webdav.private.example",
+    ):
+        assert value not in err
+
+
+def test_e2e_full_renders_field_labels_and_kinds(x_path, secrets_dir):
+    _write_multifield_db(secrets_dir)
+
+    code, out, _err = _run_x(
+        x_path, ["secret", "get", "123pan.webdav", "--full"], secrets_dir
+    )
+
+    assert code == 0
+    for expected in ("URL", "密码", "备用令牌", "text", "secret", "primary"):
+        assert expected in out
+
+
+def test_e2e_list_and_search_never_leak_any_field_value(x_path, secrets_dir):
+    _write_multifield_db(secrets_dir)
+
+    code, listed, _err = _run_x(x_path, ["secret", "list"], secrets_dir)
+    assert code == 0
+    assert "123pan.webdav" in listed
+
+    code, searched, _err = _run_x(
+        x_path, ["secret", "search", "unique-path"], secrets_dir
+    )
+    assert code == 0
+    assert "123pan.webdav" not in searched
+
+    for output in (listed, searched):
+        for value in (
+            "primary-secret-value",
+            "secondary-secret-value",
+            "webdav.private.example",
+        ):
+            assert value not in output
 
 
 # ============================================================

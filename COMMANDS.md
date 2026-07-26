@@ -32,10 +32,10 @@
 | `x todo stats` | 统计信息（带图标）| — |
 | `x todo init [--dir <path>]` | 创建独立 TODO 目录（幂等）| — |
 | `x todo import --from <dir>` | 从 legacy TODO system单向迁移到 x-cli 库 | `--to <path>` `--dry-run` |
-| `x secret list` | 列出所有密钥（**不显示 value**）| — |
-| `x secret get <name>` | 输出 value（默认复制到剪贴板 + 输出 stdout）| `--full` / `--no-clipboard` / `--no-stdout` |
-| `x secret set <name>` | 新增条目 | `--value`（必填）/ `--category` / `--note` |
-| `x secret update <name>` | 改 value / note | `--value` / `--note` |
+| `x secret list` | 列出所有密钥（**不显示任何字段值**）| `--category` |
+| `x secret get <name>` | 默认输出主密钥；也可按字段名取值 | `--field` / `--full` / `--no-clipboard` / `--no-stdout` |
+| `x secret set <name>` | 新增单主密钥条目 | `--value`（必填）/ `--category` / `--note` |
+| `x secret update <name>` | 改主密钥 / note / category | `--value` / `--note` / `--category` |
 | `x secret rm <name>` | 删除条目 | — |
 | `x secret search <keyword>` | name/note 模糊搜（**不搜 value**）| — |
 | `x secret import --from <dir>` | 从 .md 批量迁移（旧文件保留）| — |
@@ -51,6 +51,10 @@
 | Secret | `%LOCALAPPDATA%\x-cli\secrets.json` | `~/.local/share/x-cli/secrets.json` |
 | Config | `%LOCALAPPDATA%\x-cli\config.yaml` | `~/.local/share/x-cli/config.yaml` |
 | Log | `%LOCALAPPDATA%\x-cli\x.log` | `~/.local/share/x-cli/x.log` |
+
+Secret DB schema 1.1 的每条记录包含 1–50 个具名字段：`text`（普通文本）或
+`secret`（默认掩码）。必须且只能有一个 `secret` 字段标记为主密钥；Web 页面可
+新增、删除、排序和整体保存字段。旧 schema 1.0 在首次写入前会自动创建同目录备份。
 
 **环境变量覆盖**（向后兼容）：
 - `XCLI_TODO_DIR` / `XCLI_SECRETS_DIR` 仍 work（测试 / 用户覆盖）

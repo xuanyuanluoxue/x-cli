@@ -3,7 +3,11 @@
 **日期**：2026-06-28
 **作者**：x-cli 后端 agent
 **分支**：`feature/web-verify`
-**状态**：✅ 用户已批准（"a + 用户可以关闭 + 默认关闭"）
+**状态**：⚠️ 历史设计；认证默认值已被 2026-07-19 的用户决定取代
+
+> 现行行为：`x web` 默认关闭 Token 认证并直接访问；配置
+> `web_auth: true` 或显式 `--token` 时才启用认证。本文件仅保留
+> `--auto-token-url` 在认证模式下的设计依据。
 
 ---
 
@@ -249,7 +253,7 @@ def test_e2e_x_web_with_auto_token_url_in_help(x_path, todo_dir):
 
 ## 6. 关联
 
-- **handoff**：`docs/prompts/web-frontend-handoff.md`（前后端边界 + 硬约束）
+- **当前前后端边界**：`docs/web-api.md` + `docs/behaviors/web-api-behavior.md`
 - **AGENTS.md §4.4**：Git 分支策略（这次用 `feature/web-verify` 分支）
 - **CONTRIBUTING.md §7**：后端插件契约（plugins/web.py 必须 register 暴露 flag）
 - **本次任务基线**：v0.6.0 dev 分支已含 frontend + backend merge（32aa98b / 4ba6bb5）

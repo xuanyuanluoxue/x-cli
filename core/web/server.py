@@ -2,7 +2,7 @@
 
 Wraps :class:`http.server.HTTPServer` with:
 
-* Token-based authentication for ``/api/*`` endpoints
+* Optional Token-based authentication for ``/api/*`` endpoints
 * Static file serving from ``core/web/static/`` (for ``/`` and ``/<file>``)
 * Path-traversal protection on static files
 * JSON request parsing + JSON response formatting
@@ -18,9 +18,11 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from urllib.parse import unquote
 
 from core.web.auth import is_valid_token
 from core.web.handlers.health import handle_health
+from core.web.handlers.preferences import handle_preferences
 from core.web.handlers.secrets import handle_secrets_collection, handle_secret_item
 from core.web.handlers.tasks import (
     handle_task_archive,
@@ -102,9 +104,9 @@ def _serve_static(handler: BaseHTTPRequestHandler, rel_path: str) -> bool:
 class WebHandler(BaseHTTPRequestHandler):
     """Single-handler that routes ``/api/*`` and ``/`` requests.
 
-    Configuration is read from class-level attributes (``server.token``,
-    ``server.store``, ``server.secrets``). The :class:`WebServer` sets
-    these before serving.
+    Configuration is read from server attributes (``server.token``,
+    ``server.store``, ``server.secret_service``). The :class:`WebServer`
+    sets these before serving.
     """
 
     # Suppress default per-request log noise; we use stderr writes ourselves.
@@ -128,19 +130,36 @@ class WebHandler(BaseHTTPRequestHandler):
     def _dispatch(self, method: str) -> None:
         path = self.path.split("?", 1)[0]  # strip query string
 
-        # Auth (except /api/health and static)
-        if path.startswith("/api/") and path != "/api/health":
+        # Auth (except /api/health and static). ``token=None`` is the default
+        # direct-access mode; a string enables the original X-Web-Token gate.
+        expected_token = self.server.token  # type: ignore[attr-defined]
+        if (
+            expected_token is not None
+            and path.startswith("/api/")
+            and path != "/api/health"
+        ):
             token = self.headers.get("X-Web-Token")
             if token is None:
                 error_response(self, HTTPStatus.UNAUTHORIZED, "missing_token", "X-Web-Token header required")
                 return
-            if not is_valid_token(token, self.server.token):  # type: ignore[attr-defined]
+            if not is_valid_token(token, expected_token):
                 error_response(self, HTTPStatus.UNAUTHORIZED, "invalid_token", "invalid token")
                 return
 
         # API routes
         if path == "/api/health" and method == "GET":
             handle_health(self)
+            return
+        if path == "/api/preferences":
+            if method == "PATCH":
+                handle_preferences(self)
+            else:
+                error_response(
+                    self,
+                    HTTPStatus.METHOD_NOT_ALLOWED,
+                    "method_not_allowed",
+                    f"method {method} not allowed on {path}",
+                )
             return
         if path == "/api/tasks":
             if method == "GET":
@@ -179,7 +198,10 @@ class WebHandler(BaseHTTPRequestHandler):
                 error_response(self, HTTPStatus.METHOD_NOT_ALLOWED, "method_not_allowed", f"method {method} not allowed on {path}")
             return
         if path.startswith("/api/secrets/"):
-            name = path[len("/api/secrets/"):]
+            # The browser client uses encodeURIComponent for arbitrary secret
+            # names. Decode once at the routing boundary so GET/PATCH/DELETE
+            # all address the same SecretService record as the CLI.
+            name = unquote(path[len("/api/secrets/"):])
             if method == "GET":
                 handle_secret_item(self, name, "get")
             elif method == "PATCH":
@@ -212,14 +234,19 @@ class _Server(ThreadingHTTPServer):
         self,
         server_address: tuple[str, int],
         handler_cls: type[BaseHTTPRequestHandler],
-        token: str,
+        token: str | None,
         store: Any,  # TaskStore — avoid circular import
-        secrets_store: Any,  # SecretStore
+        secret_service: Any,  # SecretService
+        config_path: Path,
+        secret_confirmation_required: bool,
     ) -> None:
         super().__init__(server_address, handler_cls)
         self.token = token
         self.store = store
-        self.secrets = secrets_store
+        self.secret_service = secret_service
+        self.secrets = secret_service.store
+        self.config_path = config_path
+        self.secret_confirmation_required = secret_confirmation_required
 
 
 class WebServer:
@@ -241,24 +268,52 @@ class WebServer:
         self,
         host: str,
         port: int,
-        token: str,
+        token: str | None = None,
         store: Any | None = None,
         secrets_store: Any | None = None,
+        secret_service: Any | None = None,
+        config_path: Path | None = None,
+        secret_confirmation_required: bool = True,
     ) -> None:
+        from core.secret_service import SecretService  # lazy import
         from core.secrets import SecretStore  # lazy import
         from core.storage import TaskStore  # lazy import
+        from core.paths import xcli_config_path  # lazy import
 
         self.host = host
         self.port = port
         self.token = token
+        self.config_path = (
+            Path(config_path) if config_path is not None else xcli_config_path()
+        )
+        self.secret_confirmation_required = bool(secret_confirmation_required)
         self.store = store if store is not None else TaskStore()
-        self.secrets = secrets_store if secrets_store is not None else SecretStore()
+        if secret_service is not None:
+            if (
+                secrets_store is not None
+                and secret_service.store is not secrets_store
+            ):
+                raise ValueError(
+                    "secret_service and secrets_store must reference the same store"
+                )
+            self.secret_service = secret_service
+            self.secrets = secret_service.store
+        else:
+            self.secrets = (
+                secrets_store if secrets_store is not None else SecretStore()
+            )
+            self.secret_service = SecretService(self.secrets)
         self._server: _Server | None = None
         self._thread: threading.Thread | None = None
 
     @property
     def base_url(self) -> str:
         return f"http://{self.host}:{self.port}"
+
+    @property
+    def auth_required(self) -> bool:
+        """Whether API requests must include ``X-Web-Token``."""
+        return self.token is not None
 
     def start(self) -> None:
         """Start the server in a background thread. Non-blocking."""
@@ -267,7 +322,9 @@ class WebServer:
             WebHandler,
             token=self.token,
             store=self.store,
-            secrets_store=self.secrets,
+            secret_service=self.secret_service,
+            config_path=self.config_path,
+            secret_confirmation_required=self.secret_confirmation_required,
         )
 
         def _serve_with_logging() -> None:

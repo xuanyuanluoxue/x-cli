@@ -22,6 +22,8 @@ Design constraints (per ``docs/behaviors/secret-behavior.md`` and
   only OS-level protection.
 * **Atomicity** — writes go through a temp file + ``os.replace`` so
   a crash mid-write cannot corrupt the DB.
+* **Concurrency** — read-modify-write transactions use a process-local
+  re-entrant lock plus a cross-process ``<db>.lock`` sidecar lock.
 
 The module is independent of the legacy ``~/.xavier/密钥/`` layout
 on purpose: ``x secret`` is a generic CLI tool, not a wrapper around
@@ -33,10 +35,13 @@ from __future__ import annotations
 import json
 import os
 import re
-from dataclasses import asdict, dataclass, field
+import threading
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from core.paths import xcli_secrets_path
 
@@ -46,7 +51,12 @@ from core.paths import xcli_secrets_path
 # ============================================================
 
 
-DB_VERSION = "1.0"
+DB_VERSION = "1.1"
+LEGACY_DB_VERSION = "1.0"
+SUPPORTED_DB_VERSIONS = {LEGACY_DB_VERSION, DB_VERSION}
+MAX_SECRET_FIELDS = 50
+MAX_SECRET_FIELD_LABEL_LENGTH = 64
+SECRET_FIELD_KINDS = {"secret", "text"}
 
 # A ``## <title>`` heading at the start of a line. Anchored to the
 # start of line so it does not match ``### `` (deeper headings).
@@ -91,8 +101,211 @@ class SecretAlreadyExistsError(SecretError, ValueError):
 
 
 # ============================================================
+#  Cross-process mutation locking
+# ============================================================
+
+
+_LOCK_WAIT_SECONDS = 30.0
+_LOCK_POLL_SECONDS = 0.05
+_PROCESS_LOCKS_GUARD = threading.Lock()
+_PROCESS_LOCKS: dict[str, Any] = {}
+
+
+def _process_lock_for(path: Path) -> Any:
+    """Return one re-entrant lock for a normalized DB path in this process."""
+
+    key = os.path.normcase(str(path.resolve(strict=False)))
+    with _PROCESS_LOCKS_GUARD:
+        lock = _PROCESS_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _PROCESS_LOCKS[key] = lock
+        return lock
+
+
+@contextmanager
+def _exclusive_file_lock(
+    lock_path: Path,
+    *,
+    timeout: float = _LOCK_WAIT_SECONDS,
+) -> Iterator[None]:
+    """Acquire a one-byte cross-process lock on ``lock_path``.
+
+    The sidecar contains only a null byte. Windows uses ``msvcrt`` and POSIX
+    uses ``fcntl`` so the runtime remains dependency-free. A crashed process
+    releases the OS lock when its file descriptor is closed by the kernel.
+    """
+
+    try:
+        lock_file = lock_path.open("a+b")
+    except OSError as exc:
+        raise SecretError(f"failed to open secrets lock ({lock_path}): {exc}") from exc
+
+    acquired = False
+    try:
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write(b"\0")
+            lock_file.flush()
+        try:
+            os.chmod(lock_path, 0o600)
+        except OSError:
+            pass
+
+        deadline = time.monotonic() + timeout
+        lock_file.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            while True:
+                try:
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                    acquired = True
+                    break
+                except OSError as exc:
+                    if time.monotonic() >= deadline:
+                        raise SecretError(
+                            f"timed out waiting for secrets lock: {lock_path}"
+                        ) from exc
+                    time.sleep(_LOCK_POLL_SECONDS)
+        else:
+            import fcntl
+
+            while True:
+                try:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                    break
+                except BlockingIOError as exc:
+                    if time.monotonic() >= deadline:
+                        raise SecretError(
+                            f"timed out waiting for secrets lock: {lock_path}"
+                        ) from exc
+                    time.sleep(_LOCK_POLL_SECONDS)
+
+        yield
+    finally:
+        if acquired:
+            try:
+                lock_file.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+        lock_file.close()
+
+
+# ============================================================
 #  Data model
 # ============================================================
+
+
+@dataclass
+class SecretField:
+    """One named value belonging to a :class:`SecretEntry`."""
+
+    label: str
+    kind: str
+    value: str
+    primary: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "kind": self.kind,
+            "value": self.value,
+            "primary": self.primary,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SecretField":
+        if not isinstance(data, dict):
+            raise ValueError("each secret field must be an object")
+        return cls(
+            label=data.get("label", ""),
+            kind=data.get("kind", ""),
+            value=data.get("value", ""),
+            primary=data.get("primary", False),
+        )
+
+
+def normalize_secret_fields(fields_value: Any) -> list[SecretField]:
+    """Validate and copy a complete secret-field collection.
+
+    This is the single validation boundary shared by storage, CLI and Web API.
+    Values are deliberately not stripped: credentials and multi-line text must
+    round-trip byte-for-byte once decoded from JSON.
+    """
+
+    if not isinstance(fields_value, (list, tuple)):
+        raise ValueError("fields must be a list")
+    if not fields_value:
+        raise ValueError("at least one secret field is required")
+    if len(fields_value) > MAX_SECRET_FIELDS:
+        raise ValueError(f"fields cannot contain more than {MAX_SECRET_FIELDS} items")
+
+    normalized: list[SecretField] = []
+    labels: set[str] = set()
+    for raw in fields_value:
+        if isinstance(raw, SecretField):
+            candidate = SecretField(
+                label=raw.label,
+                kind=raw.kind,
+                value=raw.value,
+                primary=raw.primary,
+            )
+        elif isinstance(raw, dict):
+            candidate = SecretField.from_dict(raw)
+        else:
+            raise ValueError("each secret field must be an object")
+
+        if not isinstance(candidate.label, str):
+            raise ValueError("field label must be a string")
+        candidate.label = candidate.label.strip()
+        if not candidate.label:
+            raise ValueError("field label is required")
+        if len(candidate.label) > MAX_SECRET_FIELD_LABEL_LENGTH:
+            raise ValueError(
+                f"field label cannot exceed {MAX_SECRET_FIELD_LABEL_LENGTH} characters"
+            )
+        label_key = candidate.label.casefold()
+        if label_key in labels:
+            raise ValueError("field labels must be unique")
+        labels.add(label_key)
+
+        if candidate.kind not in SECRET_FIELD_KINDS:
+            raise ValueError("field kind must be 'secret' or 'text'")
+        if not isinstance(candidate.value, str):
+            raise ValueError("field value must be a string")
+        if candidate.value == "":
+            raise ValueError("field value is required")
+        if type(candidate.primary) is not bool:
+            raise ValueError("field primary must be a boolean")
+
+        normalized.append(candidate)
+
+    primary_fields = [item for item in normalized if item.primary]
+    if len(primary_fields) != 1:
+        raise ValueError("exactly one primary secret field is required")
+    if primary_fields[0].kind != "secret":
+        raise ValueError("the primary field must be a secret field")
+    return normalized
+
+
+def legacy_value_fields(value: Any) -> list[SecretField]:
+    """Convert a schema-1.0 top-level value into schema-1.1 fields."""
+
+    if not isinstance(value, str):
+        raise ValueError("legacy secret value must be a string")
+    return normalize_secret_fields(
+        [SecretField(label="密钥", kind="secret", value=value, primary=True)]
+    )
 
 
 @dataclass
@@ -108,9 +321,9 @@ class SecretEntry:
         Free-form label (default ``"default"``). The ``x secret import``
         command fills this with the source ``.md`` filename (without
         the ``.md`` extension).
-    value:
-        The credential itself. May contain newlines (multi-line
-        ``key: value`` blocks).
+    fields:
+        Ordered named values. Exactly one ``secret`` field is primary.
+        The compatibility :attr:`value` property exposes that field.
     note:
         Optional free-form annotation. The ``import`` command packs
         the source section's metadata table into this field as one
@@ -123,11 +336,33 @@ class SecretEntry:
 
     name: str
     category: str = "default"
-    value: str = ""
+    fields: list[SecretField] = field(default_factory=list)
     note: str = ""
     created_at: str = ""
     updated_at: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.fields = normalize_secret_fields(self.fields)
+
+    @property
+    def primary_field(self) -> SecretField:
+        return next(item for item in self.fields if item.primary)
+
+    @property
+    def value(self) -> str:
+        """Compatibility alias for the primary secret field value."""
+
+        return self.primary_field.value
+
+    def get_field(self, label: str) -> SecretField | None:
+        """Return an exact named field (case-insensitive), or ``None``."""
+
+        needle = label.casefold()
+        for item in self.fields:
+            if item.label.casefold() == needle:
+                return item
+        return None
 
     # --------------------------------------------------------
     #  Serialisation
@@ -139,24 +374,17 @@ class SecretEntry:
         ``extra`` is flattened in (top-level keys) so the on-disk
         shape is flat — easier for humans to diff and edit by hand.
         """
-        data = asdict(self)
-        # ``asdict`` would also serialise ``extra`` under its own key.
-        # We want the extra fields to be siblings of the known ones.
-        extra = data.pop("extra", {}) or {}
-        merged: dict[str, Any] = {}
-        # Known fields first (stable order), then extras.
-        for key in (
-            "name",
-            "category",
-            "value",
-            "note",
-            "created_at",
-            "updated_at",
-        ):
-            if key in data:
-                merged[key] = data[key]
-        for key, value in extra.items():
-            merged[key] = value
+        merged: dict[str, Any] = {
+            "name": self.name,
+            "category": self.category,
+            "fields": [item.to_dict() for item in self.fields],
+            "note": self.note,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+        for key, value in (self.extra or {}).items():
+            if key not in merged and key != "value":
+                merged[key] = value
         return merged
 
     @classmethod
@@ -169,6 +397,7 @@ class SecretEntry:
         known = {
             "name",
             "category",
+            "fields",
             "value",
             "note",
             "created_at",
@@ -181,7 +410,13 @@ class SecretEntry:
                 kwargs[key] = value
             else:
                 extra[key] = value
-        return cls(extra=extra, **kwargs)
+        if "fields" in kwargs and "value" in kwargs:
+            raise ValueError("secret entry cannot contain both value and fields")
+        if "fields" in kwargs:
+            fields_value = kwargs.pop("fields")
+        else:
+            fields_value = legacy_value_fields(kwargs.pop("value", ""))
+        return cls(fields=fields_value, extra=extra, **kwargs)
 
 
 # ============================================================
@@ -205,11 +440,10 @@ class SecretStore:
 
     Notes
     -----
-    The store is **single-process-safe** for create/update/delete
-    via the temp-file + ``os.replace`` write strategy, but does not
-    implement file locking. Concurrent writes from multiple
-    processes may clobber each other — acceptable for a personal
-    CLI tool but worth knowing.
+    Writes are serialized across threads and processes with a sidecar
+    lock that covers the complete read-modify-write transaction. Final
+    persistence still uses a temp file plus ``os.replace`` so readers
+    only observe complete JSON payloads.
     """
 
     def __init__(self, db_path: Path | str | None = None) -> None:
@@ -217,6 +451,8 @@ class SecretStore:
             self.db_path: Path = xcli_secrets_path()
         else:
             self.db_path = Path(db_path)
+        self.lock_path = self.db_path.with_suffix(self.db_path.suffix + ".lock")
+        self._process_lock = _process_lock_for(self.db_path)
         self._init_db()
 
     # --------------------------------------------------------
@@ -239,25 +475,35 @@ class SecretStore:
         single-op CLI invocation).
         """
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        if not self.db_path.exists():
-            self._write_raw({"version": DB_VERSION, "secrets": []})
-            return
-        # File already exists — still try to tighten permissions.
-        # We do this lazily: only on first construction, and only if
-        # the file is currently readable by the group/others.
-        try:
-            mode = self.db_path.stat().st_mode
-            if mode & 0o077:
-                os.chmod(self.db_path, 0o600)
-        except OSError:
-            # Windows: chmod may fail; safe to ignore.
-            pass
+        with self._mutation_lock():
+            if not self.db_path.exists():
+                self._write_raw({"version": DB_VERSION, "secrets": []})
+                return
+            # File already exists — still try to tighten permissions.
+            # We do this lazily: only on first construction, and only if
+            # the file is currently readable by the group/others.
+            try:
+                mode = self.db_path.stat().st_mode
+                if mode & 0o077:
+                    os.chmod(self.db_path, 0o600)
+            except OSError:
+                # Windows: chmod may fail; safe to ignore.
+                pass
 
-    def _load(self) -> list[dict[str, Any]]:
-        """Read the secrets list from disk. Returns ``[]`` if empty."""
+    @contextmanager
+    def _mutation_lock(self) -> Iterator[None]:
+        """Serialize one complete mutation transaction for this DB path."""
+
+        with self._process_lock:
+            with _exclusive_file_lock(self.lock_path):
+                yield
+
+    def _load_payload(self) -> dict[str, Any]:
+        """Read and validate the versioned top-level DB payload."""
+
         text = self.db_path.read_text(encoding="utf-8")
         if not text.strip():
-            return []
+            return {"version": LEGACY_DB_VERSION, "secrets": []}
         try:
             data = json.loads(text)
         except json.JSONDecodeError as exc:
@@ -268,17 +514,55 @@ class SecretStore:
             raise SecretError(
                 f"secrets DB has unexpected shape: top-level must be an object"
             )
+        version = data.get("version", LEGACY_DB_VERSION)
+        if not isinstance(version, str) or version not in SUPPORTED_DB_VERSIONS:
+            raise SecretError(f"unsupported secrets DB version: {version}")
         secrets = data.get("secrets", [])
         if not isinstance(secrets, list):
             raise SecretError(
                 f"secrets DB has unexpected shape: 'secrets' must be a list"
             )
-        return secrets
+        data["version"] = version
+        data["secrets"] = secrets
+        return data
+
+    def _load(self) -> list[dict[str, Any]]:
+        """Read the secrets list from disk. Returns ``[]`` if empty."""
+
+        return self._load_payload()["secrets"]
 
     def _save(self, secrets: list[dict[str, Any]]) -> None:
-        """Persist the secrets list to disk (atomic via temp file)."""
+        """Persist rows atomically, backing up schema 1.0 before migration."""
+
+        current = self._load_payload()
+        if current["version"] == LEGACY_DB_VERSION:
+            original = self.db_path.read_bytes()
+            try:
+                self._write_migration_backup(original)
+            except OSError as exc:
+                raise SecretError(f"failed to create schema 1.0 backup: {exc}") from exc
         payload = {"version": DB_VERSION, "secrets": secrets}
         self._write_raw(payload)
+
+    def _write_migration_backup(self, original: bytes) -> Path:
+        """Atomically preserve the exact schema-1.0 bytes before first write."""
+
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        base_name = f"secrets-v1.0-backup-{stamp}"
+        backup = self.db_path.parent / f"{base_name}.json"
+        sequence = 1
+        while backup.exists():
+            backup = self.db_path.parent / f"{base_name}-{sequence}.json"
+            sequence += 1
+
+        tmp_path = backup.with_suffix(backup.suffix + ".tmp")
+        tmp_path.write_bytes(original)
+        try:
+            os.chmod(tmp_path, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp_path, backup)
+        return backup
 
     def _write_raw(self, payload: dict[str, Any]) -> None:
         """Write ``payload`` to ``self.db_path`` with 0600 permissions."""
@@ -394,9 +678,11 @@ class SecretStore:
     def set(
         self,
         name: str,
-        value: str,
+        value: str | None = None,
         category: str = "default",
         note: str = "",
+        *,
+        fields: list[SecretField | dict[str, Any]] | None = None,
     ) -> SecretEntry:
         """Insert a brand-new secret.
 
@@ -408,19 +694,29 @@ class SecretStore:
         """
         if not name:
             raise ValueError("secret name is required")
-        if self.get(name) is not None:
-            raise SecretAlreadyExistsError(name)
-        now = self._now()
-        entry = SecretEntry(
-            name=name,
-            category=category or "default",
-            value=value,
-            note=note,
-            created_at=now,
-            updated_at=now,
-        )
-        self._save(self._load() + [entry.to_dict()])
-        return entry
+        if value is not None and fields is not None:
+            raise ValueError("value and fields cannot be provided together")
+        if fields is None:
+            if value is None:
+                raise ValueError("value or fields is required")
+            normalized_fields = legacy_value_fields(value)
+        else:
+            normalized_fields = normalize_secret_fields(fields)
+        with self._mutation_lock():
+            rows = self._load()
+            if any(row.get("name") == name for row in rows):
+                raise SecretAlreadyExistsError(name)
+            now = self._now()
+            entry = SecretEntry(
+                name=name,
+                category=category or "default",
+                fields=normalized_fields,
+                note=note,
+                created_at=now,
+                updated_at=now,
+            )
+            self._save(rows + [entry.to_dict()])
+            return entry
 
     def update(
         self,
@@ -428,6 +724,8 @@ class SecretStore:
         value: str | None = None,
         note: str | None = None,
         category: str | None = None,
+        *,
+        fields: list[SecretField | dict[str, Any]] | None = None,
     ) -> SecretEntry:
         """Update ``value`` and/or ``note`` and/or ``category`` on an existing entry.
 
@@ -442,19 +740,35 @@ class SecretStore:
         SecretNotFoundError
             If no entry with the given ``name`` exists.
         """
-        rows = self._load()
-        for i, d in enumerate(rows):
-            if d.get("name") == name:
-                if value is not None:
-                    d["value"] = value
-                if note is not None:
-                    d["note"] = note
-                if category is not None:
-                    d["category"] = category
-                d["updated_at"] = self._now()
-                rows[i] = d
-                self._save(rows)
-                return SecretEntry.from_dict(d)
+        if value is not None and fields is not None:
+            raise ValueError("value and fields cannot be provided together")
+
+        with self._mutation_lock():
+            rows = self._load()
+            for i, d in enumerate(rows):
+                if d.get("name") == name:
+                    entry = SecretEntry.from_dict(d)
+                    if value is not None:
+                        updated_fields = [
+                            SecretField(
+                                label=item.label,
+                                kind=item.kind,
+                                value=value if item.primary else item.value,
+                                primary=item.primary,
+                            )
+                            for item in entry.fields
+                        ]
+                        entry.fields = normalize_secret_fields(updated_fields)
+                    elif fields is not None:
+                        entry.fields = normalize_secret_fields(fields)
+                    if note is not None:
+                        entry.note = note
+                    if category is not None:
+                        entry.category = category
+                    entry.updated_at = self._now()
+                    rows[i] = entry.to_dict()
+                    self._save(rows)
+                    return entry
         raise SecretNotFoundError(name)
 
     def rm(self, name: str) -> SecretEntry:
@@ -465,12 +779,13 @@ class SecretStore:
         you got from :meth:`get` or :meth:`list`. Raises
         :class:`SecretNotFoundError` if the entry does not exist.
         """
-        rows = self._load()
-        for i, d in enumerate(rows):
-            if d.get("name") == name:
-                rows.pop(i)
-                self._save(rows)
-                return SecretEntry.from_dict(d)
+        with self._mutation_lock():
+            rows = self._load()
+            for i, d in enumerate(rows):
+                if d.get("name") == name:
+                    rows.pop(i)
+                    self._save(rows)
+                    return SecretEntry.from_dict(d)
         raise SecretNotFoundError(name)
 
     # --------------------------------------------------------
@@ -504,18 +819,21 @@ class SecretStore:
         if not src_dir.is_dir():
             raise FileNotFoundError(f"source directory not found: {src_dir}")
 
-        rows = self._load()
-        existing_names = {d.get("name") for d in rows}
-        imported = 0
-        skipped = 0
-
+        candidates: list[SecretEntry] = []
         for md_path in sorted(src_dir.glob("*.md")):
             # Skip README / index files (they document the format, not real secrets).
             if md_path.stem.lower() in {"readme", "index", "模板"}:
                 continue
             category = md_path.stem
             text = md_path.read_text(encoding="utf-8")
-            for entry in _parse_markdown_sections(text, category):
+            candidates.extend(_parse_markdown_sections(text, category))
+
+        with self._mutation_lock():
+            rows = self._load()
+            existing_names = {d.get("name") for d in rows}
+            imported = 0
+            skipped = 0
+            for entry in candidates:
                 if entry.name in existing_names:
                     skipped += 1
                     continue
@@ -527,9 +845,9 @@ class SecretStore:
                 existing_names.add(entry.name)
                 imported += 1
 
-        if imported:
-            self._save(rows)
-        return imported, skipped
+            if imported:
+                self._save(rows)
+            return imported, skipped
 
     def export(self, dest: Path | None = None) -> Path:
         """Write the current DB to ``dest`` (or an auto-named backup file).
@@ -552,8 +870,7 @@ class SecretStore:
         dest = Path(dest)
         dest.parent.mkdir(parents=True, exist_ok=True)
         # Re-use the same atomic-write strategy as the live DB.
-        rows = self._load()
-        payload = {"version": DB_VERSION, "secrets": rows}
+        payload = self._load_payload()
         tmp_path = dest.with_suffix(dest.suffix + ".tmp")
         tmp_path.write_text(
             json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
@@ -666,7 +983,7 @@ def _parse_markdown_sections(text: str, category: str) -> list[SecretEntry]:
             SecretEntry(
                 name=section["title"],
                 category=category,
-                value=section["value"],
+                fields=legacy_value_fields(section["value"]),
                 note=section["note"],
             )
         )

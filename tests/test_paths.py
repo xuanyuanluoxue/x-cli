@@ -168,7 +168,7 @@ def test_no_real_localappdata_read(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
 
     result = xcli_secrets_path()
     assert result == safe
-    assert "x-cli" not in str(result)  # override wins, no default path used
+    assert result.parent == tmp_path  # override wins, no default path used
 
 
 if __name__ == "__main__":

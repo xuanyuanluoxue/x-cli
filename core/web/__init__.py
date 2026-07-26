@@ -1,7 +1,8 @@
 """core.web — HTTP server + REST API for x web subcommand.
 
-Exposes :class:`core.storage.TaskStore` and :class:`core.secrets.SecretStore`
-as JSON over HTTP. Stdlib-only (no Flask/FastAPI dependency).
+Exposes :class:`core.storage.TaskStore` and the shared
+:class:`core.secret_service.SecretService` as JSON over HTTP. Stdlib-only
+(no Flask/FastAPI dependency).
 
 Module map:
 
@@ -12,7 +13,7 @@ Module map:
     │   ├── health
     │   ├── tasks
     │   └── secrets
-    └── static/       — frontend assets (placeholder; replaced by feature/web-frontend)
+    └── static/       — Vue 3 SPA build artifacts (source in ``web/``; see ADR-0002)
 
 The :mod:`plugins.web` module wires :class:`core.web.server.WebServer`
 into the ``x web`` CLI subcommand.

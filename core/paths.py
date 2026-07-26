@@ -32,6 +32,8 @@ from pathlib import Path
 # release.
 _LEGACY_TODO_DIR_ENV = "XAVIER_TODO_DIR"
 _TODO_DIR_ENV = "XCLI_TODO_DIR"
+_DIARY_DIR_ENV = "XCLI_DIARY_DIR"
+_NOTES_DIR_ENV = "XCLI_NOTES_DIR"
 _LEGACY_TODO_DIR_WARNED = False
 
 
@@ -132,6 +134,32 @@ def xcli_secrets_path() -> Path:
     if override:
         return Path(override)
     return xcli_data_dir() / "secrets.json"
+
+
+def xcli_diary_dir() -> Path:
+    """Return the directory containing x-cli diary Markdown files.
+
+    ``XCLI_DIARY_DIR`` overrides the default location. Otherwise diary
+    files live under ``<xcli_data_dir()>/diary``. The returned directory
+    is created on every call so callers can write immediately.
+    """
+    override = os.environ.get(_DIARY_DIR_ENV)
+    if override:
+        return _ensure_dir(Path(override))
+    return _ensure_dir(xcli_data_dir() / "diary")
+
+
+def xcli_notes_dir() -> Path:
+    """Return the directory containing x-cli topic-note Markdown files.
+
+    ``XCLI_NOTES_DIR`` overrides the default location. Otherwise notes
+    live under ``<xcli_data_dir()>/notes``. The directory is created on
+    every call.
+    """
+    override = os.environ.get(_NOTES_DIR_ENV)
+    if override:
+        return _ensure_dir(Path(override))
+    return _ensure_dir(xcli_data_dir() / "notes")
 
 
 def xcli_todo_dir() -> Path:

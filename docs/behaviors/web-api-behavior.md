@@ -1,7 +1,7 @@
 # x web 行为规格
 
 > **目标读者**：接续开发的 AI agent
-> **范围**：`x web` 子命令 — stdlib HTTP server + REST API + token auth
+> **范围**：`x web` 子命令 — stdlib HTTP server + REST API + 可选 token auth
 > **对应测试**：`tests/test_web_api.py`（单元 + 端到端）
 > **状态**：🚧 开发中（feature/web-backend，2026-06-27）
 
@@ -11,9 +11,12 @@
 
 **路径**：
 - 静态资源：`core/web/static/`（前端 branch 会替换此目录）
-- 配置：`xcli_data_dir()/web-token.txt`（v0.7.0 MVP **不持久化**，每次启动重新生成）
+- 配置：`xcli_data_dir()/config.yaml` 中的 `web_auth`（Token 本身不持久化）
 
-**Token 生成**：`secrets.token_urlsafe(32)`（32 字节 = 43 字符 base64）
+**默认认证**：关闭。配置文件设置 `web_auth: true` 或显式传入 `--token` 时开启。
+
+**Token 生成**：认证开启且未传 `--token` 时调用 `secrets.token_urlsafe(32)`
+（32 字节 = 43 字符 base64）。
 
 **默认绑定**：`127.0.0.1:8421`（端口 8421 = "x-cli web" 键盘记忆）
 
@@ -26,8 +29,21 @@
 
 **Then**：
 - 启动 HTTP server 在 127.0.0.1:8421
-- stdout 打印服务地址 + token
-- 不自动打开浏览器（用 `--no-browser=false` 才自动打开）
+- stderr 打印服务地址 + `认证: 关闭（仅建议本机使用）`
+- 自动打开浏览器，直接进入任务页，不显示 Token 登录页
+
+### 场景 1A：通过配置开启认证
+
+**Given**：
+- 有效配置文件包含 `web_auth: true`
+
+**When**：
+- `x web`
+
+**Then**：
+- 启动时生成随机 Token 并显示在终端
+- 浏览器需要 Token 才能访问任务和密钥 API
+- 仍可用 `--auto-token-url` 自动把 Token 交给浏览器
 
 ---
 
@@ -41,13 +57,27 @@
 **Then**：
 - 退出码 0
 - HTTP 200
-- Body: `{"status": "ok", "version": "0.6.0", "subsystems": ["todo", "secret"]}`
+- Body 包含 `{"status": "ok", "auth_required": false}`
+- Body 包含 `"secret_confirmation_required": true`（默认值）
 
 ---
 
-## 场景 3：API 请求缺 token → 401
+## 场景 3：默认模式无需 token
 
-**Given**：服务已启动，token = `abc123`
+**Given**：服务以默认配置启动（`web_auth: false`）
+
+**When**：
+- `GET /api/tasks`（无 X-Web-Token header）
+
+**Then**：
+- HTTP 200
+- 返回任务列表
+
+---
+
+## 场景 3A：认证模式下 API 请求缺 token → 401
+
+**Given**：服务以认证模式启动，token = `abc123`
 
 **When**：
 - `GET /api/tasks`（无 X-Web-Token header）
@@ -58,9 +88,9 @@
 
 ---
 
-## 场景 4：API 请求错 token → 401
+## 场景 4：认证模式下 API 请求错 token → 401
 
-**Given**：服务已启动，token = `abc123`
+**Given**：服务以认证模式启动，token = `abc123`
 
 **When**：
 - `GET /api/tasks` 带 `X-Web-Token: wrong`
@@ -210,7 +240,7 @@
 
 ---
 
-## 场景 16：列出密钥（不含 value）
+## 场景 16：列出密钥（不含 fields/value）
 
 **Given**：DB 有 minimax 和 openai
 
@@ -220,11 +250,11 @@
 **Then**：
 - HTTP 200
 - Body 的 secrets 数组只含 name + category + updated_at
-- **不含** value 字段（硬性约束）
+- **不含** fields、value 或任何普通/密钥字段值（硬性约束）
 
 ---
 
-## 场景 17：获取单个密钥（含 value + stderr 警告）
+## 场景 17：获取单个密钥（含 fields + value 兼容别名 + stderr 警告）
 
 **Given**：DB 有 minimax，value = `sk-test`
 
@@ -233,7 +263,8 @@
 
 **Then**：
 - HTTP 200
-- Body 含完整对象（含 value）
+- Body 含完整对象（含 fields）
+- Body 的兼容字段 value 等于 primary secret 字段值
 - 服务端 stderr 输出 `🔐 警告：密钥已通过 Web API 输出到客户端`
 
 ---
@@ -260,6 +291,38 @@
 **Then**：
 - HTTP 204（无 body）
 - DB 中 minimax 不存在
+
+---
+
+## 场景 19A：用 fields 创建多字段密钥
+
+**When**：
+- `POST /api/secrets` body 含 URL(text) + 密码(secret, primary=true)
+
+**Then**：
+- HTTP 201
+- 响应含规范化 fields 和主密钥 value 兼容别名
+- DB 只持久化 fields，不重复持久化顶层 value
+
+## 场景 19B：兼容旧 value 请求
+
+- POST 只有 value 时创建一个 label=`密钥` 的主 secret 字段
+- PATCH 只有 value 时只更新主 secret，不删除其他 fields
+
+## 场景 19C：整体替换 fields
+
+**When**：
+- `PATCH /api/secrets/<name>` body 含完整 fields 数组
+
+**Then**：
+- 全部字段先通过领域层校验，再一次原子写入
+- 校验失败返回 HTTP 400 `validation_error`，原条目不变化
+
+## 场景 19D：拒绝歧义或非法 fields
+
+- value 与 fields 同时出现 → 400
+- fields 违反 label/kind/value/primary/数量约束 → 400
+- 错误响应不得回显任何字段值
 
 ---
 
@@ -308,13 +371,93 @@
 
 ---
 
+## 场景 24：Web 与 CLI 共享密钥业务入口
+
+**Given**：WebServer 与 CLI 指向同一个 SecretStore
+
+**When**：Web API 执行密钥 list/get/create/update/delete
+
+**Then**：
+- Web handler 通过 `SecretService` 调用业务操作，不直接发起 SecretStore CRUD
+- CLI 使用同一个 `SecretService` API，业务异常和存储语义一致
+- Web 继续把领域异常映射为 HTTP 状态，CLI 继续映射为退出码
+- CLI 不依赖 WebServer 运行
+
+---
+
+## 场景 25：Web 与 CLI 并发修改同一 DB
+
+**When**：Web 请求和独立 CLI 进程几乎同时成功修改密钥库
+
+**Then**：
+- SecretStore 在持久化边界串行执行完整写事务
+- 每个已成功响应的修改都保留，不发生静默覆盖
+- API summary 与 lock sidecar 均不泄露任何字段值
+
+---
+
+## 场景 26：关闭后续密钥安全确认
+
+**Given**：
+- 当前配置的 `web_secret_confirmation: true`
+- 用户在查看或编辑密钥的安全确认框中勾选“不再提示”并继续
+
+**When**：
+- 前端发送 `PATCH /api/preferences`，body 为 `{"secret_confirmation_required": false}`
+
+**Then**：
+- HTTP 200，响应返回更新后的 preferences
+- 当前 WebServer 会话立即把 health 中该字段更新为 false
+- 当前有效配置文件原子写入 `web_secret_confirmation: false`
+- 后续查看和编辑密钥不再弹出安全确认
+- 明文 API 的 stderr 安全警告和字段默认隐藏行为不变
+
+## 场景 27：偏好 API 的安全边界
+
+- body 缺字段、字段不是 JSON boolean 或包含不支持字段 → HTTP 400 `validation_error`
+- 校验失败时配置文件和运行时状态均不变化
+- 认证开启时，缺少或错误 Token → HTTP 401
+- `GET /api/preferences` → HTTP 405
+- API 不能修改任意其他配置项
+
+## 场景 28：重新开启密钥安全确认
+
+**Given**：配置文件包含 `web_secret_confirmation: false`
+
+**When**：用户手工改为 `true` 并重启 `x web`
+
+**Then**：
+- health 返回 `secret_confirmation_required: true`
+- 查看和编辑密钥再次显示安全确认
+- 旧后端或缺失能力字段时，前端也按 true 处理
+
+---
+
+## 场景 29：顶栏返回页面层级的上一级
+
+**Given**：用户位于 x console 的子页面
+
+**When**：用户点击顶栏“返回上一级”
+
+**Then**：
+- 密钥编辑页返回同一条密钥的详情页
+- 密钥详情页和密钥新建页返回密钥列表
+- 任务编辑页和任务新建页返回任务列表
+- 使用明确的站内父路由，不依赖浏览器历史；直接打开子页面也不会退到站外
+- 任务列表、密钥列表、统计和登录等顶层页面不显示该按钮
+- 窄屏可只显示箭头，但按钮的无障碍名称仍为“返回上一级”
+
+---
+
 ## 不变量
 
 | 项 | 值 |
 |---|---|
 | **默认 host** | `127.0.0.1`（绝不默认 0.0.0.0）|
 | **默认 port** | `8421` |
-| **token 长度** | 32 字节（base64 后 43 字符）|
+| **默认认证** | 关闭；`web_auth: true` 或 `--token` 时开启 |
+| **密钥安全确认** | 默认开启；明确保存偏好后关闭，未知状态按开启处理 |
+| **token 长度** | 认证开启且自动生成时为 32 字节（base64 后 43 字符）|
 | **token 持久化** | 不（每次启动重新生成；MVP 不写盘）|
 | **静态资源根** | `core/web/static/` |
 | **静态资源白名单** | 不限制（前端目录所有文件都可访问）|
@@ -323,6 +466,10 @@
 | **Content-Type** | 所有 API 返回 `application/json; charset=utf-8` |
 | **CORS** | MVP 不实现（同源：前后端同 8421 端口）|
 | **HTTPS** | MVP 不实现（仅 localhost，明文即可）|
+| **密钥 summary** | 永不返回 fields/value 或任何字段值 |
+| **密钥 detail** | 返回 fields 前记录 stderr 安全警告；value 仅是主密钥兼容别名 |
+| **密钥业务入口** | CLI / Web 共同使用 `SecretService`；HTTP 只负责协议适配 |
+| **并发写入** | `<db>.lock` 串行化完整写事务，原子替换保证读取完整 JSON |
 
 ---
 
@@ -340,11 +487,11 @@
 
 - ❌ HTTPS / TLS（仅 localhost）
 - ❌ 多用户支持 / 用户管理
-- ❌ Session / Cookie（每次请求带 X-Web-Token 即可）
+- ❌ Session / Cookie（认证模式下每次请求带 X-Web-Token 即可）
 - ❌ 速率限制（个人工具，无滥用风险）
 - ❌ WebSocket（只用 REST）
 - ❌ CORS（前后端同源）
-- ❌ token 持久化（每次启动重生成；要持久化用 `--token <固定值>`）
+- ❌ token 持久化（认证模式每次启动重生成；要固定用 `--token <固定值>`）
 - ❌ 实时通知（前端轮询即可）
 
 ---

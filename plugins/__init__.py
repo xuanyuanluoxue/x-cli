@@ -11,9 +11,10 @@ Each module under this package implements a single top-level subcommand
 
 To add a new subcommand, drop a file in this package (e.g. ``foo.py``),
 implement ``register`` + ``run``, and add it to
-``x.py:SUBCOMMAND_HANDLERS``. No core changes required.
+``core.dispatch.SUBCOMMAND_MODULES``. The entry point loads the selected
+module on demand and must not statically import concrete plugins.
 
-The Phase 4 split (this file) was the final step of the v0.4.y
-roadmap item — ``x.py`` is now reduced to entry-point glue (~200
-lines) and all action logic lives in plugins/ + core/.
+The Phase 4 split moved action logic out of ``x.py``. The v0.7.x lazy
+dispatcher further keeps version/help startup paths independent of plugin
+imports.
 """

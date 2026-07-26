@@ -38,7 +38,9 @@ Scenario       Tests
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
+import time
 from datetime import date
 from pathlib import Path
 
@@ -47,6 +49,8 @@ import pytest
 from core.secrets import (
     SecretAlreadyExistsError,
     SecretEntry,
+    SecretError,
+    SecretField,
     SecretNotFoundError,
     SecretStore,
 )
@@ -345,6 +349,18 @@ def test_search_never_matches_value(store: SecretStore) -> None:
     assert len(results) == 0
 
 
+def test_search_never_matches_text_field(store: SecretStore) -> None:
+    """Even non-secret field values stay outside the search index."""
+    store.set(
+        "webdav",
+        fields=[
+            SecretField("URL", "text", "https://private.example.test"),
+            SecretField("密码", "secret", "pw-secret", primary=True),
+        ],
+    )
+    assert store.search("private.example") == []
+
+
 def test_search_empty_query_returns_empty(store: SecretStore) -> None:
     """Empty query → empty list (no accidental full-DB dump)."""
     store.set("a", value="1")
@@ -479,6 +495,13 @@ def test_import_preserves_multiline_verbatim(tmp_path: Path) -> None:
     assert e is not None
     assert "app_id: cli_a92" in e.value
     assert "app_secret: 0UNVM" in e.value
+    assert len(e.fields) == 1
+    assert e.fields[0] == SecretField(
+        label="密钥",
+        kind="secret",
+        value=e.value,
+        primary=True,
+    )
 
 
 def test_import_skips_readme_files(tmp_path: Path) -> None:
@@ -615,6 +638,219 @@ def test_loading_corrupt_db_raises(tmp_path: Path) -> None:
 
 
 # ============================================================
+#  BDD scenarios 18-23: multi-field schema and v1 migration
+# ============================================================
+
+
+def test_secret_entry_reads_legacy_value_as_primary_secret_field() -> None:
+    entry = SecretEntry.from_dict(
+        {
+            "name": "old",
+            "category": "legacy",
+            "value": "sk-old",
+            "note": "kept",
+        }
+    )
+
+    assert entry.value == "sk-old"
+    assert entry.primary_field == SecretField(
+        label="密钥", kind="secret", value="sk-old", primary=True
+    )
+
+
+def test_secret_entry_serializes_fields_without_duplicate_value() -> None:
+    entry = SecretEntry(
+        name="webdav",
+        fields=[
+            SecretField("URL", "text", "https://example.test"),
+            SecretField("密码", "secret", "pw", primary=True),
+        ],
+    )
+
+    payload = entry.to_dict()
+
+    assert "value" not in payload
+    assert payload["fields"] == [
+        {
+            "label": "URL",
+            "kind": "text",
+            "value": "https://example.test",
+            "primary": False,
+        },
+        {"label": "密码", "kind": "secret", "value": "pw", "primary": True},
+    ]
+
+
+@pytest.mark.parametrize(
+    "fields, message",
+    [
+        ([], "at least one"),
+        ([{"label": "", "kind": "secret", "value": "x", "primary": True}], "label"),
+        (
+            [
+                {"label": "URL", "kind": "text", "value": "a"},
+                {"label": "url", "kind": "secret", "value": "b", "primary": True},
+            ],
+            "unique",
+        ),
+        ([{"label": "x", "kind": "url", "value": "a", "primary": True}], "kind"),
+        ([{"label": "x", "kind": "secret", "value": "", "primary": True}], "value"),
+        ([{"label": "x", "kind": "secret", "value": "a"}], "primary"),
+        (
+            [
+                {"label": "a", "kind": "secret", "value": "a", "primary": True},
+                {"label": "b", "kind": "secret", "value": "b", "primary": True},
+            ],
+            "primary",
+        ),
+        ([{"label": "x", "kind": "text", "value": "a", "primary": True}], "secret"),
+        (
+            [
+                {"label": f"f{i}", "kind": "text", "value": str(i)}
+                for i in range(50)
+            ]
+            + [{"label": "main", "kind": "secret", "value": "x", "primary": True}],
+            "50",
+        ),
+    ],
+)
+def test_secret_fields_validate_shape(fields, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        SecretEntry(name="invalid", fields=fields)
+
+
+def test_unknown_entry_keys_survive_multi_field_round_trip() -> None:
+    entry = SecretEntry.from_dict(
+        {
+            "name": "future",
+            "fields": [
+                {"label": "密钥", "kind": "secret", "value": "x", "primary": True}
+            ],
+            "future_metadata": {"owner": "xavier"},
+        }
+    )
+
+    assert entry.to_dict()["future_metadata"] == {"owner": "xavier"}
+
+
+def _write_v1_db(path: Path) -> bytes:
+    original = (
+        '{\n  "version": "1.0",\n  "secrets": [\n'
+        '    {"name": "old", "value": "sk-old", "category": "legacy"}\n'
+        "  ]\n}\n"
+    ).encode("utf-8")
+    path.write_bytes(original)
+    return original
+
+
+def test_reading_v1_db_does_not_rewrite_or_backup(tmp_path: Path) -> None:
+    db = tmp_path / "secrets.json"
+    original = _write_v1_db(db)
+    store = SecretStore(db_path=db)
+
+    assert store.list()[0].value == "sk-old"
+    assert db.read_bytes() == original
+    assert list(tmp_path.glob("secrets-v1.0-backup-*.json")) == []
+
+
+def test_first_mutation_of_v1_db_creates_exact_original_backup(tmp_path: Path) -> None:
+    db = tmp_path / "secrets.json"
+    original = _write_v1_db(db)
+    store = SecretStore(db_path=db)
+
+    updated = store.update("old", value="sk-new")
+
+    backups = list(tmp_path.glob("secrets-v1.0-backup-*.json"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == original
+    payload = json.loads(db.read_text(encoding="utf-8"))
+    assert payload["version"] == "1.1"
+    assert "value" not in payload["secrets"][0]
+    assert updated.value == "sk-new"
+
+
+def test_second_mutation_does_not_create_another_v1_backup(tmp_path: Path) -> None:
+    db = tmp_path / "secrets.json"
+    _write_v1_db(db)
+    store = SecretStore(db_path=db)
+
+    store.update("old", value="sk-new")
+    store.set("second", value="sk-second")
+
+    assert len(list(tmp_path.glob("secrets-v1.0-backup-*.json"))) == 1
+
+
+def test_failed_backup_keeps_original_db_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "secrets.json"
+    original = _write_v1_db(db)
+    store = SecretStore(db_path=db)
+
+    def fail_backup(_original: bytes) -> Path:
+        raise OSError("backup denied")
+
+    monkeypatch.setattr(store, "_write_migration_backup", fail_backup)
+
+    with pytest.raises(SecretError, match="backup"):
+        store.update("old", value="sk-new")
+    assert db.read_bytes() == original
+
+
+def test_set_accepts_fields_and_rejects_fields_with_legacy_value(
+    store: SecretStore,
+) -> None:
+    fields = [
+        SecretField("URL", "text", "https://example.test"),
+        SecretField("密码", "secret", "pw", primary=True),
+    ]
+
+    entry = store.set("webdav", fields=fields)
+    assert entry.fields == fields
+    assert entry.value == "pw"
+
+    with pytest.raises(ValueError, match="value.*fields"):
+        store.set("ambiguous", value="x", fields=fields)
+    assert store.get("ambiguous") is None
+
+
+def test_update_fields_and_legacy_value_updates_only_primary(
+    store: SecretStore,
+) -> None:
+    store.set(
+        "webdav",
+        fields=[
+            SecretField("URL", "text", "https://old.example"),
+            SecretField("密码", "secret", "old", primary=True),
+        ],
+    )
+
+    updated = store.update("webdav", value="new")
+    assert updated.value == "new"
+    assert updated.get_field("url").value == "https://old.example"
+
+    replacement = [
+        SecretField("端点", "text", "https://new.example"),
+        SecretField("令牌", "secret", "token", primary=True),
+    ]
+    updated = store.update("webdav", fields=replacement)
+    assert updated.fields == replacement
+
+    with pytest.raises(ValueError, match="value.*fields"):
+        store.update("webdav", value="x", fields=replacement)
+    assert store.get("webdav").fields == replacement
+
+
+def test_unknown_future_db_version_is_rejected(tmp_path: Path) -> None:
+    db = tmp_path / "future.json"
+    db.write_text('{"version":"9.0","secrets":[]}', encoding="utf-8")
+    store = SecretStore(db_path=db)
+
+    with pytest.raises(SecretError, match="unsupported.*9.0"):
+        store.list()
+
+
+# ============================================================
 #  Timestamps
 # ============================================================
 
@@ -700,6 +936,135 @@ def test_full_lifecycle_add_update_remove(store: SecretStore) -> None:
     removed = store.rm("minimax")
     assert removed.name == "minimax"
     assert store.get("minimax") is None
+
+
+# ============================================================
+#  BDD scenario 25: cross-process mutation locking
+# ============================================================
+
+
+def test_lock_sidecar_contains_no_secret_data(
+    store: SecretStore,
+) -> None:
+    store.set("sensitive-name", value="sensitive-value")
+
+    assert store.lock_path == store.db_path.with_suffix(".json.lock")
+    assert store.lock_path.read_bytes() == b"\0"
+
+
+def test_cross_process_lock_serializes_a_mutation(tmp_path: Path) -> None:
+    db_path = tmp_path / "secrets.json"
+    ready_path = tmp_path / "holder-ready"
+    SecretStore(db_path=db_path)
+    repo_root = Path(__file__).resolve().parents[1]
+
+    holder_code = """
+import sys
+import time
+from pathlib import Path
+from core.secrets import SecretStore
+
+store = SecretStore(db_path=Path(sys.argv[1]))
+with store._mutation_lock():
+    Path(sys.argv[2]).write_text("ready", encoding="utf-8")
+    time.sleep(0.8)
+"""
+    writer_code = """
+import sys
+from pathlib import Path
+from core.secrets import SecretStore
+
+SecretStore(db_path=Path(sys.argv[1])).set("writer", value="secret-value")
+"""
+
+    holder = subprocess.Popen(
+        [sys.executable, "-c", holder_code, str(db_path), str(ready_path)],
+        cwd=repo_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not ready_path.exists() and time.monotonic() < deadline:
+            if holder.poll() is not None:
+                stdout, stderr = holder.communicate()
+                pytest.fail(
+                    f"lock holder exited early ({holder.returncode}): "
+                    f"stdout={stdout!r}, stderr={stderr!r}"
+                )
+            time.sleep(0.02)
+        assert ready_path.exists(), "lock holder did not become ready"
+
+        started = time.monotonic()
+        writer = subprocess.run(
+            [sys.executable, "-c", writer_code, str(db_path)],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        elapsed = time.monotonic() - started
+
+        assert writer.returncode == 0, writer.stderr
+        assert elapsed >= 0.5
+        assert SecretStore(db_path=db_path).get("writer") is not None
+    finally:
+        if holder.poll() is None:
+            holder.terminate()
+        holder.wait(timeout=5)
+
+
+def test_concurrent_process_mutations_preserve_every_successful_write(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "secrets.json"
+    start_path = tmp_path / "start"
+    repo_root = Path(__file__).resolve().parents[1]
+    worker_code = """
+import sys
+import time
+from pathlib import Path
+from core.secrets import SecretStore
+
+db_path = Path(sys.argv[1])
+start_path = Path(sys.argv[2])
+while not start_path.exists():
+    time.sleep(0.01)
+SecretStore(db_path=db_path).set(sys.argv[3], value="worker-value")
+"""
+
+    workers = [
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                worker_code,
+                str(db_path),
+                str(start_path),
+                f"worker-{index}",
+            ],
+            cwd=repo_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for index in range(6)
+    ]
+    start_path.write_text("go", encoding="utf-8")
+
+    failures: list[str] = []
+    for worker in workers:
+        stdout, stderr = worker.communicate(timeout=10)
+        if worker.returncode != 0:
+            failures.append(
+                f"returncode={worker.returncode}, stdout={stdout!r}, stderr={stderr!r}"
+            )
+
+    assert failures == []
+    assert {entry.name for entry in SecretStore(db_path=db_path).list()} == {
+        f"worker-{index}" for index in range(6)
+    }
 
 
 if __name__ == "__main__":

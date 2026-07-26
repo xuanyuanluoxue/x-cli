@@ -22,7 +22,8 @@ import pytest
 
 from core.models import ArchiveReason, Priority, Task, TaskStatus
 from core.storage import TaskStore
-from x import _todo_list, main
+from plugins.todo_queries import _todo_list
+from x import main
 
 
 # ============================================================

@@ -19,8 +19,10 @@ import subprocess
 import sysconfig
 from pathlib import Path
 from typing import Sequence
+from unittest.mock import patch
 
 import pytest
+import x as x_module
 
 
 def _x_executable() -> str:
@@ -75,7 +77,7 @@ def test_e2e_help_alias_prints_top_help(x_path: str, tmp_path: Path):
     assert "--config" in out, f"missing --config in:\n{out}"
     assert "SUBCOMMAND" in out, f"missing SUBCOMMAND in:\n{out}"
     # Subcommands listed
-    for sub in ("todo", "secret", "web"):
+    for sub in ("todo", "secret", "diary", "note", "web"):
         assert sub in out, f"missing subcommand {sub!r} in:\n{out}"
 
 
@@ -162,3 +164,46 @@ def test_e2e_todo_positional_help(x_path: str, tmp_path: Path):
     assert "usage: x todo" in out, f"missing 'usage: x todo' in:\n{out}"
     # No leakage of top-level flags
     assert "--log-level" not in out
+
+
+# ============================================================
+#  Distribution scenario: inherited cp1252 streams
+# ============================================================
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows console encoding regression")
+def test_e2e_note_help_overrides_inherited_cp1252(x_path: str, tmp_path: Path):
+    """Localized help remains UTF-8 when Windows starts Python with cp1252."""
+    env = os.environ.copy()
+    env["XCLI_TODO_DIR"] = str(tmp_path)
+    env["XCLI_SECRETS_DIR"] = str(tmp_path)
+    env["PYTHONUTF8"] = "0"
+    env["PYTHONIOENCODING"] = "cp1252"
+
+    proc = subprocess.run(
+        [x_path, "note", "--help"],
+        capture_output=True,
+        text=False,
+        env=env,
+        timeout=30,
+    )
+
+    assert proc.returncode == 0, (
+        f"stdout={proc.stdout!r}\nstderr={proc.stderr!r}"
+    )
+    output = proc.stdout.decode("utf-8")
+    assert "本地主题笔记" in output
+    assert "usage: x note" in output
+
+
+def test_utf8_stream_setup_tolerates_host_managed_streams():
+    """Streams without usable ``reconfigure`` support remain compatible."""
+    class RefusingStream:
+        def reconfigure(self, **_kwargs: str) -> None:
+            raise OSError("stream is managed by the host")
+
+    with (
+        patch.object(x_module.sys, "stdout", object()),
+        patch.object(x_module.sys, "stderr", RefusingStream()),
+    ):
+        x_module._configure_utf8_standard_streams()

@@ -47,6 +47,8 @@ x-cli 现在每次启动都从 `core/paths.py` 读硬编码的默认路径。但
   secrets_path: <xcli_secrets_path()>
   log_level: WARNING
   log_path: <xcli_data_dir()>/x.log
+  web_auth: false
+  web_secret_confirmation: true
   ```
 - 日志不写文件（`log_level: WARNING` 时不主动写）
 
@@ -244,6 +246,12 @@ log_level: WARNING
 
 # 日志文件路径（null = 不写文件）
 log_path: "C:\Users\X\AppData\Local\x-cli\x.log"
+
+# x web Token 认证（默认 false；true 时开启）
+web_auth: false
+
+# 查看/编辑密钥明文前显示安全确认（默认 true）
+web_secret_confirmation: true
 ```
 
 **未实现的字段**（v0.5+ 候选）：
@@ -277,7 +285,29 @@ todo_dir: C:\Users\X\AppData\Local\x-cli\todo
 secrets_path: C:\Users\X\AppData\Local\x-cli\secrets.json
 log_level: WARNING
 log_path: C:\Users\X\AppData\Local\x-cli\x.log
+web_auth: false
+web_secret_confirmation: true
 ```
+
+---
+
+## 场景 11：持久化 Web 密钥确认偏好
+
+**Given**:
+- 当前有效配置文件包含注释、已知字段和未知字段
+- `web_secret_confirmation` 缺失或为 `true`
+
+**When**:
+- Web 偏好 API 把密钥确认设置为关闭
+
+**Then**:
+- 当前有效配置文件包含 `web_secret_confirmation: false`
+- 注释、未知字段和所有无关设置原样保留
+- 文件通过同目录临时文件与原子替换提交
+- 如果配置文件不存在，则先生成默认配置，再保存该字段
+- 无效布尔值被拒绝且原文件不变
+
+**恢复**：用户把该字段改回 `true` 并重启 `x web`，安全确认重新出现。
 
 ### --log-level DEBUG
 ```

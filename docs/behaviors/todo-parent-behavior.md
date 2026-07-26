@@ -3,7 +3,7 @@
 > **对应命令**：`x todo add / update / list / archive / restore`
 > **新增 flag**：`--parent <id>`（add / update）
 > **数据规范**：`parent` 字段（仅 ID 引用，不嵌套 children）
-> **来源**：[PLAN-v0.5.md §2.2.1](../../../PLAN-v0.5.md)
+> **规格状态**：本文档是子任务关系的永久行为规范。
 >
 > **覆盖范围**：
 > - 子任务创建（add / update 设 parent）

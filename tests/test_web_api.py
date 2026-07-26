@@ -15,15 +15,19 @@ from __future__ import annotations
 import json
 import socket
 import argparse
+import time
 import webbrowser
 from contextlib import contextmanager
 from http.client import HTTPConnection
 from pathlib import Path
 from typing import Iterator
+from urllib.parse import quote
 
 import pytest
 
-from core.secrets import SecretStore
+from core.config import ConfigError
+from core.secrets import SecretField, SecretStore
+from core.secret_service import SecretService
 from core.storage import TaskStore
 from core.web.auth import generate_token, is_valid_token
 from core.web.server import WebServer
@@ -54,16 +58,25 @@ def server(
     else:
         monkeypatch.setenv("XDG_DATA_HOME", str(tmp_path))
 
-    # Use the same TaskStore / SecretStore instances the handler will use
+    # Use the same TaskStore / SecretStore instances wrapped by the server.
     store = TaskStore()
     secrets_store = SecretStore(db_path=str(tmp_path / "secrets.json"))
 
     token = "test-token-abc123"
     port = _free_port()
-    srv = WebServer(host="127.0.0.1", port=port, token=token, store=store, secrets_store=secrets_store)
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("# test config\nweb_auth: true\n", encoding="utf-8")
+    srv = WebServer(
+        host="127.0.0.1",
+        port=port,
+        token=token,
+        store=store,
+        secrets_store=secrets_store,
+        config_path=config_path,
+        secret_confirmation_required=True,
+    )
     srv.start()
     # Wait for server to actually be listening (up to 2s)
-    import time
     deadline = time.time() + 2.0
     while time.time() < deadline:
         try:
@@ -75,6 +88,47 @@ def server(
         raise RuntimeError(f"server didn't start within 2s on port {port}")
     srv.test_base_url = f"http://127.0.0.1:{port}"
     srv.test_token = token
+    srv.test_config_path = config_path
+    try:
+        yield srv
+    finally:
+        srv.stop()
+
+
+@pytest.fixture
+def no_auth_server(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> Iterator[WebServer]:
+    """Spin up the default Web server mode with Token auth disabled."""
+    monkeypatch.setenv("XCLI_TODO_DIR", str(tmp_path / "todo"))
+    monkeypatch.setenv("XCLI_SECRETS_DIR", str(tmp_path / "secrets.json"))
+    store = TaskStore()
+    secrets_store = SecretStore(db_path=str(tmp_path / "secrets.json"))
+    port = _free_port()
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("# test config\nweb_auth: false\n", encoding="utf-8")
+    srv = WebServer(
+        host="127.0.0.1",
+        port=port,
+        token=None,
+        store=store,
+        secrets_store=secrets_store,
+        config_path=config_path,
+        secret_confirmation_required=True,
+    )
+    srv.start()
+    deadline = time.time() + 2.0
+    while time.time() < deadline:
+        try:
+            with socket.create_connection(("127.0.0.1", port), timeout=0.1):
+                break
+        except OSError:
+            time.sleep(0.02)
+    else:  # pragma: no cover
+        raise RuntimeError(f"server didn't start within 2s on port {port}")
+    srv.test_base_url = f"http://127.0.0.1:{port}"
+    srv.test_token = ""
+    srv.test_config_path = config_path
     try:
         yield srv
     finally:
@@ -159,6 +213,85 @@ def _make_secret_via_store(server: WebServer, name: str, value: str, **kwargs) -
     server.secrets.set(name=name, value=value, **kwargs)
 
 
+def test_web_secret_handlers_use_injected_shared_service(tmp_path: Path):
+    class RecordingSecretService(SecretService):
+        def __init__(self, store: SecretStore) -> None:
+            super().__init__(store)
+            self.calls = []
+
+        def list(self, category=None):
+            self.calls.append("list")
+            return super().list(category=category)
+
+        def find(self, name):
+            self.calls.append("find")
+            return super().find(name)
+
+        def create(self, name, value=None, category="default", note="", *, fields=None):
+            self.calls.append("create")
+            return super().create(
+                name,
+                value=value,
+                category=category,
+                note=note,
+                fields=fields,
+            )
+
+        def update(self, name, value=None, note=None, category=None, *, fields=None):
+            self.calls.append("update")
+            return super().update(
+                name,
+                value=value,
+                note=note,
+                category=category,
+                fields=fields,
+            )
+
+        def delete(self, name):
+            self.calls.append("delete")
+            return super().delete(name)
+
+    store = SecretStore(db_path=tmp_path / "secrets.json")
+    service = RecordingSecretService(store)
+    port = _free_port()
+    srv = WebServer(
+        host="127.0.0.1",
+        port=port,
+        token=None,
+        store=object(),
+        secret_service=service,
+    )
+    srv.test_token = ""
+    srv.start()
+    try:
+        status, body = _request(srv, "GET", "/api/secrets", token=None)
+        assert status == 200
+        assert body == {"secrets": [], "count": 0}
+
+        assert _request(
+            srv,
+            "POST",
+            "/api/secrets",
+            token=None,
+            body={"name": "demo", "value": "secret-value"},
+        )[0] == 201
+        assert _request(srv, "GET", "/api/secrets/demo", token=None)[0] == 200
+        assert _request(
+            srv,
+            "PATCH",
+            "/api/secrets/demo",
+            token=None,
+            body={"note": "changed"},
+        )[0] == 200
+        assert _request(srv, "DELETE", "/api/secrets/demo", token=None)[0] == 204
+
+        assert service.calls == ["list", "create", "find", "update", "delete"]
+        assert srv.secret_service is service
+        assert srv.secrets is store
+    finally:
+        srv.stop()
+
+
 # ============================================================
 #  Auth / health (场景 2-5)
 # ============================================================
@@ -172,6 +305,114 @@ def test_health_no_auth_required(server: WebServer):
     assert "version" in body
     assert "todo" in body["subsystems"]
     assert "secret" in body["subsystems"]
+    assert body["auth_required"] is True
+    assert body["secret_confirmation_required"] is True
+
+
+def test_default_mode_allows_api_without_token(no_auth_server: WebServer):
+    """Default ``x web`` mode allows direct API access without a header."""
+    status, body = _request(no_auth_server, "GET", "/api/tasks", token=None)
+    assert status == 200
+    assert body == {"tasks": [], "count": 0}
+
+
+def test_health_reports_auth_disabled(no_auth_server: WebServer):
+    """The frontend can discover that it should skip the login view."""
+    status, body = _request(no_auth_server, "GET", "/api/health", token=None)
+    assert status == 200
+    assert body["auth_required"] is False
+    assert body["secret_confirmation_required"] is True
+
+
+def test_preferences_can_disable_secret_confirmation(server: WebServer):
+    """A valid preference update persists and changes live health state."""
+    status, body = _request(
+        server,
+        "PATCH",
+        "/api/preferences",
+        body={"secret_confirmation_required": False},
+    )
+
+    assert status == 200
+    assert body == {
+        "preferences": {"secret_confirmation_required": False}
+    }
+    config_text = server.test_config_path.read_text(encoding="utf-8")
+    assert "# test config" in config_text
+    assert "web_auth: true" in config_text
+    assert "web_secret_confirmation: false" in config_text
+    health_status, health = _request(server, "GET", "/api/health", token=None)
+    assert health_status == 200
+    assert health["secret_confirmation_required"] is False
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {},
+        {"secret_confirmation_required": "false"},
+        {"secret_confirmation_required": 0},
+        {"secret_confirmation_required": False, "web_auth": False},
+    ],
+)
+def test_preferences_reject_invalid_payload_without_changes(
+    server: WebServer, payload: dict
+):
+    before = server.test_config_path.read_text(encoding="utf-8")
+
+    status, body = _request(server, "PATCH", "/api/preferences", body=payload)
+
+    assert status == 400
+    assert body["code"] == "validation_error"
+    assert server.test_config_path.read_text(encoding="utf-8") == before
+    _, health = _request(server, "GET", "/api/health", token=None)
+    assert health["secret_confirmation_required"] is True
+
+
+def test_preferences_requires_token_when_auth_enabled(server: WebServer):
+    status, body = _request(
+        server,
+        "PATCH",
+        "/api/preferences",
+        token=None,
+        body={"secret_confirmation_required": False},
+    )
+    assert status == 401
+    assert body["code"] == "missing_token"
+
+
+def test_preferences_get_is_method_not_allowed(server: WebServer):
+    status, body = _request(server, "GET", "/api/preferences")
+    assert status == 405
+    assert body["code"] == "method_not_allowed"
+
+
+def test_preferences_write_failure_keeps_live_state(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+):
+    """Runtime state changes only after the atomic config write succeeds."""
+    from core.web.handlers import preferences
+
+    before = server.test_config_path.read_text(encoding="utf-8")
+
+    def fail_write(_path: Path, _required: bool) -> None:
+        raise ConfigError("disk unavailable")
+
+    monkeypatch.setattr(preferences, "set_web_secret_confirmation", fail_write)
+
+    status, body = _request(
+        server,
+        "PATCH",
+        "/api/preferences",
+        body={"secret_confirmation_required": False},
+    )
+
+    assert status == 500
+    assert body["code"] == "config_error"
+    assert "disk unavailable" not in json.dumps(body)
+    assert server.test_config_path.read_text(encoding="utf-8") == before
+    _, health = _request(server, "GET", "/api/health", token=None)
+    assert health["secret_confirmation_required"] is True
 
 
 def test_api_missing_token_returns_401(server: WebServer):
@@ -324,6 +565,7 @@ def test_list_secrets_no_value_field(server: WebServer):
     assert body["count"] == 2
     for s in body["secrets"]:
         assert "value" not in s
+        assert "fields" not in s
         assert "name" in s
         assert "category" in s
 
@@ -334,6 +576,9 @@ def test_get_secret_includes_value_and_warns(server: WebServer, capsys):
     status, body = _request(server, "GET", "/api/secrets/minimax")
     assert status == 200
     assert body["secret"]["value"] == "sk-test"
+    assert body["secret"]["fields"] == [
+        {"label": "密钥", "kind": "secret", "value": "sk-test", "primary": True}
+    ]
     assert body["secret"]["category"] == "API"
     captured = capsys.readouterr()
     assert "密钥已通过 Web API 输出" in captured.err
@@ -354,12 +599,149 @@ def test_create_secret(server: WebServer):
     assert entry.value == "sk-test"
 
 
+def test_create_secret_with_fields(server: WebServer):
+    fields = [
+        {
+            "label": "URL",
+            "kind": "text",
+            "value": "https://webdav.example.test",
+            "primary": False,
+        },
+        {"label": "密码", "kind": "secret", "value": "pw", "primary": True},
+    ]
+
+    status, body = _request(
+        server,
+        "POST",
+        "/api/secrets",
+        body={"name": "webdav", "category": "storage", "fields": fields},
+    )
+
+    assert status == 201
+    assert body["secret"]["fields"] == fields
+    assert body["secret"]["value"] == "pw"
+    stored = json.loads(server.secrets.db_path.read_text(encoding="utf-8"))
+    assert "value" not in stored["secrets"][0]
+
+
+def test_create_secret_rejects_value_and_fields_together(server: WebServer):
+    status, body = _request(
+        server,
+        "POST",
+        "/api/secrets",
+        body={
+            "name": "ambiguous",
+            "value": "must-not-leak",
+            "fields": [
+                {"label": "密钥", "kind": "secret", "value": "other", "primary": True}
+            ],
+        },
+    )
+
+    assert status == 400
+    assert body["code"] == "validation_error"
+    assert "must-not-leak" not in json.dumps(body)
+    assert server.secrets.get("ambiguous") is None
+
+
+def test_create_secret_rejects_invalid_fields_without_writing(server: WebServer):
+    status, body = _request(
+        server,
+        "POST",
+        "/api/secrets",
+        body={
+            "name": "invalid",
+            "fields": [
+                {"label": "URL", "kind": "text", "value": "private-value", "primary": True}
+            ],
+        },
+    )
+
+    assert status == 400
+    assert body["code"] == "validation_error"
+    assert "private-value" not in json.dumps(body)
+    assert server.secrets.get("invalid") is None
+
+
+def test_patch_secret_replaces_fields_atomically(server: WebServer):
+    server.secrets.set(
+        "webdav",
+        fields=[
+            SecretField("URL", "text", "https://old.example"),
+            SecretField("密码", "secret", "old-password", primary=True),
+        ],
+    )
+    replacement = [
+        {"label": "Endpoint", "kind": "text", "value": "https://new.example", "primary": False},
+        {"label": "Token", "kind": "secret", "value": "new-token", "primary": True},
+    ]
+
+    status, body = _request(
+        server, "PATCH", "/api/secrets/webdav", body={"fields": replacement}
+    )
+    assert status == 200
+    assert body["secret"]["fields"] == replacement
+
+    status, error = _request(
+        server,
+        "PATCH",
+        "/api/secrets/webdav",
+        body={"fields": [{"label": "bad", "kind": "text", "value": "do-not-store", "primary": True}]},
+    )
+    assert status == 400
+    assert "do-not-store" not in json.dumps(error)
+    assert [field.to_dict() for field in server.secrets.get("webdav").fields] == replacement
+
+
+def test_patch_legacy_value_updates_only_primary_secret(server: WebServer):
+    server.secrets.set(
+        "webdav",
+        fields=[
+            SecretField("URL", "text", "https://keep.example"),
+            SecretField("密码", "secret", "old", primary=True),
+        ],
+    )
+
+    status, body = _request(
+        server, "PATCH", "/api/secrets/webdav", body={"value": "new"}
+    )
+
+    assert status == 200
+    assert body["secret"]["value"] == "new"
+    assert body["secret"]["fields"][0]["value"] == "https://keep.example"
+
+
 def test_delete_secret_returns_204(server: WebServer):
     """DELETE /api/secrets/<name> → 204. 场景 19."""
     _make_secret_via_store(server, "minimax", "sk-test")
     status, body = _request(server, "DELETE", "/api/secrets/minimax")
     assert status == 204
     assert server.secrets.get("minimax") is None
+
+
+def test_secret_item_routes_decode_url_encoded_name(server: WebServer):
+    """GET/PATCH/DELETE must decode names encoded by the browser client."""
+    name = "MiniMax Coding Plan"
+    _make_secret_via_store(server, name, "sk-test")
+    path = f"/api/secrets/{quote(name, safe='')}"
+
+    status, body = _request(server, "GET", path)
+    assert status == 200
+    assert body["secret"]["name"] == name
+
+    status, body = _request(
+        server,
+        "PATCH",
+        path,
+        body={"category": "API"},
+    )
+    assert status == 200
+    assert body["secret"]["category"] == "API"
+
+    status, body = _request(server, "DELETE", path)
+    assert status == 204
+    assert body == {}
+    assert server.secrets.get(name) is None
 
 
 # ============================================================
@@ -454,6 +836,30 @@ def _build_web_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="x web")
     _web_plugin.register(parser)
     return parser
+
+
+def test_resolve_web_token_defaults_to_disabled() -> None:
+    """No config and no CLI token means no authentication token exists."""
+    assert _web_plugin._resolve_token(None, config_auth_enabled=False) is None
+
+
+def test_resolve_web_token_generates_when_config_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``web_auth: true`` generates a fresh token when none is supplied."""
+    monkeypatch.setattr(_web_plugin, "generate_token", lambda: "generated-token")
+    assert (
+        _web_plugin._resolve_token(None, config_auth_enabled=True)
+        == "generated-token"
+    )
+
+
+def test_resolve_web_token_cli_value_enables_auth() -> None:
+    """An explicit ``--token`` enables auth even when config is disabled."""
+    assert (
+        _web_plugin._resolve_token("custom-token", config_auth_enabled=False)
+        == "custom-token"
+    )
 
 
 def test_auto_token_url_flag_in_register() -> None:

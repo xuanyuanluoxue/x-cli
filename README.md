@@ -1,64 +1,73 @@
 # x-cli
 
-> A small personal CLI toolset for **task tracking** and **credential management**.
-> One `x` command, two subsystems, zero third-party dependencies.
+> A small personal CLI toolset for tasks, credentials, daily records, topic notes, and a local web UI.
+> One `x` command, five subsystems, zero runtime dependencies.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests: 526](https://img.shields.io/badge/tests-526%20passing-brightgreen.svg)](tests/)
+[![Tests: pytest](https://img.shields.io/badge/tests-pytest-brightgreen.svg)](tests/)
 [![Coverage: 93%](https://img.shields.io/badge/coverage-93%25-brightgreen.svg)](tests/)
 
 ## What is x-cli?
 
-A single binary `x` that ships two focused subsystems:
+A single binary `x` that ships five focused subsystems:
 
 - **`x todo`** — Personal TODO management backed by YAML-frontmatter Markdown files.
   Full lifecycle: add, list, update, archive, restore, search, done, stats, init, import.
   CJK-friendly (中文 task names supported). Audit trail (archived tasks are never deleted).
-- **`x secret`** — Local credential store backed by a single JSON file (POSIX mode 600).
-  list / get / set / update / rm / search / import / export. Auto-copies to clipboard.
+- **`x secret`** — Local multi-field credential store backed by one JSON file (POSIX mode 600).
+  Keep URLs, account names, and masked secret fields together; the CLI auto-copies the selected field.
+- **`x diary`** — Local daily Markdown notes. Append an entry or list recent diary dates.
+- **`x note`** — Topic-oriented Markdown notes with tags and local search.
+- **`x web`** — Local web UI for todo and secret data; Token auth is opt-in.
 
-Both subsystems store data **independently** under per-user data directories:
+The data subsystems store data **independently** under per-user data directories:
 
-| Platform | TODO | Secrets |
-|---|---|---|
-| Windows | `%LOCALAPPDATA%\x-cli\todo\` | `%LOCALAPPDATA%\x-cli\secrets.json` |
-| Unix | `$XDG_DATA_HOME/x-cli/todo/` | `$XDG_DATA_HOME/x-cli/secrets.json` |
+| Platform | TODO | Secrets | Diary | Notes |
+|---|---|---|---|---|
+| Windows | `%LOCALAPPDATA%\x-cli\todo\` | `%LOCALAPPDATA%\x-cli\secrets.json` | `%LOCALAPPDATA%\x-cli\diary\` | `%LOCALAPPDATA%\x-cli\notes\` |
+| Unix | `$XDG_DATA_HOME/x-cli/todo/` | `$XDG_DATA_HOME/x-cli/secrets.json` | `$XDG_DATA_HOME/x-cli/diary/` | `$XDG_DATA_HOME/x-cli/notes/` |
 
 No cloud sync, no telemetry, no encryption (yet). Designed for one user, one machine.
 
-## Quick start
+## Install
+
+### WinGet (planned public channel)
+
+> **Status:** x-cli is not yet available in the default WinGet source. The
+> manifest and release pipeline are ready locally, but the first public GitHub
+> Release and `microsoft/winget-pkgs` submission have not been made yet.
+
+After Microsoft accepts the package, Windows users will install and upgrade it
+without installing Python:
+
+```powershell
+winget install --id XuanyuanLuoxue.XCLI -e
+winget upgrade --id XuanyuanLuoxue.XCLI -e
+```
+
+The portable EXE stores user data under `%LOCALAPPDATA%\x-cli\`; upgrading the
+program does not replace todo, secret, diary, or note data.
+
+### Development install
 
 ```bash
-# Clone and install (editable mode, source changes take effect immediately)
-git clone https://github.com/xavier-pen/x-cli
+git clone https://github.com/xuanyuanluoxue/x-cli.git
 cd x-cli
-
-# Use a virtualenv — Python 3.14 system-wide installs can be polluted by
-# hydra-core / antlr4 (auto-loaded as pytest plugins).
 python -m venv .venv
 .venv/bin/pip install -e ".[dev]"      # Unix
 .venv\Scripts\pip install -e ".[dev]"  # Windows
 
-# Verify
 x --version
-x todo --help        # Hmm — see "Known quirks" below
-
-# Try it out
+x todo --help
 x todo add "驾照考取" --priority high --deadline 2026-08-31
-x todo list
-x todo stats
+x diary "Started using x diary"
+x note add "MiniMax API setup" --body "Configuration details" --tags AI,API
 ```
 
-### Known quirks
-
-- **`x --help` and `x todo --help` return the same top-level help.** The outer
-  argparse parser swallows `--help` before the subcommand dispatcher. To see
-  the action list for a subcommand, run `x todo` (no args) or `x secret`
-  (no args). See [docs/behaviors/e2e-cli-behavior.md](docs/behaviors/e2e-cli-behavior.md).
-- **`x` must be on your PATH.** On Windows, the venv-installed `x.exe`
-  lives at `.venv\Scripts\x.exe`. If that directory is not on your PATH,
-  add it (or wrap it in `C:\Users\X\.local\bin\x.bat`).
+Top-level and subcommand help are separate: `x --help`, `x todo --help`,
+`x secret --help`, `x diary --help`, `x note --help`, and `x web --help` all
+show the relevant command scope.
 
 ## Usage
 
@@ -96,9 +105,10 @@ it as your notebook. Unknown frontmatter fields round-trip on save. See
 
 ```bash
 x secret list                                         # names + categories only (NEVER values)
-x secret get minimax                                  # writes value to clipboard + stdout + stderr warning
+x secret get minimax                                  # primary secret → clipboard + stdout + stderr warning
+x secret get webdav --field URL                       # retrieve a named text/secret field
 x secret set minimax --value sk-xxx --category 接口密钥
-x secret update minimax --value sk-new --note "rotated 2026-06"
+x secret update minimax --value sk-new --note "rotated 2026-06"  # updates the primary secret
 x secret rm oldkey                                     # delete
 x secret search api                                    # name + note, NEVER value
 x secret import --from /path/to/legacy-markdown-dir   # one-way, source preserved
@@ -107,14 +117,65 @@ x secret export                                        # JSON backup
 
 **Hard invariants** (enforced by the CLI, do not violate):
 
-- `x secret list` NEVER shows values. Test: `test_e2e_list_never_shows_value`.
+- `x secret list` NEVER shows any field value. Test: `test_e2e_list_never_shows_value`.
 - `x secret get` ALWAYS writes a stderr warning before stdout. Test: `test_e2e_get_returns_value`.
-- `x secret search` NEVER matches against the `value` field. Test: `test_e2e_search_does_not_match_value`.
+- `x secret search` NEVER matches against field values. Test: `test_e2e_search_does_not_match_value`.
 - `x secret import` is read-only — source files are never modified.
+
+The Web UI can add, remove, reorder, and replace 1–50 named fields. Each field is
+either plain text or a masked secret, and exactly one secret field is the primary
+CLI value. Legacy schema 1.0 files remain readable; the first write creates a
+timestamped backup before upgrading the database to schema 1.1. Values are still
+stored as plaintext JSON—the mask only controls browser display.
 
 The JSON DB has file mode `0600` on POSIX. On Windows the ACL is inherited
 from the user's profile (no special hardening beyond that). For encryption
 at rest, see [Roadmap](#roadmap).
+
+### `x diary` — local daily notes
+
+```bash
+x diary "Finished the x diary P0 implementation"  # append to today's Markdown file
+x diary list                                       # latest 7 diary dates
+x diary list --limit 3                             # custom result count
+```
+
+Diary files live under `<xcli_data_dir>/diary/YYYY-MM-DD.md`. Set
+`XCLI_DIARY_DIR` to use a different directory. P0 lists dates only; it does
+not edit, delete, search, or sync entries.
+
+### `x note` — topic notes
+
+```bash
+x note add "MiniMax API setup" --body "Configuration details" --tags AI,API
+x note list --tag AI --limit 10
+x note show n-20260717-143012
+x note search minimax --limit 5
+```
+
+Each note is stored at `<xcli_data_dir>/notes/<id>.md` with YAML frontmatter
+and a Markdown body. Set `XCLI_NOTES_DIR` to use a different directory.
+P0 is read-mostly: create, list, show, and search; editing and deletion are
+left for a later version.
+
+### `x web` — local browser UI
+
+```bash
+x web                       # default: 127.0.0.1:8421, no Token prompt
+x web --no-browser          # start without opening the browser
+x web --token my-token      # explicitly enable auth for this run
+```
+
+The default config keeps `web_auth: false`, so the loopback-only browser UI
+opens directly. To require a random startup Token, edit
+`<xcli_data_dir>/config.yaml` (Windows: `%LOCALAPPDATA%\x-cli\config.yaml`):
+
+```yaml
+web_auth: true
+```
+
+Keep authentication enabled when binding to a non-loopback host; otherwise
+any device that can reach the server can read and modify todo and secret data.
 
 ### Global flags
 
@@ -147,8 +208,9 @@ both one-way and read-only.
 | [COMMANDS.md](COMMANDS.md) | Canonical command inventory (user-edited spec source) |
 | [docs/TODO-SPEC.md](docs/TODO-SPEC.md) | On-disk format spec for `x todo` |
 | [docs/architecture.md](docs/architecture.md) | Design decisions, storage layers, hard invariants |
+| [docs/releasing.md](docs/releasing.md) | Windows build, GitHub Release, and WinGet submission runbook |
 | [docs/commands.md](docs/commands.md) | Full command reference (mirror of `COMMANDS.md`) |
-| [docs/behaviors/](docs/behaviors/) | BDD specs (Given-When-Then) — 14 files, 100+ scenarios |
+| [docs/behaviors/](docs/behaviors/) | Durable BDD specs (Given-When-Then) |
 | [AGENTS.md](AGENTS.md) | Rules for AI agents working on x-cli |
 
 ## Development
@@ -168,43 +230,47 @@ $env:TEMP = "D:\Temp\pytest_tmp"
 # (root cause: some process holds the default tmp dir open,
 #  suppressing the actual test failure detail with a cleanup traceback.)
 
-# BDD-first, commit-before-code workflow
-# (1) Edit COMMANDS.md to add a command to the "⏳ Implemented" or backlog section
-# (2) Write BDD spec in docs/behaviors/<command>-behavior.md
-# (3) Commit the spec (single doc commit)
-# (4) Write tests in tests/test_<command>.py  → run, see Red
-# (5) Implement in x.py or core/*.py        → run, see Green
-# (6) Commit implementation + tests
+# Risk-based workflow
+# Small: no plan; focused regression test when behavior changes
+# Medium: short plan; BDD for user behavior; TDD; full suite once at handoff
+# High-risk: full plan + ADR when needed; full suite + relevant release/security checks
 ```
 
-See [AGENTS.md](AGENTS.md) for the full dev conventions, including the
-"COMMANDS.md is the spec source" rule.
+See [AGENTS.md](AGENTS.md) for the exact classification and mandatory checks.
+`COMMANDS.md` remains the user-owned feature specification.
+
+### Web frontend (Vue 3 + Vite)
+
+The browser UI is a Vue 3 SPA. Its **source** lives in [`web/`](web/) and its
+**build artifacts** are emitted into `core/web/static/` (served by the Python
+HTTP server). Python runtime stays stdlib-only — Node is a *dev-time* tool only.
+
+```bash
+cd web
+npm install        # first time only
+npm run dev        # Vite dev server (proxies /api → 127.0.0.1:8421, run `x web` first)
+npm run build      # → outputs to ../core/web/static
+```
+
+Build artifacts are **committed to git** so `pip install` works without Node.
+After changing anything under `web/src/`, re-run `npm run build` before tests
+or packaging. See [ADR-0002](docs/architecture-decisions/0002-web-frontend-vue-vite.md).
 
 ## Roadmap
 
-**Done** (v0.5.0 partial — Phase A & B landed):
-- P0 time precision: `--time HH:MM` / `--end-time HH:MM` / `--duration 90|90m|1.5h`
-- P1 subtasks: `--parent <id>` (2 levels) with cascade archive
-- 607 tests passing, 1 platform-conditional skip, see [PLAN-v0.5.md](PLAN-v0.5.md) for remaining scope
+**Done in the current local v0.7.0 tree:**
+- TODO lifecycle, time precision, subtasks, reminders, repeat rules, batch operations, templates, dependencies, recycle-bin removal, and JSON/CSV/Markdown export
+- Secret storage with protected list/search output and clipboard integration
+- Local diary entries, topic notes, and the optional-auth Web UI
+- Single-source version shared by CLI, Python metadata, EXE, and WinGet manifest
+- PyInstaller Windows x64 portable EXE with packaged Web assets
+- Reproducible SHA-256 and WinGet 1.12.0 manifest generation
+- GitHub Actions build/release workflow with tag-version protection
 
-**Done** (v0.4.y):
-- 21 commands across `x todo` (10) and `x secret` (8) plus 3 global flags
-- 526 tests passing, 4 platform-conditional skips, 93% coverage
-- CJK task names + icons in output
-- Clipboard integration on `x secret get`
-- Configurable log level + log path
-- One-way import from a legacy TODO directory / 密钥 Markdown directory
-
-**Next** (v0.5.0 remaining — Phase C/D/E):
-- P1 reminders (read-only in v0.5; daemon in v0.6+ after exe packaging)
-- P2 recurring tasks (`--repeat` + explicit `repeat-fire`), batch ops, list sorting, `urgent` priority with ANSI red highlight, recycle bin
-- P3 templates, task dependencies, JSON/CSV/MD export
-- See [PLAN-v0.5.md](PLAN-v0.5.md) §5 implementation phases
-
-**Next** (v0.6+ candidates, not committed):
+**Next** (post-v0.7 candidates, not committed):
 - Encrypted-at-rest secret store (currently plain JSON)
 - Git-based version control of the TODO directory (`git init` + auto-commit hooks)
-- PyInstaller single-file binary distribution (pre-req for reminder daemon)
+- Optional background daemon for reminders and AI-assisted local workflows
 
 **Won't** (by design):
 - Cloud sync, multi-device support

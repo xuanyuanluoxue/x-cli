@@ -4,7 +4,7 @@
 > **新增 flag**：`--sort priority | deadline | created | time`（默认 priority）
 > **新增优先级**：`urgent`（比 high 更高，ANSI red 高亮）
 > **数据规范**：Priority 枚举新增 `URGENT = "urgent"`
-> **来源**：[PLAN-v0.5.md §2.3.3 + §3.2 + §6.5](../../../PLAN-v0.5.md)
+> **规格状态**：本文档是排序与优先级展示的永久行为规范。
 >
 > **v0.5 范围**：
 > - ✅ list 4 种 sort 模式

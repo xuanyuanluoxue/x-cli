@@ -10,19 +10,69 @@
 ## [Unreleased]
 
 ### Added
-- 无
+- **Windows x64 独立发行物**：PyInstaller one-file EXE，无需用户安装 Python；
+  构建时验证 `--version`、`note --help` 和 Web 静态首页。
+- **Web 前端迁移到 Vue 3 + Vite（ADR-0002）**：前端源码集中在 `web/` 文件夹，
+  以 Vue 3 `<script setup>` SFC + Vue Router（hash）+ Pinia 重写。Vite 构建产物
+  输出到 `core/web/static/` 并提交进 git，`pip install` 后无需 Node 即可 `x web`。
+  视觉全新改为简约浅色设计系统；功能契约（7 视图、13 API 端点、密钥明文安全
+  流程、401 跳登录）与 Python 服务端保持不变。
+- **WinGet 发行基础**：stdlib-only 清单生成器、真实 SHA-256、WinGet 1.12.0
+  portable singleton 清单和本机严格校验流程。
+- **GitHub Release workflow**：手动运行只构建 artifact，匹配源码版本的 tag
+  才创建公开 Release。
+- `docs/releasing.md`：Windows 构建、版本检查、WinGet 验证和外部发布边界手册。
+- **多字段密钥库（ADR-0003）**：每条密钥记录可保存 1–50 个具名参数，区分
+  普通文本与默认掩码的密钥信息，并指定唯一主密钥；Web 页面支持新增、删除、排序、
+  类型切换、逐字段显示/复制和安全 URL 链接。CLI 新增 `x secret get --field`。
 
 ### Changed
-- 无
+- 版本升级为 `0.7.0`，并集中到 `core/version.py` 单一来源。
+- **`x web` 默认直接访问**：默认关闭 Token 校验，浏览器启动后直接进入控制台；
+  用户可在 `config.yaml` 设置 `web_auth: true`，或通过 `--token` 为单次运行开启认证。
+  默认绑定仍保持 `127.0.0.1`，非回环无认证启动会显示风险警告。
+- **`x web` 整页重构**：改为简约浅色本地控制台视觉，统一重写登录、任务、
+  密钥、统计和编辑页；桌面端使用侧边导航，移动端使用折叠导航和卡片化数据表。
+  保持零第三方运行依赖，并补齐键盘焦点与 `prefers-reduced-motion` 支持。
+- Secret DB 升级到 schema 1.1。旧 1.0 数据保持只读兼容，首次写入前自动创建
+  `secrets-v1.0-backup-<timestamp>.json`；兼容的 `set/update --value` 只操作主密钥。
+- setuptools 改为递归发现 `core*` / `plugins*`，正式 wheel 现在包含
+  `core.web.handlers` 和全部 Web 静态资源。
+- 项目 license 元数据改用 SPDX `MIT`，清除 setuptools 弃用警告。
+- 顶层入口改为静态白名单 + `importlib` 延迟加载；version/help/未知命令
+  不再导入全部插件，`core` 也不再反向依赖 `x.py`。
+- `plugins/todo.py` 拆为 parser/dispatcher facade、presenters、queries、
+  lifecycle、mutations 五个职责模块，用户命令和数据格式保持兼容。
+- 开发流程改为按风险分级：小改动轻量验证，中型功能使用简短计划，
+  架构/数据/安全/发行改动才使用完整计划和发行检查。
 
 ### Deprecated
 - 无
 
 ### Removed
-- 无
+- 删除已完成的 v0.5 临时计划、过时 Web 前端交接文档和两个未被运行代码
+  引用的设计原型；永久规格已迁移到 BDD、API 和架构文档。
 
 ### Fixed
-- 无
+- 修复 Web 统计页在 DOM 挂载前调用加载函数，导致永久停在加载态的问题。
+- 修复 Web API 客户端未解包 `{task: ...}` / `{secret: ...}` 单资源响应，导致
+  任务与密钥详情/编辑页字段空白的问题。
+- 修复未认证的手机登录页误显示底部主导航的响应式样式问题。
+- 修复 GitHub Windows Runner 预装旧版 WinGet 时跳过升级、无法验证 1.12 清单的
+  问题；发布工作流现在会通过微软官方模块为 Runner 用户安装最新稳定验证器。
+- 修复 PyInstaller 独立 EXE 在英文 Windows 的 `cp1252` 标准流中输出中文帮助时
+  崩溃的问题；CLI 现在会在参数解析和插件分发前安全切换到 UTF-8。
+- 修复英文 Windows Runner 使用 `cp1252` 时无法测试中文和 Emoji CLI 输出的问题；
+  发布脚本现在为子进程启用 UTF-8、显式捕获 EXE 的 UTF-8 输出，并在完成后
+  恢复调用者环境。
+- 修复 `pyproject.toml` 仍为 `0.5.0`、CLI 已为 `0.6.0` 的版本漂移。
+- 修复手写 `packages = ["plugins", "core"]` 导致正式安装包遗漏 Web 子包的问题。
+- 修复 PyInstaller one-file Web 冒烟测试结束后残留子进程、锁住旧 EXE 的问题。
+- 修复 E2E 测试把版本硬编码为 `0.6.0`、发版后产生假失败的问题。
+
+### Security
+- 密钥列表与搜索继续排除所有字段值；Web 详情/编辑在请求明文前要求当前页面确认，
+  每个密钥字段独立掩码，隐藏状态下明文不渲染进 DOM。字段校验错误也不回显值。
 
 ---
 

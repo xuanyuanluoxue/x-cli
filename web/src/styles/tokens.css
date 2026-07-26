@@ -1,0 +1,89 @@
+/* tokens.css — 简约设计变量
+   基调：浅色、灰阶、单一强调色。无渐变、无发光、无重阴影。 */
+
+:root {
+  color-scheme: light;
+
+  /* 表面 */
+  --bg: #fafaf9;
+  --bg-subtle: #f4f4f2;
+  --surface: #ffffff;
+
+  /* 墨水（文字） */
+  --ink: #1a1a18;
+  --ink-2: #55534e;
+  --ink-3: #8a8781;
+  --ink-4: #b5b2ab;
+
+  /* 线条 */
+  --line: #e6e4df;
+  --line-strong: #d2cfc8;
+
+  /* 强调色（克制的墨绿） */
+  --accent: #2f5d3a;
+  --accent-hover: #274d31;
+  --accent-soft: #eef3ee;
+  --on-accent: #ffffff;
+
+  /* 语义色（降低饱和度，保持一致调性） */
+  --danger: #b3402f;
+  --danger-soft: #f9eeec;
+  --warning: #92660f;
+  --warning-soft: #faf3e3;
+  --success: #2f5d3a;
+  --success-soft: #eef3ee;
+  --info: #3c5670;
+  --info-soft: #eef2f5;
+
+  /* 状态色 */
+  --status-pending: #8a8781;
+  --status-in_progress: #3c5670;
+  --status-blocked: #b3402f;
+  --status-waiting: #92660f;
+  --status-archived: #b5b2ab;
+
+  /* 排版 */
+  --font-sans: "Inter", "PingFang SC", "Microsoft YaHei UI", -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+
+  --text-xs: 11px;
+  --text-sm: 12.5px;
+  --text-base: 14px;
+  --text-md: 15px;
+  --text-lg: 17px;
+  --text-xl: 22px;
+  --text-2xl: 30px;
+
+  --leading-tight: 1.2;
+  --leading-normal: 1.6;
+
+  /* 间距 */
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 20px;
+  --s6: 24px;
+  --s8: 32px;
+  --s10: 40px;
+  --s12: 48px;
+  --s16: 64px;
+
+  /* 圆角（偏小，克制） */
+  --r-sm: 5px;
+  --r-md: 8px;
+  --r-lg: 12px;
+  --r-pill: 999px;
+
+  /* 阴影（仅浮层用，极轻） */
+  --shadow-pop: 0 4px 16px rgba(26, 26, 24, 0.08), 0 1px 3px rgba(26, 26, 24, 0.06);
+
+  /* 布局 */
+  --sidebar-w: 232px;
+  --topbar-h: 52px;
+  --content-max: 1080px;
+
+  --ease: cubic-bezier(0.25, 0.8, 0.25, 1);
+  --t-fast: 120ms var(--ease);
+  --t-norm: 200ms var(--ease);
+}

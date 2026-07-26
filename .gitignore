@@ -49,6 +49,13 @@ x-*.log
 .pytest_cache/
 .coverage
 htmlcov/
+.pytest-tmp/
+*.sha256
+
+# Web frontend (Vue + Vite) — 开发期依赖与临时构建目录。
+# 注意：core/web/static/ 是构建产物，按 ADR-0002 提交进 git，不忽略。
+web/node_modules/
+web/dist/
 
 # Mavis (plan state, sessions, runtime data — not project source)
 .mavis/
@@ -63,3 +70,6 @@ htmlcov/
 # Open Design skill outputs (HTML previews, SVG icons, JSON manifests).
 # Reproducible from skill inputs — never commit, regenerate on demand.
 .design/
+
+# Local Playwright inspection sessions and screenshots.
+.playwright-cli/
