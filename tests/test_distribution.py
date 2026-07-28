@@ -321,17 +321,17 @@ def test_release_workflow_upgrades_stale_winget_before_validation():
     assert "if (-not (Get-Command winget" not in workflow
 
 
-def test_readmes_advertise_winget_without_claiming_unpublished_availability():
+def test_readmes_withhold_winget_commands_until_default_source_is_ready():
     for filename in ("README.md", "README.zh.md"):
         text = (ROOT / filename).read_text(encoding="utf-8")
-        assert "winget install --id XuanyuanLuoxue.XCLI -e" in text
-        assert "winget upgrade --id XuanyuanLuoxue.XCLI -e" in text
+        assert "winget install --id XuanyuanLuoxue.XCLI -e" not in text
+        assert "winget upgrade --id XuanyuanLuoxue.XCLI -e" not in text
         assert "xavier-pen/x-cli" not in text
 
     english = (ROOT / "README.md").read_text(encoding="utf-8")
     chinese = (ROOT / "README.zh.md").read_text(encoding="utf-8")
-    assert "not yet available in the default WinGet source" in english
-    assert "尚未进入 WinGet 默认源" in chinese
+    assert "under Microsoft review" in english
+    assert "Microsoft 审核" in chinese
 
 
 def test_release_guide_documents_local_validation_and_external_boundary():

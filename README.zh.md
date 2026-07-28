@@ -1,251 +1,136 @@
 # x-cli
 
-> 个人 CLI 工具集：任务、凭证、日记、主题笔记和本地 Web UI。
-> 一个 `x` 命令，五个子系统，**零运行时依赖**。
+> 用一个本地 `x` 命令管理任务、凭证、日记、笔记和浏览器界面。
+> Python 3.10+，零运行时依赖，提供 Windows 独立 EXE。
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Tests: pytest](https://img.shields.io/badge/tests-pytest-brightgreen.svg)](tests/)
-[![Coverage: 80%+](https://img.shields.io/badge/coverage-80%25%2B-brightgreen.svg)](tests/)
+[![CI](https://github.com/xuanyuanluoxue/x-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/xuanyuanluoxue/x-cli/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/xuanyuanluoxue/x-cli)](https://github.com/xuanyuanluoxue/x-cli/releases/latest)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](LICENSE)
 
-> English version: [README.md](README.md)
+[English](README.md)
 
-## 这是什么？
+## 发布状态
 
-一个 `x` 命令，背后五个专注的子系统：
+**v0.8.0 已正式发布：** [查看说明与下载](https://github.com/xuanyuanluoxue/x-cli/releases/tag/v0.8.0)。
 
-- **`x todo`** — 个人 TODO 管理，后端是 YAML frontmatter 的 Markdown 文件。
-  全生命周期：add / list / update / archive / restore / search / done / stats / init / import。
-  CJK 友好（支持中文任务名）。归档留痕（archive 任务永不被删除）。
-- **`x secret`** — 本地多字段凭证存储，后端是单一 JSON 文件（POSIX mode 600）。
-  URL、账号和密钥信息可放在同一条记录中；CLI 默认复制选中的字段。
-- **`x diary`** — 本地每日 Markdown 日记，可追加内容或列出最近的日记日期。
-- **`x note`** — 带标签和本地搜索的主题型 Markdown 笔记。
-- **`x web`** — 本地 Web UI，用于访问 todo 和 secret 数据；Token 认证按需开启。
+WinGet 清单正在接受
+[Microsoft 审核](https://github.com/microsoft/winget-pkgs/pull/403912)。
+只有在清单合并并确认进入默认源后，这里才会公布可直接执行的一键安装命令。
 
-数据子系统彼此**独立存储**在每用户数据目录下：
+Windows 用户目前可以从 v0.8.0 Release 下载 `x-windows-x86_64.exe`。
+它是无需 Python 的独立便携程序。Release 同时提供 SHA-256、wheel、源码包和
+已验证的 WinGet 清单。
 
-| 平台 | TODO | 密钥 | 日记 | 主题笔记 |
-|---|---|---|---|---|
-| Windows | `%LOCALAPPDATA%\x-cli\todo\` | `%LOCALAPPDATA%\x-cli\secrets.json` | `%LOCALAPPDATA%\x-cli\diary\` | `%LOCALAPPDATA%\x-cli\notes\` |
-| Unix | `$XDG_DATA_HOME/x-cli/todo/` | `$XDG_DATA_HOME/x-cli/secrets.json` | `$XDG_DATA_HOME/x-cli/diary/` | `$XDG_DATA_HOME/x-cli/notes/` |
+## 能做什么
 
-无云同步、无遥测、无加密（暂未做）。为单用户、单机器设计。
+| 命令 | 用途 | 存储 |
+|---|---|---|
+| `x todo` | 任务生命周期、筛选、提醒、重复、模板、依赖、批量操作、回收站和导出 | Markdown + YAML frontmatter |
+| `x secret` | 本地多字段凭证、剪贴板读取、导入和导出 | JSON |
+| `x diary` | 追加每日记录、列出最近日期 | Markdown |
+| `x note` | 创建、列出、查看和搜索带标签的主题笔记 | Markdown + YAML frontmatter |
+| `x web` | 任务和凭证的本地浏览器界面 | 使用同一份本地数据 |
 
-## 安装
+x-cli 面向单用户、单机器，不做云同步、遥测、团队空间，也不增加第三方运行依赖。
 
-### WinGet（计划中的公开主渠道）
-
-> **当前状态：尚未进入 WinGet 默认源。** 公开的
-> [v0.7.0 GitHub Release](https://github.com/xuanyuanluoxue/x-cli/releases/tag/v0.7.0)
-> 已存在，`microsoft/winget-pkgs` 提交仍待完成。
-
-微软接受清单后，Windows 用户不需要安装 Python，直接运行：
+## 快速体验
 
 ```powershell
-winget install --id XuanyuanLuoxue.XCLI -e
-winget upgrade --id XuanyuanLuoxue.XCLI -e
+x --version
+
+x todo add "准备科目一" --priority high --deadline 2026-08-31 --tags 驾照,暑假
+x todo list
+x todo done <任务 ID>
+
+x diary "完成今天的复习"
+x note add "API 配置" --body "配置记录" --tags API
+
+x secret set example --value "replace-me" --category demo
+x secret list
+
+x web
 ```
 
-便携 EXE 的用户数据仍保存在 `%LOCALAPPDATA%\x-cli\`；升级程序不会覆盖
-todo、secret、diary 或 note 数据。
+使用 `x --help` 或 `x <子命令> --help` 查看当前版本的真实命令。
+[COMMANDS.md](COMMANDS.md) 是用户维护的命令清单，
+[docs/commands.md](docs/commands.md) 提供详细参考。
 
-### 开发安装
+## 开发安装
 
-```bash
+使用虚拟环境，避免系统 Python 中无关的 pytest 插件污染项目：
+
+```powershell
 git clone https://github.com/xuanyuanluoxue/x-cli.git
 cd x-cli
 python -m venv .venv
-.venv/bin/pip install -e ".[dev]"      # Unix
-.venv\Scripts\pip install -e ".[dev]"  # Windows
+.venv\Scripts\python.exe -m pip install -e ".[dev]"
 
 x --version
-x todo --help
-x todo add "驾照考取" --priority high --deadline 2026-08-31
-x diary "开始使用 x diary"
-x note add "MiniMax API 配置" --body "这里是正文" --tags AI,API
 ```
 
-顶层帮助和子命令帮助已经分开：`x --help`、`x todo --help`、
-`x secret --help`、`x diary --help`、`x note --help`、`x web --help`
-都会显示对应范围的帮助。
+Linux / macOS 请把 `.venv\Scripts\python.exe` 换成 `.venv/bin/python`。
 
-## 用法
+## 数据与安全边界
 
-### `x todo` — 任务管理
+| 平台 | 默认数据根目录 |
+|---|---|
+| Windows | `%LOCALAPPDATA%\x-cli\` |
+| Linux / macOS | `$XDG_DATA_HOME/x-cli/` 或 `~/.local/share/x-cli/` |
 
-```bash
-# 生命周期
-x todo add "科目一模拟考" --priority high --deadline 2026-08-31 --tags 驾照,暑假
-x todo list                                            # 只列 active
-x todo list --all                                      # active + archived
-x todo list --status in_progress --priority high       # 组合过滤
-x todo update kemu1 --status in_progress
-x todo archive kemu1 --reason done                     # 软删除到归档
-x todo done kemu1                                      # 快捷方式: archive --reason done
-x todo restore kemu1                                   # 归档 → active
-x todo search 暑假                                      # name + note + tags
-x todo stats                                           # 按 status / priority / due-soon 统计
-x todo init --dir /path/to/seed                        # 引导一个存储
-x todo import --from /path/to/legacy --dry-run         # 单向迁移
+任务、凭证、日记和笔记在根目录下分别存放。升级程序不会覆盖用户数据。
+
+必须明确的边界：
+
+- `x secret list` 和 `x secret search` 永不输出字段值。
+- 凭证仍以明文 JSON 存储；浏览器里的掩码不等于静态加密。
+- POSIX 上凭证库使用 `0600`；Windows 上继承当前用户目录 ACL。
+- 导入是单向操作，不修改源数据。
+- 任务的未知 frontmatter 字段和 Markdown 正文会原样保留。
+
+迁移或批量修改前，请先备份本地数据。
+
+## 本地 Web UI
+
+```powershell
+x web
+x web --no-browser
+x web --token "choose-a-token"
 ```
 
-每个任务独占一个文件夹：
+服务默认只绑定 `127.0.0.1:8421`。回环访问时认证为可选，可通过 `--token`
+或 `web_auth: true` 开启。如果主动绑定非回环地址，应保持认证开启。
 
-```
-<xcli_todo_dir>/
-├── 任务/<name>/TODO.md              # active 任务（一个 .md 一个任务）
-└── 归档/<YYYYMMDD>-<name>/TODO.md   # archived 任务（日期前缀 = 归档日）
-```
-
-Markdown body（YAML frontmatter 之后的部分）原样保留 — 当笔记本用。未知的 frontmatter 字段 round-trip 保存。完整格式见 [docs/TODO-SPEC.md](docs/TODO-SPEC.md)。
-
-### `x secret` — 凭证存储
-
-```bash
-x secret list                                         # 只列 name + category（**永不**显示 value）
-x secret get minimax                                  # 主密钥写到剪贴板 + stdout + stderr 警告
-x secret get webdav --field URL                       # 读取指定的普通文本/密钥字段
-x secret set minimax --value sk-xxx --category 接口密钥
-x secret update minimax --value sk-new --note "rotated 2026-06"  # 只更新主密钥
-x secret rm oldkey                                    # 删除
-x secret search api                                   # name + note，**永不**搜 value
-x secret import --from /path/to/legacy-markdown-dir   # 单向迁移，源保留
-x secret export                                       # JSON 备份
-```
-
-**硬性约束**（CLI 强制，破坏会立即坏测试）：
-
-- `x secret list` **永不**显示任何字段值。测试：`test_e2e_list_never_shows_value`。
-- `x secret get` **永远**在 stdout 之前写 stderr 警告。测试：`test_e2e_get_returns_value`。
-- `x secret search` **永不**匹配任何字段值。测试：`test_e2e_search_does_not_match_value`。
-- `x secret import` 只读 — 源文件永不被修改。
-
-Web 页面可新增、删除、排序并整体保存 1–50 个具名字段。字段分为直接显示的普通
-文本和默认掩码的密钥信息，并且必须指定一个密钥信息作为 CLI 默认读取的主密钥。
-旧 schema 1.0 可继续读取；首次写入前会先生成带时间戳的备份，再升级为 schema 1.1。
-所有值仍以明文保存在本地 JSON 中，页面掩码不等于静态加密。
-
-JSON DB 在 POSIX 上文件 mode `0600`。Windows 上 ACL 继承自用户 profile（除了这之外无额外加固）。如需静态加密，见 [Roadmap](#roadmap)。
-
-### `x diary` — 本地每日记录
-
-```bash
-x diary "完成 x diary P0 开发"  # 追加到今天的 Markdown 文件
-x diary list                    # 最近 7 个有日记的日期
-x diary list --limit 3          # 自定义数量
-```
-
-日记文件位于 `<xcli_data_dir>/diary/YYYY-MM-DD.md`。可通过
-`XCLI_DIARY_DIR` 切换目录。P0 只列日期，不提供编辑、删除、搜索或同步。
-
-### `x note` — 主题笔记
-
-```bash
-x note add "MiniMax API 配置" --body "这里是正文" --tags AI,API
-x note list --tag AI --limit 10
-x note show n-20260717-143012
-x note search minimax --limit 5
-```
-
-每篇笔记保存到 `<xcli_data_dir>/notes/<id>.md`，使用 YAML frontmatter
-保存元数据，正文保持 Markdown。可通过 `XCLI_NOTES_DIR` 切换目录。
-P0 只做创建、列表、显示和搜索；编辑与删除留到后续版本。
-
-### `x web` — 本地浏览器界面
-
-```bash
-x web                       # 默认 127.0.0.1:8421，不再要求输入 Token
-x web --no-browser          # 启动但不自动打开浏览器
-x web --token my-token      # 本次运行显式开启认证
-```
-
-默认配置为 `web_auth: false`，浏览器会直接进入控制台。如需重新开启随机
-Token 认证，编辑 `<xcli_data_dir>/config.yaml`（Windows：
-`%LOCALAPPDATA%\x-cli\config.yaml`）：
-
-```yaml
-web_auth: true
-```
-
-如果把 host 绑定到非本机回环地址，建议开启认证；否则能访问该地址的设备都能
-读取和修改任务、密钥数据。
-
-### 全局 flag
-
-```bash
-x --version                  # 显示版本并退出
-x --config /path/to/config.yaml     # 加载 YAML 配置（优先级高于 env var）
-x --log-level DEBUG          # 单次调用覆盖日志级别
-x --config-init              # 写默认配置到 <xcli_data_dir>/config.yaml
-```
-
-配置优先级链：`CLI --config > XCLI_CONFIG env > <xcli_data_dir>/config.yaml > 硬编码默认值`。
-
-## 为什么造这个轮子？
-
-需要一个能一次性干下面三件事的命令：
-
-1. 管理个人 TODO 列表，支持 CJK 任务名、截止日期、标签，归档留痕（archive 的任务不删）。
-2. 本地存 API key，能 `x secret get foo` 直接进剪贴板。
-3. 不打扰我（无云、无遥测、无三方依赖）。
-
-从一套老旧的 TODO + 密钥 Markdown 系统（需要手动 regen 索引）演化而来。迁移路径用 `x todo import --from <dir>` 和 `x secret import --from <dir>`，都是单向、只读。
+前端源码位于 `web/`，构建产物位于 `core/web/static/` 并提交进仓库，因此正式
+安装包无需 Node.js 也能运行 Web UI。
 
 ## 文档
 
 | 文档 | 用途 |
 |---|---|
-| [COMMANDS.md](COMMANDS.md) | 命令清单（用户编辑的 spec 源） |
-| [docs/TODO-SPEC.md](docs/TODO-SPEC.md) | `x todo` 磁盘格式规范 |
-| [docs/architecture.md](docs/architecture.md) | 设计决策、存储层、硬性约束 |
-| [docs/releasing.md](docs/releasing.md) | Windows 构建、GitHub Release 和 WinGet 提交手册 |
+| [CHANGELOG.md](CHANGELOG.md) | 包含 v0.8.0 的版本历史 |
+| [COMMANDS.md](COMMANDS.md) | 用户维护的功能清单 |
 | [docs/commands.md](docs/commands.md) | 完整命令参考 |
-| [docs/behaviors/](docs/behaviors/) | 永久 BDD 行为规格（Given-When-Then） |
-| [AGENTS.md](AGENTS.md) | 接续 x-cli 的 AI agent 必读 |
+| [docs/TODO-SPEC.md](docs/TODO-SPEC.md) | 任务磁盘格式 |
+| [docs/architecture.md](docs/architecture.md) | 架构和硬性约束 |
+| [docs/releasing.md](docs/releasing.md) | Windows、GitHub Release 和 WinGet 手册 |
+| [docs/behaviors/](docs/behaviors/) | Given-When-Then 行为规格 |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | 开发与 PR 流程 |
 
 ## 开发
 
-```bash
-# 跑测试
-.venv/bin/pytest                                   # Unix
-.venv\Scripts\python.exe -m pytest                 # Windows
+```powershell
+$env:TMP = "D:\Temp\pytest_tmp"
+$env:TEMP = "D:\Temp\pytest_tmp"
+
+.venv\Scripts\python.exe -m pytest
 .venv\Scripts\python.exe -m pytest --cov=core --cov=plugins --cov=x --cov-fail-under=80
 .venv\Scripts\python.exe -m ruff check core plugins x.py scripts tests
-
-# 按风险分级的开发流
-# 小改动：不写计划；行为变化时补回归测试；只跑 focused tests
-# 中等改动：简短计划；用户行为写 BDD；TDD；交付前全量测试一次
-# 高风险改动：完整计划 + 必要 ADR；全量测试 + 对应发行/安全验证
 ```
 
-准确的分级标准和必跑检查见 [AGENTS.md](AGENTS.md)。`COMMANDS.md` 仍是用户拥有的功能规格。
-
-## Roadmap
-
-**当前 v0.8.0 开发树已完成：**
-- TODO 全生命周期、时间精度、子任务、提醒字段、重复规则、批量操作、模板、依赖、回收站删除和 JSON/CSV/Markdown 导出
-- Secret 本地存储、列表/搜索隐私保护和剪贴板集成
-- 本地日记、主题笔记和可选认证的 Web UI
-- CLI、Python 元数据、EXE 和 WinGet 清单共用一个版本来源
-- Windows x64 单文件 EXE，内含 Web 静态资源，无需预装 Python
-- 自动生成 SHA-256 和 WinGet 1.12.0 portable 清单
-- GitHub Actions 自动构建，并阻止错误版本 tag 发布
-
-**候选**（未承诺）：
-- 静态加密的密钥存储（目前是明文 JSON）
-- 基于 Git 的 TODO 目录版本控制（`git init` + 自动 commit hooks）
-- 可选常驻后台进程（提醒和 AI 本地工作流）
-
-**不做**（设计决定）：
-- 云同步、多设备
-- 团队 / 多用户
-- 交互式 TUI（plain stdout + 表格已经够用）
+运行代码继续保持标准库实现。新命令放在 `plugins/`，共享逻辑放在 `core/`，
+`x.py` 只负责入口。风险分级开发流程和必跑检查见 [AGENTS.md](AGENTS.md)。
 
 ## 许可证
 
-MIT。详见 [LICENSE](LICENSE)。Copyright (c) 2026 Xavier。
-
-## 贡献
-
-工具小巧个人用。Bug 报告和 PR 欢迎 — 非平凡改动请先开 issue 讨论设计再写代码。读这个仓库的 AI agent **必须**先读 [AGENTS.md](AGENTS.md)。
+MIT，详见 [LICENSE](LICENSE)。

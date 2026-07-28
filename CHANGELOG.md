@@ -9,6 +9,14 @@
 
 ## [Unreleased]
 
+### Changed
+- 重写中英文 README，明确区分已发布的 v0.8.0、审核中的 WinGet 渠道和
+  审核通过后才公布的一键安装命令。
+
+---
+
+## [0.8.0] - 2026-07-29 — 可复现发行与主线开发
+
 ### Added
 - CI 增加 Windows Python 3.10 / 3.12 / 3.14 兼容矩阵、Linux 覆盖率门槛和
   Ruff 关键错误检查。
@@ -19,6 +27,8 @@
 - 命令、架构、BDD、README 和发行手册已按实时 CLI 与远端发布状态同步。
 - Web 构建工具升级到 Vite 8 / `@vitejs/plugin-vue` 6，移除旧 esbuild
   开发服务器漏洞，并在 CI 中强制执行 npm 高危审计。
+- WinGet 生成器改用 version、installer、defaultLocale 三文件清单，替代社区
+  仓库不支持的 singleton 清单。
 
 ### Fixed
 - 模板子任务目录碰撞时不再引用未定义变量。
@@ -292,7 +302,8 @@
 
 ---
 
-[Unreleased]: https://github.com/xuanyuanluoxue/x-cli/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/xuanyuanluoxue/x-cli/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/xuanyuanluoxue/x-cli/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/xuanyuanluoxue/x-cli/releases/tag/v0.7.0
 [0.6.0]: https://github.com/xuanyuanluoxue/x-cli/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/xuanyuanluoxue/x-cli/compare/v0.2.0...v0.5.0
