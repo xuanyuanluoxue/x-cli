@@ -101,6 +101,10 @@ Then ManifestVersion 为 `1.12.0`
 
 And PackageIdentifier 为 `XuanyuanLuoxue.XCLI`
 
+And 必须生成 version、installer 和 defaultLocale 三个清单文件
+
+And 不得生成社区仓库不支持的 singleton 清单
+
 And InstallerType 为 `portable`
 
 And Architecture 为 `x64`
