@@ -107,6 +107,8 @@ class SecretAlreadyExistsError(SecretError, ValueError):
 
 _LOCK_WAIT_SECONDS = 30.0
 _LOCK_POLL_SECONDS = 0.05
+_REPLACE_RETRY_DELAYS = (0.01, 0.02, 0.04, 0.08, 0.15, 0.2, 0.25, 0.25)
+_RETRYABLE_REPLACE_WINERRORS = {5, 32, 33}
 _PROCESS_LOCKS_GUARD = threading.Lock()
 _PROCESS_LOCKS: dict[str, Any] = {}
 
@@ -121,6 +123,32 @@ def _process_lock_for(path: Path) -> Any:
             lock = threading.RLock()
             _PROCESS_LOCKS[key] = lock
         return lock
+
+
+def _is_retryable_replace_error(
+    error: OSError,
+    *,
+    platform_name: str = os.name,
+) -> bool:
+    """Return whether Windows reported transient file replacement contention."""
+
+    return (
+        platform_name == "nt"
+        and getattr(error, "winerror", None) in _RETRYABLE_REPLACE_WINERRORS
+    )
+
+
+def _replace_file(source: Path, destination: Path) -> None:
+    """Atomically replace a file, retrying bounded Windows contention."""
+
+    for delay in (*_REPLACE_RETRY_DELAYS, None):
+        try:
+            os.replace(source, destination)
+            return
+        except OSError as exc:
+            if delay is None or not _is_retryable_replace_error(exc):
+                raise
+            time.sleep(delay)
 
 
 @contextmanager
@@ -561,7 +589,7 @@ class SecretStore:
             os.chmod(tmp_path, 0o600)
         except OSError:
             pass
-        os.replace(tmp_path, backup)
+        _replace_file(tmp_path, backup)
         return backup
 
     def _write_raw(self, payload: dict[str, Any]) -> None:
@@ -574,7 +602,7 @@ class SecretStore:
         except OSError:
             # Windows: chmod is a no-op for normal users; safe to ignore.
             pass
-        os.replace(tmp_path, self.db_path)
+        _replace_file(tmp_path, self.db_path)
 
     def _now(self) -> str:
         """Return the current local time as an ISO 8601 string."""
@@ -880,7 +908,7 @@ class SecretStore:
             os.chmod(tmp_path, 0o600)
         except OSError:
             pass
-        os.replace(tmp_path, dest)
+        _replace_file(tmp_path, dest)
         return dest
 
 

@@ -491,6 +491,21 @@
 - lock sidecar 不包含名称、fields 或任何 value
 - 持锁进程退出后操作系统释放锁，sidecar 文件存在不代表仍被占用
 
+## 场景 26：Windows 原子替换遇到瞬时占用
+
+**Given**:
+- 进程已经持有 `<db>.lock`
+- Windows 防病毒、索引或文件系统短暂占用临时文件或目标 DB
+
+**When**:
+- `os.replace` 返回可重试的 Windows sharing/lock/access 错误
+
+**Then**:
+- 存储层在有限时间内退避重试原子替换
+- 瞬时占用消失后，本次写入成功且 DB 保持完整合法 JSON
+- 超过重试上限后仍抛出原始错误，不静默报告成功
+- 失败期间原有 DB 内容保持不变
+
 ## 不变量
 
 | 项 | 值 |
