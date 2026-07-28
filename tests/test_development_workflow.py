@@ -28,6 +28,9 @@ def test_ci_runs_full_tests_and_reproduces_web_artifacts() -> None:
 
     assert "pull_request:" in workflow
     assert "branches:\n      - main" in workflow
+    assert workflow.count("actions/checkout@v7") == 3
+    assert workflow.count("actions/setup-python@v7") == 2
+    assert workflow.count("actions/setup-node@v7") == 1
     for version in ("3.10", "3.12", "3.14"):
         assert version in workflow
     assert "windows-latest" in workflow
@@ -46,6 +49,8 @@ def test_ci_runs_full_tests_and_reproduces_web_artifacts() -> None:
 def test_release_tags_must_point_to_main() -> None:
     workflow = _read(".github/workflows/release.yml")
 
+    assert "actions/checkout@v7" in workflow
+    assert "actions/setup-python@v7" in workflow
     assert "fetch-depth: 0" in workflow
     assert "git merge-base --is-ancestor $env:GITHUB_SHA origin/main" in workflow
     assert "does not point to a commit on main" in workflow
