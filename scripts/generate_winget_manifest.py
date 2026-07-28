@@ -1,4 +1,4 @@
-"""Generate the WinGet singleton manifest for an x-cli release.
+"""Generate WinGet multi-file manifests for an x-cli release.
 
 The script intentionally uses only the standard library so the manifest can
 be reproduced in CI without adding a YAML runtime dependency to x-cli.
@@ -53,9 +53,44 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest().upper()
 
 
-def _render_manifest(*, version: str, installer_url: str, sha256: str) -> str:
+def _render_version_manifest(*, version: str) -> str:
     return f"""# Created by scripts/generate_winget_manifest.py
-# yaml-language-server: $schema=https://aka.ms/winget-manifest.singleton.{MANIFEST_VERSION}.schema.json
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.version.{MANIFEST_VERSION}.schema.json
+
+PackageIdentifier: {PACKAGE_IDENTIFIER}
+PackageVersion: {version}
+DefaultLocale: en-US
+ManifestType: version
+ManifestVersion: {MANIFEST_VERSION}
+"""
+
+
+def _render_installer_manifest(
+    *,
+    version: str,
+    installer_url: str,
+    sha256: str,
+) -> str:
+    return f"""# Created by scripts/generate_winget_manifest.py
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.installer.{MANIFEST_VERSION}.schema.json
+
+PackageIdentifier: {PACKAGE_IDENTIFIER}
+PackageVersion: {version}
+InstallerType: portable
+Commands:
+- x
+Installers:
+- Architecture: x64
+  InstallerUrl: {installer_url}
+  InstallerSha256: {sha256}
+ManifestType: installer
+ManifestVersion: {MANIFEST_VERSION}
+"""
+
+
+def _render_default_locale_manifest(*, version: str) -> str:
+    return f"""# Created by scripts/generate_winget_manifest.py
+# yaml-language-server: $schema=https://aka.ms/winget-manifest.defaultLocale.{MANIFEST_VERSION}.schema.json
 
 PackageIdentifier: {PACKAGE_IDENTIFIER}
 PackageVersion: {version}
@@ -79,14 +114,7 @@ Tags:
 - notes
 - productivity
 - todo
-InstallerType: portable
-Commands:
-- x
-Installers:
-- Architecture: x64
-  InstallerUrl: {installer_url}
-  InstallerSha256: {sha256}
-ManifestType: singleton
+ManifestType: defaultLocale
 ManifestVersion: {MANIFEST_VERSION}
 """
 
@@ -98,7 +126,7 @@ def generate_manifest(
     installer_url: str,
     output_root: Path,
 ) -> Path:
-    """Validate release inputs and write a WinGet repository-shaped manifest."""
+    """Validate release inputs and write a WinGet multi-file manifest set."""
     installer = Path(installer).resolve()
     output_root = Path(output_root).resolve()
     _validate_inputs(
@@ -116,15 +144,26 @@ def generate_manifest(
         / version
     )
     manifest_dir.mkdir(parents=True, exist_ok=True)
-    manifest_path = manifest_dir / f"{PACKAGE_IDENTIFIER}.yaml"
-    content = _render_manifest(
-        version=version,
-        installer_url=installer_url,
-        sha256=_sha256(installer),
-    )
-    with manifest_path.open("w", encoding="utf-8", newline="\n") as stream:
-        stream.write(content)
-    return manifest_path
+    manifests = {
+        f"{PACKAGE_IDENTIFIER}.yaml": _render_version_manifest(
+            version=version,
+        ),
+        f"{PACKAGE_IDENTIFIER}.installer.yaml": _render_installer_manifest(
+            version=version,
+            installer_url=installer_url,
+            sha256=_sha256(installer),
+        ),
+        (
+            f"{PACKAGE_IDENTIFIER}.locale.en-US.yaml"
+        ): _render_default_locale_manifest(
+            version=version,
+        ),
+    }
+    for filename, content in manifests.items():
+        path = manifest_dir / filename
+        with path.open("w", encoding="utf-8", newline="\n") as stream:
+            stream.write(content)
+    return manifest_dir
 
 
 def build_parser() -> argparse.ArgumentParser:

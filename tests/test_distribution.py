@@ -152,7 +152,7 @@ def test_generate_winget_manifest_uses_real_hash_and_release_metadata(tmp_path):
         "v0.8.0/x-windows-x86_64.exe"
     )
 
-    manifest = generate_manifest(
+    manifest_dir = generate_manifest(
         version="0.8.0",
         installer=installer,
         installer_url=url,
@@ -160,7 +160,7 @@ def test_generate_winget_manifest_uses_real_hash_and_release_metadata(tmp_path):
     )
 
     expected_hash = hashlib.sha256(installer.read_bytes()).hexdigest().upper()
-    assert manifest == (
+    assert manifest_dir == (
         tmp_path
         / "output"
         / "manifests"
@@ -168,9 +168,32 @@ def test_generate_winget_manifest_uses_real_hash_and_release_metadata(tmp_path):
         / "XuanyuanLuoxue"
         / "XCLI"
         / "0.8.0"
-        / "XuanyuanLuoxue.XCLI.yaml"
     )
-    text = manifest.read_text(encoding="utf-8")
+    assert sorted(path.name for path in manifest_dir.glob("*.yaml")) == [
+        "XuanyuanLuoxue.XCLI.installer.yaml",
+        "XuanyuanLuoxue.XCLI.locale.en-US.yaml",
+        "XuanyuanLuoxue.XCLI.yaml",
+    ]
+
+    version_text = (
+        manifest_dir / "XuanyuanLuoxue.XCLI.yaml"
+    ).read_text(encoding="utf-8")
+    installer_text = (
+        manifest_dir / "XuanyuanLuoxue.XCLI.installer.yaml"
+    ).read_text(encoding="utf-8")
+    locale_text = (
+        manifest_dir / "XuanyuanLuoxue.XCLI.locale.en-US.yaml"
+    ).read_text(encoding="utf-8")
+
+    for expected in (
+        "PackageIdentifier: XuanyuanLuoxue.XCLI",
+        "PackageVersion: 0.8.0",
+        "DefaultLocale: en-US",
+        "ManifestType: version",
+        "ManifestVersion: 1.12.0",
+    ):
+        assert expected in version_text
+
     for expected in (
         "PackageIdentifier: XuanyuanLuoxue.XCLI",
         "PackageVersion: 0.8.0",
@@ -180,10 +203,24 @@ def test_generate_winget_manifest_uses_real_hash_and_release_metadata(tmp_path):
         "- x",
         f"InstallerUrl: {url}",
         f"InstallerSha256: {expected_hash}",
-        "ManifestType: singleton",
+        "ManifestType: installer",
         "ManifestVersion: 1.12.0",
     ):
-        assert expected in text
+        assert expected in installer_text
+
+    for expected in (
+        "PackageIdentifier: XuanyuanLuoxue.XCLI",
+        "PackageVersion: 0.8.0",
+        "PackageLocale: en-US",
+        "Publisher: Xavier",
+        "PackageName: x-cli",
+        "ManifestType: defaultLocale",
+        "ManifestVersion: 1.12.0",
+    ):
+        assert expected in locale_text
+
+    combined = version_text + installer_text + locale_text
+    assert "ManifestType: singleton" not in combined
 
 
 @pytest.mark.parametrize("version", ["v0.7.0", "0.7", "latest", "0.7.0.1"])
