@@ -32,6 +32,7 @@ Scenario       Tests
 14 (export)    ``test_export_*``
 15 (empty)     N/A — CLI layer (T12)
 16 (help)      N/A — CLI layer (T12)
+26 (Win replace) ``test_windows_atomic_replace_*``
 ============  ======================================================
 """
 
@@ -46,6 +47,7 @@ from pathlib import Path
 
 import pytest
 
+import core.secrets as secrets_module
 from core.secrets import (
     SecretAlreadyExistsError,
     SecretEntry,
@@ -1064,6 +1066,115 @@ SecretStore(db_path=db_path).set(sys.argv[3], value="worker-value")
     assert {entry.name for entry in SecretStore(db_path=db_path).list()} == {
         f"worker-{index}" for index in range(6)
     }
+
+
+def _permission_error_with_winerror(code: int) -> PermissionError:
+    error = PermissionError(f"simulated Windows error {code}")
+    error.winerror = code
+    return error
+
+
+@pytest.mark.parametrize("code", [5, 32, 33])
+def test_windows_atomic_replace_classifies_retryable_errors(code: int) -> None:
+    error = _permission_error_with_winerror(code)
+
+    assert secrets_module._is_retryable_replace_error(
+        error,
+        platform_name="nt",
+    )
+    assert not secrets_module._is_retryable_replace_error(
+        error,
+        platform_name="posix",
+    )
+
+
+def test_windows_atomic_replace_does_not_retry_unrelated_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "secrets.json"
+    store = SecretStore(db_path=db_path)
+    attempts = 0
+    error = FileNotFoundError("simulated unrelated error")
+    error.winerror = 2
+
+    def unrelated_error(_source: Path, _destination: Path) -> None:
+        nonlocal attempts
+        attempts += 1
+        raise error
+
+    monkeypatch.setattr(secrets_module.os, "replace", unrelated_error)
+    monkeypatch.setattr(
+        secrets_module.time,
+        "sleep",
+        lambda _delay: pytest.fail("unrelated errors must not be retried"),
+    )
+
+    with pytest.raises(FileNotFoundError, match="simulated unrelated error"):
+        store.set("not-written", value="value")
+
+    assert attempts == 1
+
+
+def test_windows_atomic_replace_retries_then_succeeds(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "secrets.json"
+    store = SecretStore(db_path=db_path)
+    real_replace = secrets_module.os.replace
+    attempts = 0
+    sleeps: list[float] = []
+
+    def flaky_replace(source: Path, destination: Path) -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts < 3:
+            raise _permission_error_with_winerror(5)
+        real_replace(source, destination)
+
+    monkeypatch.setattr(secrets_module.os, "replace", flaky_replace)
+    monkeypatch.setattr(secrets_module.time, "sleep", sleeps.append)
+    monkeypatch.setattr(
+        secrets_module,
+        "_is_retryable_replace_error",
+        lambda _error: True,
+    )
+
+    store.set("survives-contention", value="value")
+
+    assert attempts == 3
+    assert sleeps == list(secrets_module._REPLACE_RETRY_DELAYS[:2])
+    assert store.get("survives-contention") is not None
+
+
+def test_windows_atomic_replace_stops_after_retry_limit(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db_path = tmp_path / "secrets.json"
+    store = SecretStore(db_path=db_path)
+    original = db_path.read_bytes()
+    attempts = 0
+
+    def blocked_replace(_source: Path, _destination: Path) -> None:
+        nonlocal attempts
+        attempts += 1
+        raise _permission_error_with_winerror(32)
+
+    monkeypatch.setattr(secrets_module.os, "replace", blocked_replace)
+    monkeypatch.setattr(secrets_module.time, "sleep", lambda _delay: None)
+    monkeypatch.setattr(
+        secrets_module,
+        "_is_retryable_replace_error",
+        lambda _error: True,
+    )
+
+    with pytest.raises(PermissionError, match="simulated Windows error 32"):
+        store.set("still-blocked", value="value")
+
+    assert attempts == len(secrets_module._REPLACE_RETRY_DELAYS) + 1
+    assert db_path.read_bytes() == original
 
 
 if __name__ == "__main__":
