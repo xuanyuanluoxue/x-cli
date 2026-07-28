@@ -7,10 +7,14 @@ from __future__ import annotations
 
 import ast
 import hashlib
-import tomllib
 from pathlib import Path
 
 import pytest
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover - exercised by Python 3.10 CI
+    import tomli as tomllib
 
 
 ROOT = Path(__file__).resolve().parents[1]

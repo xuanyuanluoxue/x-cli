@@ -1,1 +1,0 @@
-import{P as e,T as t,h as n,v as r}from"./index-CvZvsxzZ.js";var i={class:`empty`,role:`status`},a={class:`empty-title`},o={__name:`AppLoader`,props:{label:{type:String,default:`加载中`}},setup(o){return(s,c)=>(t(),r(`div`,i,[c[0]||=n(`span`,{class:`loader`,"aria-hidden":`true`},null,-1),n(`div`,a,e(o.label),1)]))}};export{o as t};

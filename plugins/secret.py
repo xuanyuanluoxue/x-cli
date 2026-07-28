@@ -369,7 +369,11 @@ def _secret_get(args: argparse.Namespace) -> int:
             note = f"📋 已复制到剪贴板（{msg}）{extract_note}".rstrip()
             print(note, file=sys.stderr)
         else:
-            print(f"⚠️ 复制到剪贴板失败：{msg}（请用 --no-stdout 关掉 stdout 或手动复制）", file=sys.stderr)
+            print(
+                f"⚠️ 复制到剪贴板失败：{msg}{extract_note}"
+                "（请用 --no-stdout 关掉 stdout 或手动复制）",
+                file=sys.stderr,
+            )
 
     # BDD 硬性约束：get 永远 stderr 警告（不管是否 tty / 是否有 --full）
     print(

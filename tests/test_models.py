@@ -263,12 +263,13 @@ def test_folder_path_relative_to_base():
     assert path == Path("/tmp/x/任务/科目一")
 
 
-def test_folder_path_absolute_ignores_base():
-    from pathlib import Path
+def test_folder_path_absolute_ignores_base(tmp_path):
+    absolute_folder = (tmp_path / "abs" / "path").resolve()
+    task = Task(id="t1", name="t", folder=str(absolute_folder))
 
-    task = Task(id="t1", name="t", folder=r"C:\abs\path")
-    path = task.folder_path(base=Path("/tmp/x"))
-    assert path == Path(r"C:\abs\path")
+    path = task.folder_path(base=tmp_path / "other-base")
+
+    assert path == absolute_folder
 
 
 def test_folder_path_without_base_returns_just_folder():

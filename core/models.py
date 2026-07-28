@@ -10,10 +10,10 @@ losing it on the next ``update`` or ``archive``.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from core.compat import StrEnum
 from core.parser import dump_frontmatter
 
 

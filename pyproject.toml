@@ -20,6 +20,7 @@ dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
     "ruff>=0.16,<0.17",
+    "tomli>=2.0; python_version < '3.11'",
 ]
 release = [
     "build>=1.2",
@@ -51,6 +52,9 @@ version = { attr = "core.version.__version__" }
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-v --tb=short"
+
+[tool.coverage.report]
+precision = 2
 
 [tool.ruff]
 target-version = "py310"

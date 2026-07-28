@@ -33,6 +33,7 @@ def test_ci_runs_full_tests_and_reproduces_web_artifacts() -> None:
     assert "windows-latest" in workflow
     assert "ubuntu-latest" in workflow
     assert "--cov-fail-under=80" in workflow
+    assert "precision = 2" in _read("pyproject.toml")
     assert "python -m ruff check core plugins x.py scripts tests" in workflow
     assert 'select = ["F"]' in _read("pyproject.toml")
     assert "run: npm ci" in workflow
