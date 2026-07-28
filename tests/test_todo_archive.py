@@ -456,6 +456,30 @@ def test_archive_without_index_is_still_success(store: TaskStore) -> None:
     assert not (store.todo_dir / "TODO.md").exists()
 
 
+def test_archive_reports_inventory_update_failure(
+    store: TaskStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """归档已完成但索引更新失败时必须给出可操作告警。"""
+    _write_task(store, "kemu1", status="in_progress")
+
+    def fail_inventory(*_args, **_kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(
+        TaskStore,
+        "update_inventory_on_archive",
+        fail_inventory,
+    )
+
+    exit_code, stdout, stderr = _invoke("kemu1", "--reason", "done")
+
+    assert exit_code == 0
+    assert "✅ 任务已归档" in stdout
+    assert "⚠️ 任务已归档，但 TODO.md 索引更新失败" in stderr
+    assert "disk full" in stderr
+
+
 # ============================================================
 #  End-to-end: argparse 接线
 # ============================================================

@@ -76,11 +76,17 @@ Use an isolated virtual environment:
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
 .\.venv\Scripts\python.exe -m pytest
+.\.venv\Scripts\python.exe -m pytest --cov=core --cov=plugins --cov=x --cov-fail-under=80
+.\.venv\Scripts\python.exe -m ruff check core plugins x.py scripts tests
 ```
 
 Run focused tests while iterating and the full suite once at the required
 handoff boundary. On Windows, set `TMP` and `TEMP` to a writable directory if
 pytest reports temporary-directory permission errors.
+
+CI runs the full suite on Windows with Python 3.10, 3.12, and 3.14, repeats
+the suite with coverage on Linux, enforces an 80% floor, and rejects all
+Pyflakes (`F`) errors.
 
 ## Commit and open a PR
 

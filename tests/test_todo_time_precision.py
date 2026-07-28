@@ -25,7 +25,6 @@ All tests use ``XCLI_TODO_DIR`` pointed at ``tmp_path`` so the real
 from __future__ import annotations
 
 import io
-import re
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import date
 from pathlib import Path

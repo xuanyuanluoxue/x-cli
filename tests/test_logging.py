@@ -133,7 +133,6 @@ def test_setup_logging_always_adds_stderr_handler(
     """A :class:`logging.StreamHandler` targeting stderr is always installed."""
     logger = setup_logging("DEBUG", None)
 
-    handlers = [h for h in logger.handlers if not isinstance(h.formatter, type(None))]
     stderr_handlers = [
         h
         for h in logger.handlers
@@ -148,7 +147,7 @@ def test_setup_logging_stderr_handler_respects_level(
     reset_x_logger, capsys: pytest.CaptureFixture[str]
 ) -> None:
     """A WARNING-level setup does not emit DEBUG messages to stderr."""
-    logger = setup_logging("WARNING", None)
+    setup_logging("WARNING", None)
     child = get_logger("child")
     child.debug("should-be-filtered")
     child.warning("should-appear")

@@ -117,28 +117,6 @@ def test_todo_help_flag_shows_todo_help(capsys):
     assert "--log-level" not in captured.out
 
 
-@pytest.mark.parametrize("action", [])
-def test_todo_action_not_yet_implemented(action):
-    """对应场景：x todo <action> 全部占位（Phase 1 未实现）
-
-    所有 todo 子命令均已实现并覆盖在独立测试文件：
-    - ``add``    → ``tests/test_todo_add.py``
-    - ``list``   → ``tests/test_todo_list.py``
-    - ``stats``  → ``tests/test_todo_stats.py``
-    - ``update`` → ``tests/test_todo_update.py``
-    - ``archive`` → ``tests/test_todo_archive.py``
-
-    本测试保留 parametrize 框架，但当前没有未实现的子命令；如果以后
-    新增了占位子命令，往参数列表里加即可。
-    """
-    err = io.StringIO()
-    with redirect_stderr(err):
-        exit_code = main(["todo", action])
-    assert exit_code == 1
-    assert "🚧" in err.getvalue()
-    assert action in err.getvalue()
-
-
 # ============================================================
 #  build_parser 单元测试
 # ============================================================

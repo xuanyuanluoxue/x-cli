@@ -2,6 +2,7 @@
 
 - 状态：已接受
 - 日期：2026-07-19
+- 更新：2026-07-29（Vite 8 / Rolldown）
 
 ## 背景
 
@@ -27,7 +28,9 @@
 
 ## 影响
 
-- 新增开发期前置条件：修改 Web 前端需 Node ≥ 18 与 `cd web && npm install`。
+- 新增开发期前置条件：修改 Web 前端需 Node ≥ 20.19 或 ≥ 22.12，并运行
+  `cd web && npm ci`。Vite 8 使用 Rolldown，删除了不再支持的对象形式
+  `manualChunks`；路由级动态导入继续负责拆包。
 - `tests/test_web_frontend.py` 从断言 JS 源码字符串改为断言构建产物契约（无外链、无明文泄露路径、产物结构完整）。
 - 打包（PyInstaller spec、setuptools package-data）路径不变，继续收集 `core/web/static/**`。
 - `.gitignore` 增加 `web/node_modules/` 与 `web/dist/`（如使用临时 dist）。

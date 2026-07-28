@@ -74,7 +74,7 @@ powershell -ExecutionPolicy Bypass -File scripts\build-windows.ps1 -SkipTests
 ## 4. 生成 WinGet 清单
 
 ```powershell
-$Version = "0.7.0"
+$Version = "0.8.0"
 $Url = "https://github.com/xuanyuanluoxue/x-cli/releases/download/v$Version/x-windows-x86_64.exe"
 
 .venv\Scripts\python.exe scripts\generate_winget_manifest.py `
@@ -96,7 +96,7 @@ SHA-256 始终从实际 EXE 重新计算，不接受手工传值。
 
 ```powershell
 winget validate --manifest `
-  dist\winget\manifests\x\XuanyuanLuoxue\XCLI\0.7.0 `
+  dist\winget\manifests\x\XuanyuanLuoxue\XCLI\0.8.0 `
   --disable-interactivity
 ```
 

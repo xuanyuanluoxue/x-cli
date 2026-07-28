@@ -3,7 +3,7 @@
 > **目标读者**: 接续开发的 AI agent
 > **范围**: `x todo` 子命令的存储路径解析规则
 > **对应测试**: `tests/test_storage.py`（已有）+ 新增 `tests/test_todo_storage_path.py`
-> **状态**: 🚧 P1 实现中（2026-06-21，决策：跟 `x secret` 对齐，**独立于 legacy TODO system**）
+> **状态**: ✅ 已实现（2026-07-29 复核；独立于 legacy TODO system）
 
 ---
 

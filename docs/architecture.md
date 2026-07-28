@@ -2,7 +2,7 @@
 
 > **目标读者**：接续开发 x-cli 的 AI agent 或人类开发者
 > **必读**：**在写代码前必须先读本文档**
-> **状态**：本文档反映 **v0.7.0 实际架构**（2026-07-17）
+> **状态**：本文档反映 **v0.8.0 实际架构**（2026-07-29）
 
 ---
 
@@ -256,7 +256,6 @@ tags: ["驾照", "暑假"]
 ```
 <xcli_todo_dir>/
 ├── TODO.md                  # 总索引（自动维护，由 x todo archive/stats 触发）
-├── 00-TODO-SPEC.md          # 规范文档（手动维护）
 ├── 任务/                    # 活动任务
 │   ├── 科目一模拟考/
 │   │   └── TODO.md
@@ -372,12 +371,13 @@ x todo add: error: argument --priority: invalid choice: 'urgent' (choose from 'h
 pytest                    # 全量
 pytest tests/test_parser.py   # 单文件
 pytest -k test_add         # 按名字过滤
-pytest --cov=core --cov=x  # 带覆盖率
+pytest --cov=core --cov=plugins --cov=x --cov-fail-under=80
+ruff check core plugins x.py scripts tests
 ```
 
 ---
 
-## 8. 打包与发布（v0.7.0 已实现）
+## 8. 打包与发布（v0.8.0 已实现）
 
 ### 8.1 单一版本来源
 

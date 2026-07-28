@@ -3,7 +3,7 @@
 > **目标读者**: 接续开发的 AI agent
 > **范围**: `x todo restore <id>` 命令，把归档任务还原到 active
 > **对应测试**: `tests/test_todo_restore.py`（单元）+ `tests/test_e2e_todo.py`（E2E）
-> **状态**: 🚧 P1 规划中（2026-06-21，todo 全生命周期闭环的最后一块）
+> **状态**: ✅ 已实现（2026-07-29 复核）
 
 ---
 

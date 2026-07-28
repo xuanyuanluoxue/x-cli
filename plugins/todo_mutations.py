@@ -39,7 +39,6 @@ def _todo_update(args: argparse.Namespace) -> int:
     # v0.5 Phase D — batch via --filter (or --all for global)
     keyword = getattr(args, "filter", None)
     include_archived = bool(getattr(args, "all", False))
-    target_id: str | None = getattr(args, "id", None)
 
     if keyword or include_archived:
         from core.storage import find_by_filter
@@ -444,39 +443,6 @@ def _todo_add(args: argparse.Namespace) -> int:
             )
             return 2
 
-    # v0.5 Phase B — --parent 校验（BDD §场景 3, 4）
-    parent_id: str | None = None
-    if args.parent is not None and args.parent != "":
-        parent_id = args.parent
-        # Existence + depth check
-        store_for_check = TaskStore()
-        parent_task = store_for_check.get_task(parent_id, include_archived=False)
-        if parent_task is None:
-            print(
-                f"❌ 父任务不存在：{parent_id}",
-                file=sys.stderr,
-            )
-            return 3
-        # Depth check: parent must be at depth ≤ 1 (root=0 or child=1).
-        # Allowed chain: root → child → grandchild (new) = depth 2.
-        # Reject if parent is itself a grandchild (depth 2), which would make new task great-grandchild (depth 3).
-        # Compute parent depth by walking the chain.
-        depth = 0
-        current = parent_task
-        visited: set[str] = set()
-        while current and current.parent:
-            if current.id in visited:
-                break  # cycle, treat as depth 0
-            visited.add(current.id)
-            depth += 1
-            current = store_for_check.get_task(current.parent, include_archived=False)
-        if depth >= 2:
-            print(
-                f"❌ 子任务最多 2 层：{parent_id} 已经是孙任务",
-                file=sys.stderr,
-            )
-            return 2
-
     # v0.5 Phase C — --remind 校验（BDD §场景 5, 12）
     remind_list: list[str] | None = None
     if args.remind is not None and args.remind != "":
@@ -560,13 +526,7 @@ def _maybe_expand_template(parent_task: Task, template_name: str | None) -> int:
     tmpl_file = tmpl_dir / f"{template_name}.yaml"
     if not tmpl_file.exists():
         print(f"❌ 模板不存在：{template_name}", file=sys.stderr)
-        # Rollback the parent (delete it) so user doesn't end up with orphan
-        from core.storage import TaskStore as _TS
-        try:
-            _TS().remove_task(parent_task.id or parent_task.name, force=True)
-        except Exception:  # noqa: BLE001
-            pass
-        return 3
+        return 3 if _rollback_template_tasks([parent_task]) else 1
 
     from core.parser import parse_frontmatter
     text = tmpl_file.read_text(encoding="utf-8")
@@ -575,7 +535,7 @@ def _maybe_expand_template(parent_task: Task, template_name: str | None) -> int:
 
     if not steps:
         print(f"❌ 模板至少需要 1 个步骤：{template_name}", file=sys.stderr)
-        return 2
+        return 2 if _rollback_template_tasks([parent_task]) else 1
 
     from datetime import date
     today = date.today().isoformat()
@@ -611,13 +571,22 @@ def _maybe_expand_template(parent_task: Task, template_name: str | None) -> int:
             parent=parent_task.id,  # parent: id (auto-cascades)
             folder=f"任务/{child_folder_name}",
         )
-        try:
-            store.add_task(child)
-        except TaskAlreadyExistsError:
-            # name collision; bump until unique
-            child.name = f"{parent_task.name}-{count + 1:03d}-{step_name[:20]}"
-            child.folder = f"任务/{child.name}"
-            store.add_task(child)
+        collision_suffix = 1
+        while True:
+            try:
+                store.add_task(child)
+                break
+            except TaskAlreadyExistsError:
+                base_name = (
+                    f"{parent_task.name}-{seq_idx:03d}-{step_name[:20]}"
+                )
+                child.name = (
+                    base_name
+                    if collision_suffix == 1
+                    else f"{base_name}-{collision_suffix}"
+                )
+                child.folder = f"任务/{child.name}"
+                collision_suffix += 1
         created.append(child)
 
     print(
@@ -625,6 +594,25 @@ def _maybe_expand_template(parent_task: Task, template_name: str | None) -> int:
         file=sys.stderr,
     )
     return 0
+
+
+def _rollback_template_tasks(tasks: list[Task]) -> bool:
+    """Remove template-created tasks in reverse order and report failures."""
+    store = TaskStore()
+    failures: list[str] = []
+    for task in reversed(tasks):
+        try:
+            store.remove_task(task.id or task.name, force=True)
+        except Exception as exc:  # noqa: BLE001
+            failures.append(f"{task.id or task.name}（{exc}）")
+    if failures:
+        print(
+            "⚠️ 父任务回滚失败，需人工处理："
+            + "、".join(failures),
+            file=sys.stderr,
+        )
+        return False
+    return True
 
 
 def _todo_init(args: argparse.Namespace) -> int:
@@ -786,7 +774,7 @@ def _todo_import(args: argparse.Namespace) -> int:
         if skipped_yaml:
             print(f"   - 跳过 {skipped_yaml} 个（解析失败）")
         print()
-        print(f"💡 试用：x todo list")
+        print("💡 试用：x todo list")
     return 0
 
 

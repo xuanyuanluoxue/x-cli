@@ -181,11 +181,15 @@ def _auto_archive_overdue(store: TaskStore) -> list[Task]:
             )
             continue
         archived.append(moved)
-        # Maintain inventory (same best-effort pattern as _todo_archive).
+        # Maintain inventory without hiding consistency failures.
         try:
             store.update_inventory_on_archive(old_status)
-        except Exception:  # noqa: BLE001 — defensive
-            pass
+        except Exception as exc:  # noqa: BLE001 — defensive
+            print(
+                "⚠️ 自动归档已完成，但 TODO.md 索引更新失败："
+                f"{task.id or task.name}（{exc}）",
+                file=sys.stderr,
+            )
 
     return archived
 

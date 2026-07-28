@@ -533,6 +533,32 @@ def test_yaml_disable_does_not_override_unset_env(
     assert not (store.archive_dir / f"{_TODAY_YMD}-kemu1").exists()
 
 
+def test_auto_archive_reports_inventory_update_failure(
+    isolated_env: tuple[Path, TaskStore],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """自动归档成功后索引更新失败不能静默。"""
+    data_dir, store = isolated_env
+    _write_config(data_dir, "todo:\n  auto_archive: true\n")
+    make_task(store, "kemu1", deadline="2026-05-01")
+
+    def fail_inventory(*_args, **_kwargs):
+        raise OSError("read only")
+
+    monkeypatch.setattr(
+        TaskStore,
+        "update_inventory_on_archive",
+        fail_inventory,
+    )
+
+    code, out, err = _run_list([], store)
+
+    assert code == 0
+    assert "⏰ 自动归档 1 个逾期任务" in out
+    assert "⚠️ 自动归档已完成，但 TODO.md 索引更新失败" in err
+    assert "read only" in err
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-v"]))

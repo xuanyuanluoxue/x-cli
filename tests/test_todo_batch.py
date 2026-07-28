@@ -156,11 +156,8 @@ def test_archive_filter(store: TaskStore) -> None:
 def test_update_filter(store: TaskStore) -> None:
     """对应 BDD §场景 4：update --filter 批量更新 deadline。"""
     rc, out1, _ = _invoke_add("买菜", "--deadline", "2026-06-01")
-    aid = _id_of(out1)
     rc, out2, _ = _invoke_add("买衣服", "--deadline", "2026-06-01")
-    bid = _id_of(out2)
     rc, out3, _ = _invoke_add("做饭", "--deadline", "2026-07-01")
-    cid = _id_of(out3)
 
     rc, out, stderr = _invoke_update("--filter", "买", "--deadline", "2026-12-31")
     assert rc == 0, f"update --filter failed: stderr={stderr!r}"
@@ -282,7 +279,6 @@ def test_remove_parent_cascades(store: TaskStore) -> None:
     rc, s2, _ = _invoke_add("child-task", "--parent", pid)
     cid = _id_of(s2)
     rc, s3, _ = _invoke_add("grand-task", "--parent", cid)
-    gid = _id_of(s3)
 
     rc, out, stderr = _invoke_remove(pid)
     assert rc == 0, f"remove parent failed: stderr={stderr!r}"

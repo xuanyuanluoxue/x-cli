@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import sys
-from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -13,7 +13,7 @@ from core.models import (
     Task,
     TaskStatus,
 )
-from core.parser import dump_frontmatter, parse_frontmatter
+from core.parser import parse_frontmatter
 
 
 # ============================================================
@@ -227,14 +227,10 @@ def test_task_to_markdown_produces_valid_yaml_frontmatter():
 
 
 def test_task_round_trip_real_sample_preserves_unknown_fields():
-    """The real 科目一 TODO.md must survive Task.from_frontmatter → to_markdown
+    """The sanitized TODO fixture must survive Task.from_frontmatter → to_markdown
     → Task.from_frontmatter with all unknown fields intact."""
-    import os
-
-    sample = r"C:\Users\Chatxavier\.xavier\TODO\任务\科目一\TODO.md"
-    if not os.path.exists(sample):
-        pytest.skip(f"sample file not available: {sample}")
-    text = open(sample, encoding="utf-8").read()
+    sample = Path(__file__).parent / "fixtures" / "todo-kemu1.md"
+    text = sample.read_text(encoding="utf-8")
     metadata, body = parse_frontmatter(text)
     task1 = Task.from_frontmatter(metadata, body=body)
 

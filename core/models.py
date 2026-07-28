@@ -14,7 +14,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
-from core.parser import dump_frontmatter, parse_frontmatter
+from core.parser import dump_frontmatter
 
 
 # ============================================================
@@ -23,7 +23,7 @@ from core.parser import dump_frontmatter, parse_frontmatter
 
 
 class TaskStatus(StrEnum):
-    """Lifecycle status of a task (per ~/.xavier/TODO/00-TODO-SPEC.md §3.3)."""
+    """Lifecycle status of a task (per docs/TODO-SPEC.md §3.3)."""
 
     PENDING = "pending"
     IN_PROGRESS = "in_progress"

@@ -30,7 +30,7 @@ from core.web.handlers.tasks import (
     handle_tasks_collection,
     handle_tasks_stats,
 )
-from core.web.response import error_response, json_response, read_json_body
+from core.web.response import error_response
 
 
 # Static dir is sibling to this file: core/web/static/

@@ -1,4 +1,4 @@
-# x-cli Web API 规格（v0.7.0）
+# x-cli Web API 规格（v0.8.0）
 
 > **目标读者**：前端 AI（实现） + 后端实现者 + 集成者
 > **范围**：`x web` 子命令的 REST API

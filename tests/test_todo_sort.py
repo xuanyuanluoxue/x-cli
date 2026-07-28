@@ -106,7 +106,6 @@ def test_sort_priority_default(store: TaskStore, monkeypatch) -> None:
     assert rc == 0
 
     # Order: urgent → medium → low
-    lines = [l for l in out.splitlines() if "task" in l.lower()]
     assert "urgent-task" in out
     assert "medium-task" in out
     assert "low-task" in out

@@ -120,7 +120,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from core.paths import xcli_data_dir
         config_path = xcli_data_dir() / "config.yaml"
         if config_path.exists():
-            print(f"❌ 配置已存在：{config_path}（用 --force 覆盖）", file=sys.stderr)
+            print(
+                f"❌ 配置已存在：{config_path}（为避免覆盖，请先备份后移走旧文件）",
+                file=sys.stderr,
+            )
             return 2
         config_path.write_text(AppConfig.default().to_yaml(), encoding="utf-8")
         print(f"✅ 配置已写入：{config_path}")

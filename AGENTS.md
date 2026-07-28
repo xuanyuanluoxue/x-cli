@@ -13,7 +13,8 @@ python -m venv .venv
 .venv\Scripts\pip.exe install -e ".[dev]"
 .venv\Scripts\python.exe -m pytest
 .venv\Scripts\python.exe -m pytest tests/test_parser.py
-.venv\Scripts\python.exe -m pytest --cov=core --cov=plugins --cov=x
+.venv\Scripts\python.exe -m pytest --cov=core --cov=plugins --cov=x --cov-fail-under=80
+.venv\Scripts\python.exe -m ruff check core plugins x.py scripts tests
 x --version
 x web --port 9000 --no-browser
 ```
@@ -25,6 +26,7 @@ Web frontend source lives only in `web/`; `core/web/static/` is committed build 
 ## Coding Style & Naming Conventions
 
 Use four-space indentation, type hints, descriptive `snake_case` names, and `PascalCase` for classes. Keep runtime dependencies empty: do not add Click, Typer, Rich, PyYAML, or similar packages. Preserve unknown YAML frontmatter fields through `Task.extra`; never replace the handwritten parser casually. Core modules and plugins must not import `x`, which would create circular imports. Register every new plugin explicitly in `core.dispatch.SUBCOMMAND_MODULES`; `x.py` must not statically import concrete plugins.
+Pyflakes (`ruff` 的 `F` 规则) 必须保持零错误；新增代码不得用 `noqa` 隐藏未定义名称、死导入或其他真实错误。
 
 ## Risk-Based Development Workflow
 

@@ -49,7 +49,7 @@ def test_build_emits_spa_entry_and_hashed_assets() -> None:
     css = list(assets.glob("*.css"))
     assert js, "no JS bundles emitted"
     assert css, "no CSS bundles emitted"
-    assert any(p.name.startswith("vendor-") for p in js), "vendor chunk missing"
+    assert len(js) > 1, "route-level code splitting is missing"
 
 
 def test_entry_uses_relative_paths_for_any_mount() -> None:
@@ -156,7 +156,9 @@ def test_login_bundle_keeps_accessibility_hooks() -> None:
     src = login.read_text(encoding="utf-8", errors="ignore")
     # Vue 把模板编译成渲染函数：属性以 JS 对象键值存在，非 HTML 字符串。
     assert 'current-password' in src, "autocomplete=current-password missing"
-    assert 'role:"alert"' in src or 'role="alert"' in src, "role=alert missing"
+    assert re.search(r"role:[`'\"]alert[`'\"]", src) or 'role="alert"' in src, (
+        "role=alert missing"
+    )
     assert "token-help login-error" in src, "aria-describedby targets missing"
 
 

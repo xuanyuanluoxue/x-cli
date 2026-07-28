@@ -3,7 +3,7 @@
 > **目标读者**: 接续开发的 AI agent
 > **范围**: `x todo import --from <dir>` 命令，从 legacy TODO system单向迁移 TODO 到 x-cli's 独立库
 > **对应测试**: `tests/test_e2e_todo.py`（E2E 子进程测试）
-> **状态**: 🚧 P1 实现中（2026-06-21）
+> **状态**: ✅ 已实现（2026-07-29 复核）
 
 ---
 

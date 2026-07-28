@@ -51,12 +51,15 @@ Windows EXE 使用。此前 CI 没有验证两者一致，导致原生前端遗�
 
 ## 远程迁移
 
-本 ADR 入库并通过 CI 后，由仓库管理员执行一次性迁移：
+历史重置后的具体保全顺序见
+[ADR 0007](0007-reset-history-and-release-continuity.md)。本 ADR 入库并通过 CI
+后，由仓库管理员执行一次性迁移：
 
-1. 把 GitHub 默认分支改为 `main`。
-2. 为 `main` 启用禁止直接推送、至少一次审查和必需 CI 检查。
-3. 确认 `dev` 没有 `main` 之外的提交。
-4. 删除远程 `dev`，并让现有克隆执行
+1. 归档旧远端分支，保留既有标签和 Release。
+2. 使用 `--force-with-lease` 把经验证的新根历史更新到 `main`。
+3. 把 GitHub 默认分支改为 `main`。
+4. 为 `main` 启用禁止直接推送、至少一次审查和必需 CI 检查。
+5. 删除远程 `dev`，并让现有克隆执行
    `git remote set-head origin --auto`。
 
 远程设置和分支删除是外部破坏性操作，不由普通代码变更自动执行。

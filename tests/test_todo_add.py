@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import io
 import re
-import shutil
 import sys
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import date
@@ -149,7 +148,7 @@ def test_add_full_params(store: TaskStore) -> None:
     )
 
     assert exit_code == 0, f"expected 0, got {exit_code}; stderr={stderr!r}"
-    assert f"ID: kemu1-moni-kao" in stdout, f"id not pinned: {stdout!r}"
+    assert "ID: kemu1-moni-kao" in stdout, f"id not pinned: {stdout!r}"
 
     folder = store.active_dir / target_name
     assert folder.is_dir()

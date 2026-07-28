@@ -71,8 +71,8 @@ TODO_ACTIONS: tuple[str, ...] = (
 def _todo_register(parser: argparse.ArgumentParser) -> None:
     """注册 x todo 的子命令参数
 
-    ``add`` / ``archive`` / ``update`` / ``list`` 子命令带自己的参数；
-    其它子命令仍是占位（Phase 1 MVP 阶段后续实现）。
+    每个已发布 action 都注册自己的参数；末尾 fallback 仅防止未来新增
+    action 时忘记接线。
     """
     sub = parser.add_subparsers(dest="todo_action", required=False, metavar="ACTION")
     for name in TODO_ACTIONS:
@@ -531,6 +531,6 @@ def run(args: Sequence[str]) -> int:
 
 
 def _todo_not_implemented(action: str) -> int:
-    """x todo 各子命令的占位实现（Phase 1 MVP 阶段）"""
+    """Defensive fallback for a newly registered but unwired action."""
     print(f"🚧 x todo {action} 还未实现", file=sys.stderr)
     return 1

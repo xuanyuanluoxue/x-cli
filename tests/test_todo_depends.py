@@ -105,7 +105,7 @@ def test_add_depends_multi(store: TaskStore) -> None:
     rc, out, _ = _invoke_add("tc", "--priority", "high")
     c_id = _id_of(out)
 
-    rc, out, _ = _invoke_add("综合", f"--depends", f"{a_id},{b_id},{c_id}")
+    rc, out, _ = _invoke_add("综合", "--depends", f"{a_id},{b_id},{c_id}")
     assert rc == 0, f"add failed: {out!r}"
 
     folder = store.active_dir / "综合"

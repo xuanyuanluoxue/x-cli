@@ -512,7 +512,7 @@ class SecretStore:
             ) from exc
         if not isinstance(data, dict):
             raise SecretError(
-                f"secrets DB has unexpected shape: top-level must be an object"
+                "secrets DB has unexpected shape: top-level must be an object"
             )
         version = data.get("version", LEGACY_DB_VERSION)
         if not isinstance(version, str) or version not in SUPPORTED_DB_VERSIONS:
@@ -520,7 +520,7 @@ class SecretStore:
         secrets = data.get("secrets", [])
         if not isinstance(secrets, list):
             raise SecretError(
-                f"secrets DB has unexpected shape: 'secrets' must be a list"
+                "secrets DB has unexpected shape: 'secrets' must be a list"
             )
         data["version"] = version
         data["secrets"] = secrets

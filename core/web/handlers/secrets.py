@@ -231,7 +231,7 @@ def _delete_secret(handler, name: str) -> None:
     service = handler.server.secret_service
     try:
         service.delete(name)
-    except LookupError as exc:
+    except LookupError:
         error_response(handler, HTTPStatus.NOT_FOUND, "not_found", f"secret not found: {name}", name=name)
         return
     handler.send_response(HTTPStatus.NO_CONTENT)

@@ -37,7 +37,7 @@ def test_cli_imports_version_instead_of_defining_another_constant():
     from core.version import __version__ as source_version
     from x import __version__ as cli_version
 
-    assert source_version == "0.7.0"
+    assert source_version == "0.8.0"
     assert cli_version == source_version
 
     module = ast.parse((ROOT / "x.py").read_text(encoding="utf-8"))
@@ -145,11 +145,11 @@ def test_generate_winget_manifest_uses_real_hash_and_release_metadata(tmp_path):
     installer.write_bytes(b"deterministic-test-installer")
     url = (
         "https://github.com/xuanyuanluoxue/x-cli/releases/download/"
-        "v0.7.0/x-windows-x86_64.exe"
+        "v0.8.0/x-windows-x86_64.exe"
     )
 
     manifest = generate_manifest(
-        version="0.7.0",
+        version="0.8.0",
         installer=installer,
         installer_url=url,
         output_root=tmp_path / "output",
@@ -163,13 +163,13 @@ def test_generate_winget_manifest_uses_real_hash_and_release_metadata(tmp_path):
         / "x"
         / "XuanyuanLuoxue"
         / "XCLI"
-        / "0.7.0"
+        / "0.8.0"
         / "XuanyuanLuoxue.XCLI.yaml"
     )
     text = manifest.read_text(encoding="utf-8")
     for expected in (
         "PackageIdentifier: XuanyuanLuoxue.XCLI",
-        "PackageVersion: 0.7.0",
+        "PackageVersion: 0.8.0",
         "InstallerType: portable",
         "Architecture: x64",
         "Commands:",
@@ -206,7 +206,7 @@ def test_generate_winget_manifest_rejects_non_https_url(tmp_path):
 
     with pytest.raises(ReleaseInputError, match="HTTPS"):
         generate_manifest(
-            version="0.7.0",
+            version="0.8.0",
             installer=installer,
             installer_url="http://example.com/x.exe",
             output_root=tmp_path / "output",
@@ -218,7 +218,7 @@ def test_generate_winget_manifest_rejects_missing_installer(tmp_path):
 
     with pytest.raises(ReleaseInputError, match="does not exist"):
         generate_manifest(
-            version="0.7.0",
+            version="0.8.0",
             installer=tmp_path / "missing.exe",
             installer_url="https://example.com/x.exe",
             output_root=tmp_path / "output",
@@ -233,7 +233,7 @@ def test_generate_winget_manifest_rejects_source_version_mismatch(tmp_path):
 
     with pytest.raises(ReleaseInputError, match="source version"):
         generate_manifest(
-            version="0.8.0",
+            version="0.9.0",
             installer=installer,
             installer_url="https://example.com/x.exe",
             output_root=tmp_path / "output",

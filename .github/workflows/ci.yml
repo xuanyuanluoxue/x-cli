@@ -18,8 +18,43 @@ concurrency:
 
 jobs:
   python-tests:
-    name: Python tests
+    name: Python ${{ matrix.python-version }} / Windows
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version:
+          - "3.10"
+          - "3.12"
+          - "3.14"
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+
+      - name: Install development environment
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+
+      - name: Run full test suite
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\pytest" | Out-Null
+          $env:TMP = "$env:RUNNER_TEMP\pytest"
+          $env:TEMP = "$env:RUNNER_TEMP\pytest"
+          python -m pytest -q
+
+  quality:
+    name: Coverage and critical static checks / Linux
+    runs-on: ubuntu-latest
 
     steps:
       - name: Check out source
@@ -32,19 +67,22 @@ jobs:
           cache: pip
 
       - name: Install development environment
-        shell: pwsh
         run: |
-          python -m venv .venv
-          .\.venv\Scripts\python.exe -m pip install --upgrade pip
-          .\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
 
-      - name: Run full test suite
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\pytest" | Out-Null
-          $env:TMP = "$env:RUNNER_TEMP\pytest"
-          $env:TEMP = "$env:RUNNER_TEMP\pytest"
-          .\.venv\Scripts\python.exe -m pytest -q
+      - name: Run Pyflakes checks
+        run: python -m ruff check core plugins x.py scripts tests
+
+      - name: Enforce coverage floor
+        run: >-
+          python -m pytest
+          --cov=core
+          --cov=plugins
+          --cov=x
+          --cov-report=term
+          --cov-fail-under=80
+          -q
 
   web-artifacts:
     name: Reproduce Web artifacts
@@ -57,13 +95,17 @@ jobs:
       - name: Set up Node
         uses: actions/setup-node@v4
         with:
-          node-version: "22"
+          node-version: "22.12"
           cache: npm
           cache-dependency-path: web/package-lock.json
 
       - name: Install locked Web dependencies
         working-directory: web
         run: npm ci
+
+      - name: Audit Web development dependencies
+        working-directory: web
+        run: npm audit --audit-level=high --registry=https://registry.npmjs.org
 
       - name: Build Web frontend
         working-directory: web

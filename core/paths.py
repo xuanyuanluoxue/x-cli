@@ -85,7 +85,7 @@ def xcli_config_path() -> Path:
 
     This function does **not** create the file. The
     :class:`core.config.AppConfig.default` factory uses this as the
-    default ``log_path`` neighbour; the ``x --config init`` handler is
+    default ``log_path`` neighbour; the ``x --config-init`` handler is
     responsible for materialising the file.
 
     Returns

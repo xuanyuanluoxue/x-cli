@@ -204,7 +204,7 @@ def _create_task(handler) -> None:
 
     try:
         store.add_task(task)
-    except TaskAlreadyExistsError as exc:
+    except TaskAlreadyExistsError:
         error_response(
             handler,
             HTTPStatus.CONFLICT,
@@ -285,7 +285,7 @@ def _update_task(handler, task_id: str) -> None:
     except TaskNotFoundError as exc:
         error_response(handler, HTTPStatus.NOT_FOUND, "not_found", str(exc), id=task_id)
         return
-    except TaskAlreadyArchivedError as exc:
+    except TaskAlreadyArchivedError:
         error_response(
             handler,
             HTTPStatus.CONFLICT,

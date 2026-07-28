@@ -9,8 +9,6 @@ from __future__ import annotations
 import csv
 import io
 import json
-import os
-import re
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 

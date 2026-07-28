@@ -105,7 +105,7 @@ def _open_browser(url: str, token: str | None, auto_token_url: bool) -> None:
         open_url = f"{url}?token={token}" if inject_token else url
         if inject_token:
             print(
-                f"   ⚡ auto-token-url：URL 含 ?token=...（浏览器自动填后清 URL）",
+                "   ⚡ auto-token-url：URL 含 ?token=...（浏览器自动填后清 URL）",
                 file=sys.stderr,
             )
         webbrowser.open(open_url)
@@ -159,14 +159,14 @@ def _run(args: Sequence[str]) -> int:
         return 1
 
     url = server.base_url
-    print(f"🌐 x web 服务已启动", file=sys.stderr)
+    print("🌐 x web 服务已启动", file=sys.stderr)
     print(f"   地址: {url}", file=sys.stderr)
     if token is None:
         print("   认证: 关闭（浏览器可直接访问）", file=sys.stderr)
     else:
         print(f"   Token: {token}", file=sys.stderr)
-    print(f"   停止: Ctrl+C", file=sys.stderr)
-    print(f"", file=sys.stderr)
+    print("   停止: Ctrl+C", file=sys.stderr)
+    print("", file=sys.stderr)
     if token is None:
         print("🌐 已关闭 Token 验证；任务和密钥可由本机浏览器直接访问", file=sys.stderr)
         if parsed.host not in {"127.0.0.1", "localhost", "::1"}:
@@ -175,7 +175,7 @@ def _run(args: Sequence[str]) -> int:
                 file=sys.stderr,
             )
     else:
-        print(f"🔐 请在浏览器输入上面的 Token（首次访问会提示）", file=sys.stderr)
+        print("🔐 请在浏览器输入上面的 Token（首次访问会提示）", file=sys.stderr)
 
     # opt-in：检测 --no-browser + --auto-token-url 冲突，给友好警告
     # （不动用户意图，只教育）
@@ -186,11 +186,11 @@ def _run(args: Sequence[str]) -> int:
         )
     elif parsed.no_browser and parsed.auto_token_url:
         print(
-            f"⚠️  --auto-token-url 在 --no-browser 模式下静默无效",
+            "⚠️  --auto-token-url 在 --no-browser 模式下静默无效",
             file=sys.stderr,
         )
         print(
-            f"   （不开浏览器 = URL 注入无意义；要生效请去掉 --no-browser）",
+            "   （不开浏览器 = URL 注入无意义；要生效请去掉 --no-browser）",
             file=sys.stderr,
         )
 

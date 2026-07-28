@@ -2,7 +2,9 @@
 
 > **目标读者**：使用 x-cli 的人类（包括未来的你）
 > **说明**：本文档列出所有命令的完整参考
-> **状态**：v0.7.0 实际实现（含多字段密钥 schema 1.1）
+> **状态**：v0.8.0 实际实现（含多字段密钥 schema 1.1）
+> **校验原则**：本文档提供说明和示例；精确参数以当前版本的 `x --help`
+> 和 `x <子命令> --help` 为准。
 
 ---
 
@@ -18,26 +20,29 @@ x <子命令> [选项]
 
 | 选项 | 状态 | 说明 |
 |------|------|------|
-| `-v, --version` | ✅ 已实现 | 显示版本号（v0.2.0）|
+| `-v, --version` | ✅ 已实现 | 显示版本号（v0.8.0）|
 | `-h, --help` | ✅ 已实现 | 显示帮助（argparse 默认）|
-| `--config <路径>` | ❌ 未实现 | 指定配置文件（计划读取 `<xcli_config_path>`）|
-| `--log-level <级别>` | ❌ 未实现 | 设置日志级别（DEBUG/INFO/WARNING/ERROR）|
+| `--config <路径>` | ✅ 已实现 | 指定配置文件，优先于 `XCLI_CONFIG` 和默认文件 |
+| `--log-level <级别>` | ✅ 已实现 | 设置日志级别（DEBUG/INFO/WARNING/ERROR/CRITICAL）|
+| `--config-init` | ✅ 已实现 | 在用户数据目录生成默认 `config.yaml`，已存在时拒绝覆盖 |
 
 ### 1.3 环境变量
 
 | 变量 | 状态 | 说明 |
 |------|------|------|
-| `XCLI_TODO_DIR` | ✅ 已实现 | 覆盖 TODO 根目录（默认 `<legacy-config-dir>/TODO`）。主要给测试用 |
+| `XCLI_CONFIG` | ✅ 已实现 | 指定配置文件；低于 CLI `--config`，高于默认文件 |
+| `XCLI_TODO_DIR` | ✅ 已实现 | 覆盖 TODO 根目录（默认 `<xcli_data_dir>/todo`）|
 | `XCLI_SECRETS_DIR` | ✅ 已实现 | 覆盖密钥 JSON 文件路径 |
 | `XCLI_DIARY_DIR` | ✅ 已实现 | 覆盖 diary Markdown 文件目录 |
 | `XCLI_NOTES_DIR` | ✅ 已实现 | 覆盖 note Markdown 文件目录 |
+| `XCLI_TODO_AUTO_ARCHIVE` | ✅ 已实现 | 非零非空值启用查询前自动归档逾期任务 |
 
 ### 1.4 示例
 
 ```bash
 # 显示版本号
 x --version
-# 输出: x 0.2.0
+# 输出: x 0.8.0
 
 # 显示帮助
 x --help
@@ -58,14 +63,21 @@ XCLI_NOTES_DIR=/tmp/notes python x.py note add "测试笔记"
 
 | 子命令 | 状态 | 说明 | 参数 |
 |--------|------|------|------|
-| `x todo list` | ✅ | 列出任务 | `--status` / `--priority` / `--tag` / `--all` |
-| `x todo add <名称>` | ✅ | 添加任务 | `--priority` / `--deadline` / `--tags` |
-| `x todo update <id>` | ✅ | 更新任务 | `--status` / `--priority` / `--deadline` / `--tags` |
-| `x todo archive <id>` | ✅ | 归档任务 | `--reason` |
+| `x todo list` | ✅ | 列出任务 | `--status` / `--priority` / `--tag` / `--all` / `--tree` / `--sort` |
+| `x todo add <名称>` | ✅ | 添加任务 | 时间、父子任务、提醒、重复、模板和依赖参数 |
+| `x todo update [id]` | ✅ | 更新单个或筛选出的任务 | 字段参数 / `--filter` / `--all` |
+| `x todo archive [ids...]` | ✅ | 归档一个或多个任务 | `--filter` / `--reason` |
 | `x todo stats` | ✅ | 统计信息 | 无 |
 | `x todo search <keyword>` | ✅ | 跨字段模糊搜索 | `--active-only` / `--archived-only` / `--status` |
-| `x todo init` | ❌ | 初始化 TODO 目录 | — |
-| `x todo restore` | ❌ | 从归档还原 | — |
+| `x todo init` | ✅ | 初始化 TODO 目录 | `--dir` |
+| `x todo import` | ✅ | 单向导入旧 TODO 数据 | `--from` / `--to` / `--dry-run` |
+| `x todo restore <id>` | ✅ | 从归档还原 | `--status` / `--dry-run` |
+| `x todo done [ids...]` | ✅ | 以 done 原因归档 | `--filter` |
+| `x todo reminder` | ✅ | 列出或清除提醒 | `list` / `clear` |
+| `x todo repeat-fire <id>` | ✅ | 显式生成重复任务下一实例 | — |
+| `x todo remove [ids...]` | ✅ | 回收站删除或物理删除 | `--filter` / `--force` |
+| `x todo template` | ✅ | 创建、列出、删除模板 | `create` / `list` / `remove` |
+| `x todo export` | ✅ | 导出 JSON/CSV/Markdown | `--format` / `--output` / `--all` |
 
 ---
 
@@ -230,7 +242,7 @@ x todo update kemu1 --deadline ""
 - 0：成功
 - 2：无 --xxx 选项 / 非法 status / 非法 priority
 - 3：任务不存在
-- 4：任务已归档（不可 update；要先 restore，未实现）
+- 4：任务已归档（不可 update；可先用 `x todo restore <id>` 还原）
 
 ---
 

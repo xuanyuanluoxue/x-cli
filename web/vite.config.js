@@ -19,14 +19,6 @@ export default defineConfig({
   build: {
     outDir: "../core/web/static",
     emptyOutDir: true,
-    // 产物是本地小工具，不拆 vendor chunk 也行；但拆出来利于浏览器缓存。
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          vendor: ["vue", "vue-router", "pinia"],
-        },
-      },
-    },
   },
   server: {
     port: 5173,

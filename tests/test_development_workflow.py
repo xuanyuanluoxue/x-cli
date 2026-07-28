@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+from core.version import __version__
+
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -26,8 +28,16 @@ def test_ci_runs_full_tests_and_reproduces_web_artifacts() -> None:
 
     assert "pull_request:" in workflow
     assert "branches:\n      - main" in workflow
-    assert r".\.venv\Scripts\python.exe -m pytest -q" in workflow
+    for version in ("3.10", "3.12", "3.14"):
+        assert version in workflow
+    assert "windows-latest" in workflow
+    assert "ubuntu-latest" in workflow
+    assert "--cov-fail-under=80" in workflow
+    assert "python -m ruff check core plugins x.py scripts tests" in workflow
+    assert 'select = ["F"]' in _read("pyproject.toml")
     assert "run: npm ci" in workflow
+    assert 'node-version: "22.12"' in workflow
+    assert "npm audit --audit-level=high" in workflow
     assert "run: npm run build" in workflow
     assert "git status --porcelain -- core/web/static" in workflow
 
@@ -47,3 +57,34 @@ def test_line_endings_are_repository_controlled() -> None:
     assert "*.py text eol=lf" in attributes
     assert "*.ps1 text eol=crlf" in attributes
     assert "core/web/static/** text eol=lf" in attributes
+
+
+def test_docs_track_current_version_repo_and_implemented_behaviors() -> None:
+    commands = _read("docs/commands.md")
+    changelog = _read("CHANGELOG.md")
+
+    assert f"v{__version__} 实际实现" in commands
+    assert "github.com/x-cli/x-cli" not in changelog
+    assert "github.com/xuanyuanluoxue/x-cli" in changelog
+
+    implemented_specs = (
+        "config-behavior.md",
+        "todo-done-behavior.md",
+        "todo-import-behavior.md",
+        "todo-init-behavior.md",
+        "todo-restore-behavior.md",
+        "todo-search-behavior.md",
+        "todo-storage-behavior.md",
+    )
+    for filename in implemented_specs:
+        text = _read(f"docs/behaviors/{filename}")
+        assert "✅ 已实现" in text
+        assert "🚧" not in text
+
+
+def test_tests_do_not_depend_on_personal_absolute_paths() -> None:
+    tests_root = ROOT / "tests"
+    private_prefix = "C:" + "\\Users\\" + "Chatxavier"
+
+    for path in tests_root.rglob("*.py"):
+        assert private_prefix not in path.read_text(encoding="utf-8"), path

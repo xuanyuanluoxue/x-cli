@@ -247,7 +247,7 @@
 
 **Then**:
 - 退出码 0
-- stdout = `x 0.2.0`（无换行以外的字符）
+- stdout = 当前 `core.version.__version__` 对应的 `x X.Y.Z`
 
 ---
 

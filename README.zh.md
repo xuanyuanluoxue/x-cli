@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Tests: pytest](https://img.shields.io/badge/tests-pytest-brightgreen.svg)](tests/)
-[![Coverage: 93%](https://img.shields.io/badge/coverage-93%25-brightgreen.svg)](tests/)
+[![Coverage: 80%+](https://img.shields.io/badge/coverage-80%25%2B-brightgreen.svg)](tests/)
 
 > English version: [README.md](README.md)
 
@@ -36,8 +36,9 @@
 
 ### WinGet（计划中的公开主渠道）
 
-> **当前状态：尚未进入 WinGet 默认源。** 本地清单和发行流水线已经完成，
-> 但首次 GitHub Release 和 `microsoft/winget-pkgs` 提交尚未执行。
+> **当前状态：尚未进入 WinGet 默认源。** 公开的
+> [v0.7.0 GitHub Release](https://github.com/xuanyuanluoxue/x-cli/releases/tag/v0.7.0)
+> 已存在，`microsoft/winget-pkgs` 提交仍待完成。
 
 微软接受清单后，Windows 用户不需要安装 Python，直接运行：
 
@@ -209,7 +210,8 @@ x --config-init              # 写默认配置到 <xcli_data_dir>/config.yaml
 # 跑测试
 .venv/bin/pytest                                   # Unix
 .venv\Scripts\python.exe -m pytest                 # Windows
-.venv\Scripts\python.exe -m pytest --cov=core --cov=x  # 带覆盖率
+.venv\Scripts\python.exe -m pytest --cov=core --cov=plugins --cov=x --cov-fail-under=80
+.venv\Scripts\python.exe -m ruff check core plugins x.py scripts tests
 
 # 按风险分级的开发流
 # 小改动：不写计划；行为变化时补回归测试；只跑 focused tests
@@ -221,7 +223,7 @@ x --config-init              # 写默认配置到 <xcli_data_dir>/config.yaml
 
 ## Roadmap
 
-**当前本地 v0.7.0 已完成：**
+**当前 v0.8.0 开发树已完成：**
 - TODO 全生命周期、时间精度、子任务、提醒字段、重复规则、批量操作、模板、依赖、回收站删除和 JSON/CSV/Markdown 导出
 - Secret 本地存储、列表/搜索隐私保护和剪贴板集成
 - 本地日记、主题笔记和可选认证的 Web UI

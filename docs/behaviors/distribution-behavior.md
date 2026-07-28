@@ -1,13 +1,13 @@
 # Distribution and WinGet Behavior
 
-> 状态：已实现（v0.7.0）
+> 状态：已实现（v0.8.0）
 > 范围：Python 包、Windows 独立 EXE、GitHub Release、WinGet portable 清单
 
 ## 功能：所有发行物使用同一个版本
 
 ### 场景：源码和 Python 包共享版本
 
-Given 项目准备构建 v0.7.0
+Given 项目准备构建 v0.8.0
 
 When setuptools 读取项目元数据，且用户运行 `x --version`
 
@@ -17,7 +17,7 @@ And `pyproject.toml` 不得再维护第二个静态版本号
 
 ### 场景：错误版本 tag 阻止发布
 
-Given 源码版本为 `0.7.0`
+Given 源码版本为 `0.8.0`
 
 When GitHub Actions 由其他版本的 tag 触发
 
@@ -71,7 +71,7 @@ When 用户运行 `x-windows-x86_64.exe --version`
 
 Then 退出码为 0
 
-And 输出 `x 0.7.0`
+And 输出 `x 0.8.0`
 
 ### 场景：独立程序包含插件和 Web 资源
 

@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![Tests: pytest](https://img.shields.io/badge/tests-pytest-brightgreen.svg)](tests/)
-[![Coverage: 93%](https://img.shields.io/badge/coverage-93%25-brightgreen.svg)](tests/)
+[![Coverage: 80%+](https://img.shields.io/badge/coverage-80%25%2B-brightgreen.svg)](tests/)
 
 ## What is x-cli?
 
@@ -35,8 +35,8 @@ No cloud sync, no telemetry, no encryption (yet). Designed for one user, one mac
 ### WinGet (planned public channel)
 
 > **Status:** x-cli is not yet available in the default WinGet source. The
-> manifest and release pipeline are ready locally, but the first public GitHub
-> Release and `microsoft/winget-pkgs` submission have not been made yet.
+> The public [v0.7.0 GitHub Release](https://github.com/xuanyuanluoxue/x-cli/releases/tag/v0.7.0)
+> is available. Submission to the default WinGet source is still pending.
 
 After Microsoft accepts the package, Windows users will install and upgrade it
 without installing Python:
@@ -219,7 +219,8 @@ both one-way and read-only.
 # Tests
 .venv/bin/pytest                                   # Unix
 .venv\Scripts\python.exe -m pytest                 # Windows
-.venv\Scripts\python.exe -m pytest --cov=core --cov=x  # with coverage
+.venv\Scripts\python.exe -m pytest --cov=core --cov=plugins --cov=x --cov-fail-under=80
+.venv\Scripts\python.exe -m ruff check core plugins x.py scripts tests
 
 # ⚠️ Windows pytest tmpdir workaround (2026-06-30):
 # If pytest fails with `PermissionError: [WinError 5]` on
@@ -247,7 +248,7 @@ HTTP server). Python runtime stays stdlib-only — Node is a *dev-time* tool onl
 
 ```bash
 cd web
-npm install        # first time only
+npm ci             # install exactly from package-lock.json
 npm run dev        # Vite dev server (proxies /api → 127.0.0.1:8421, run `x web` first)
 npm run build      # → outputs to ../core/web/static
 ```
@@ -258,7 +259,7 @@ or packaging. See [ADR-0002](docs/architecture-decisions/0002-web-frontend-vue-v
 
 ## Roadmap
 
-**Done in the current local v0.7.0 tree:**
+**Done in the current v0.8.0 development tree:**
 - TODO lifecycle, time precision, subtasks, reminders, repeat rules, batch operations, templates, dependencies, recycle-bin removal, and JSON/CSV/Markdown export
 - Secret storage with protected list/search output and clipboard integration
 - Local diary entries, topic notes, and the optional-auth Web UI
@@ -267,7 +268,7 @@ or packaging. See [ADR-0002](docs/architecture-decisions/0002-web-frontend-vue-v
 - Reproducible SHA-256 and WinGet 1.12.0 manifest generation
 - GitHub Actions build/release workflow with tag-version protection
 
-**Next** (post-v0.7 candidates, not committed):
+**Next** (post-v0.8 candidates, not committed):
 - Encrypted-at-rest secret store (currently plain JSON)
 - Git-based version control of the TODO directory (`git init` + auto-commit hooks)
 - Optional background daemon for reminders and AI-assisted local workflows

@@ -134,10 +134,10 @@ class TaskStore:
     todo_dir:
         Optional explicit path to the TODO root. If omitted, the
         constructor falls back to :func:`_default_todo_dir`, which in
-        turn honours :envvar:`XAVIER_TODO_DIR` and finally
-        ``~/.xavier/TODO``. Tests should pass ``tmp_path`` here (or set
-        the env var to point at ``tmp_path``) so the real data
-        directory is never modified.
+        turn honours :envvar:`XCLI_TODO_DIR` (plus the deprecated
+        :envvar:`XAVIER_TODO_DIR` alias) and otherwise uses the platform
+        x-cli data directory. Tests should pass ``tmp_path`` here (or set
+        the env var to point at ``tmp_path``) so user data is never modified.
     """
 
     def __init__(self, todo_dir: Path | str | None = None) -> None:

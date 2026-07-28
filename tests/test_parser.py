@@ -267,10 +267,8 @@ def test_parse_preserves_unknown_top_level_fields():
 
 
 def test_parse_real_sample_kemu1_preserves_paused_at():
-    """Round-trip the real 科目一/TODO.md and assert paused_at is intact."""
-    sample = Path(r"C:\Users\Chatxavier\.xavier\TODO\任务\科目一\TODO.md")
-    if not sample.exists():
-        pytest.skip(f"sample file not available: {sample}")
+    """Round-trip the sanitized TODO fixture and assert paused_at is intact."""
+    sample = Path(__file__).parent / "fixtures" / "todo-kemu1.md"
     text = sample.read_text(encoding="utf-8")
     metadata, body = parse_frontmatter(text)
 
@@ -431,10 +429,8 @@ def test_round_trip_preserves_unknown_fields_with_body():
 
 
 def test_round_trip_real_sample_kemu1():
-    """The real 科目一 TODO.md must round-trip without losing unknown fields."""
-    sample = Path(r"C:\Users\Chatxavier\.xavier\TODO\任务\科目一\TODO.md")
-    if not sample.exists():
-        pytest.skip(f"sample file not available: {sample}")
+    """The sanitized TODO fixture must round-trip without losing unknown fields."""
+    sample = Path(__file__).parent / "fixtures" / "todo-kemu1.md"
     text = sample.read_text(encoding="utf-8")
     metadata, body = parse_frontmatter(text)
     dumped = dump_frontmatter(metadata, body=body)

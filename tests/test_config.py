@@ -99,7 +99,7 @@ def test_appconfig_default_factory_returns_hardcoded_values(
 def test_scenario2_to_yaml_produces_init_file_content(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """``to_yaml()`` output is suitable for ``x --config init``.
+    """``to_yaml()`` output is suitable for ``x --config-init``.
 
     Per BDD scenario 2, the init command writes the resolved defaults
     to ``<xcli_data_dir>/config.yaml``. The loader's ``to_yaml()``

@@ -131,19 +131,22 @@ def _todo_archive(args: argparse.Namespace) -> int:
             continue
 
     # Update inventory（从 task.extra._orig_status_before_archive 取旧状态）
-    try:
-        for t in archived_set:
-            old_status_str = (
-                (t.extra or {}).get("_orig_status_before_archive", "pending")
-            )
-            # Convert back to enum
-            try:
-                old_status = TaskStatus(old_status_str)
-            except ValueError:
-                old_status = TaskStatus.PENDING
+    for t in archived_set:
+        old_status_str = (
+            (t.extra or {}).get("_orig_status_before_archive", "pending")
+        )
+        try:
+            old_status = TaskStatus(old_status_str)
+        except ValueError:
+            old_status = TaskStatus.PENDING
+        try:
             store.update_inventory_on_archive(old_status)
-    except Exception:  # noqa: BLE001
-        pass
+        except Exception as exc:  # noqa: BLE001
+            print(
+                "⚠️ 任务已归档，但 TODO.md 索引更新失败："
+                f"{t.id or t.name}（{exc}）",
+                file=sys.stderr,
+            )
 
     # Success message
     if len(archived_set) == 1:

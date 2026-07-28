@@ -3,7 +3,7 @@
 > **目标读者**: 接续开发的 AI agent
 > **范围**: `x todo search <keyword>` 命令，跨字段关键词搜索
 > **对应测试**: `tests/test_todo_search.py`（单元）+ `tests/test_e2e_todo.py`（E2E）
-> **状态**: 🚧 P2 规划中（2026-06-21）
+> **状态**: ✅ 已实现（2026-07-29 复核）
 
 ---
 

@@ -10,6 +10,27 @@
 ## [Unreleased]
 
 ### Added
+- CI 增加 Windows Python 3.10 / 3.12 / 3.14 兼容矩阵、Linux 覆盖率门槛和
+  Ruff 关键错误检查。
+- 测试使用仓库内脱敏 TODO fixture，不再读取开发者个人目录。
+
+### Changed
+- 开发版本提升为 `0.8.0`，避免与已发布的 `v0.7.0` 对应不同代码历史。
+- 命令、架构、BDD、README 和发行手册已按实时 CLI 与远端发布状态同步。
+- Web 构建工具升级到 Vite 8 / `@vitejs/plugin-vue` 6，移除旧 esbuild
+  开发服务器漏洞，并在 CI 中强制执行 npm 高危审计。
+
+### Fixed
+- 模板子任务目录碰撞时不再引用未定义变量。
+- 模板不存在且父任务回滚失败时不再静默，命令返回系统错误并提示人工处理。
+- 手动或自动归档已完成但顶层索引更新失败时输出明确告警。
+- 删除重复的父任务深度校验逻辑。
+
+---
+
+## [0.7.0] - 2026-07-17 — Web、发行与多字段密钥
+
+### Added
 - **Windows x64 独立发行物**：PyInstaller one-file EXE，无需用户安装 Python；
   构建时验证 `--version`、`note --help` 和 Web 静态首页。
 - **Web 前端迁移到 Vue 3 + Vite（ADR-0002）**：前端源码集中在 `web/` 文件夹，
@@ -271,8 +292,9 @@
 
 ---
 
-[Unreleased]: https://github.com/x-cli/x-cli/compare/v0.6.0...HEAD
-[0.6.0]: https://github.com/x-cli/x-cli/compare/v0.5.0...v0.6.0
-[0.5.0]: https://github.com/x-cli/x-cli/compare/v0.2.0...v0.5.0
-[0.2.0]: https://github.com/x-cli/x-cli/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/x-cli/x-cli/releases/tag/v0.1.0
+[Unreleased]: https://github.com/xuanyuanluoxue/x-cli/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/xuanyuanluoxue/x-cli/releases/tag/v0.7.0
+[0.6.0]: https://github.com/xuanyuanluoxue/x-cli/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/xuanyuanluoxue/x-cli/compare/v0.2.0...v0.5.0
+[0.2.0]: https://github.com/xuanyuanluoxue/x-cli/compare/v0.1.0...v0.2.0
+[0.1.0]: https://github.com/xuanyuanluoxue/x-cli/releases/tag/v0.1.0

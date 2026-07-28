@@ -7,9 +7,7 @@ Each test maps to a scenario in
 from __future__ import annotations
 
 import io
-import os
 import re
-import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
@@ -207,3 +205,76 @@ def test_add_template_nonexistent(isolated_xcli) -> None:
     assert rc == 3
     combined = out + stderr
     assert "模板不存在" in combined
+
+
+def test_add_template_reports_parent_rollback_failure(
+    isolated_xcli,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """模板不存在且父任务无法回滚时返回系统错误并告警。"""
+    def fail_remove(*_args, **_kwargs):
+        raise OSError("access denied")
+
+    monkeypatch.setattr(TaskStore, "remove_task", fail_remove)
+
+    rc, out, stderr = _run(
+        ["todo", "add", "test", "--template", "不存在的模板"]
+    )
+
+    assert rc == 1
+    assert "模板不存在" in out + stderr
+    assert "父任务回滚失败" in stderr
+    assert "access denied" in stderr
+
+
+def test_add_template_resolves_existing_child_folder_collision(
+    isolated_xcli,
+) -> None:
+    """已有同名子任务目录时，模板展开应生成稳定的备用名称。"""
+    _, todo_dir = isolated_xcli
+    _run(["todo", "template", "create", "单步", "--steps", "检查"])
+    existing_rc, _, _ = _run(["todo", "add", "项目-001"])
+    assert existing_rc == 0
+
+    rc, out, err = _run(["todo", "add", "项目", "--template", "单步"])
+
+    assert rc == 0, f"template expansion failed: {out!r} {err!r}"
+    folders = sorted(path.name for path in (todo_dir / "任务").iterdir())
+    assert "项目" in folders
+    assert "项目-001" in folders
+    assert any(name.startswith("项目-001-检查") for name in folders)
+
+
+def test_add_template_resolves_repeated_child_folder_collisions(
+    isolated_xcli,
+) -> None:
+    """备用名称也已存在时继续递增，不覆盖已有任务。"""
+    _, todo_dir = isolated_xcli
+    _run(["todo", "template", "create", "单步", "--steps", "检查"])
+    for name in ("项目-001", "项目-001-检查"):
+        existing_rc, _, _ = _run(["todo", "add", name])
+        assert existing_rc == 0
+
+    rc, out, err = _run(["todo", "add", "项目", "--template", "单步"])
+
+    assert rc == 0, f"template expansion failed: {out!r} {err!r}"
+    assert (todo_dir / "任务" / "项目-001-检查-2").is_dir()
+
+
+def test_add_template_with_empty_steps_rolls_back_parent(
+    isolated_xcli,
+) -> None:
+    """损坏的空步骤模板不能留下孤立父任务。"""
+    data_dir, todo_dir = isolated_xcli
+    templates = data_dir / "templates"
+    templates.mkdir(parents=True, exist_ok=True)
+    (templates / "空模板.yaml").write_text(
+        "---\nname: 空模板\nsteps:\n---\n",
+        encoding="utf-8",
+    )
+
+    rc, out, err = _run(["todo", "add", "不应保留", "--template", "空模板"])
+
+    assert rc == 2
+    assert "模板至少需要 1 个步骤" in out + err
+    assert not (todo_dir / "任务" / "不应保留").exists()

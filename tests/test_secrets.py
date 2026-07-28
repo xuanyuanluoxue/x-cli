@@ -228,7 +228,6 @@ def test_set_duplicate_does_not_overwrite(store: SecretStore) -> None:
 def test_update_value_only(store: SecretStore) -> None:
     """``update`` with only ``value`` mutates value and bumps ``updated_at``."""
     store.set("minimax", value="sk-old")
-    original_updated = store.get("minimax").updated_at
     e = store.update("minimax", value="sk-new")
     assert e.value == "sk-new"
     assert e.updated_at  # may differ from created_at

@@ -19,7 +19,6 @@ fail with ``AttributeError`` (which is the expected TDD red state).
 
 from __future__ import annotations
 
-import io
 import sys
 from contextlib import suppress
 from pathlib import Path
@@ -233,7 +232,6 @@ def test_restore_not_archived_raises(store: TaskStore) -> None:
     Must NOT modify the active file.
     """
     _write_task(store, "kemu1", task_id="kemu1", status="in_progress")
-    from core.parser import parse_frontmatter
 
     before = (store.active_dir / "kemu1" / "TODO.md").read_text(encoding="utf-8")
     with pytest.raises(Exception) as exc_info:  # noqa: BLE001
