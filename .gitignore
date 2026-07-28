@@ -1,0 +1,75 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.exe
+*.log
+.env
+.config.yaml
+config.yaml
+secrets.json
+secrets-backup-*.json
+todo/
+x.log
+x-*.log
+.pytest_cache/
+.coverage
+htmlcov/
+.pytest-tmp/
+*.sha256
+
+# Web frontend (Vue + Vite) — 开发期依赖与临时构建目录。
+# 注意：core/web/static/ 是构建产物，按 ADR-0002 提交进 git，不忽略。
+web/node_modules/
+web/dist/
+
+# Mavis (plan state, sessions, runtime data — not project source)
+.mavis/
+
+# Subagent test artifacts (created by parallel subagent test runs)
+.arts/
+
+# Local AI editor/session state (not project source)
+.mimocode/
+.qoder/
+
+# Open Design skill outputs (HTML previews, SVG icons, JSON manifests).
+# Reproducible from skill inputs — never commit, regenerate on demand.
+.design/
+
+# Local Playwright inspection sessions and screenshots.
+.playwright-cli/

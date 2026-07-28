@@ -1,0 +1,529 @@
+"""plugins/secret.py — ``x secret`` subcommand plugin (Phase 4 split).
+
+8 subcommands: list / get / set / update / rm / search / import / export.
+See :mod:`x` for the dispatch glue.
+
+Plugin contract (required by ``x.py``):
+
+* :func:`register` — bind subparsers + flags for all actions
+* :func:`run` — parse ``sys.argv[1:]`` for this subcommand and dispatch
+  to the right handler
+
+Per-subcommand BDD spec: :mod:`docs.behaviors.secret`.
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+from typing import Callable, Sequence
+
+from core.formatting import display_width, pad
+
+
+# ============================================================
+#  Plugin contract: register() + run()
+# ============================================================
+
+
+SECRET_ACTIONS: tuple[str, ...] = (
+    "list",
+    "get",
+    "set",
+    "update",
+    "rm",
+    "search",
+    "import",
+    "export",
+)
+
+
+def register(parser: argparse.ArgumentParser) -> None:
+    """注册 x secret 的子命令参数。
+
+    对应 BDD：``docs/behaviors/secret-behavior.md``（17 个场景）。
+
+    子命令：list / get / set / update / rm / search / import / export。
+    SecretService 与领域异常都在 handler 路径内做 lazy import，
+    保证 x.py 顶层 import 不加载密钥存储实现。
+    """
+    sub = parser.add_subparsers(
+        dest="secret_action", required=False, metavar="ACTION"
+    )
+
+    # list [--category <c>]
+    sp = sub.add_parser("list", help="列出所有密钥（不显示任何字段值）")
+    sp.add_argument(
+        "--category",
+        dest="category",
+        help="按分组过滤（只显示指定 category 的条目）",
+    )
+
+    # get <name> [--field <label>] [--full]
+    sp = sub.add_parser("get", help="取主密钥或指定字段（默认复制 + 输出）")
+    sp.add_argument("name", help="密钥名（精确 / 模糊匹配）")
+    sp.add_argument(
+        "--field",
+        dest="field_label",
+        help="按字段名称精确取值（大小写不敏感；默认取主密钥）",
+    )
+    sp.add_argument(
+        "--full",
+        action="store_true",
+        help="显示完整元数据表格（跳过剪贴板 / 跳过 stdout）",
+    )
+    sp.add_argument(
+        "--no-clipboard",
+        action="store_true",
+        help="不复制到剪贴板（仅 stdout）",
+    )
+    sp.add_argument(
+        "--no-stdout",
+        action="store_true",
+        help="不输出到 stdout（仅剪贴板，适合\"用完即弃\"的场景）",
+    )
+
+    # set <name> --value <v> [--category <c>] [--note <n>]
+    sp = sub.add_parser("set", help="新增条目")
+    sp.add_argument("name", help="密钥名（唯一）")
+    sp.add_argument("--value", required=True, help="密钥值")
+    sp.add_argument(
+        "--category", default="default", help="分类（默认 default）"
+    )
+    sp.add_argument("--note", default="", help="备注")
+
+    # update <name> [--value <v>] [--note <n>] [--category <c>]
+    sp = sub.add_parser("update", help="修改 value / note / category")
+    sp.add_argument("name", help="密钥名")
+    sp.add_argument("--value", help="新 value（不传则不改）")
+    sp.add_argument(
+        "--note",
+        help="新 note（不传则不改；传空字符串会清空）",
+    )
+    sp.add_argument(
+        "--category",
+        help="新 category（不传则不改）",
+    )
+
+    # rm <name>
+    sp = sub.add_parser("rm", help="删除条目")
+    sp.add_argument("name", help="密钥名")
+
+    # search <keyword>
+    sp = sub.add_parser("search", help="按 name/note 模糊搜（不搜任何字段值）")
+    sp.add_argument("keyword", help="关键词")
+
+    # import --from <dir>
+    sp = sub.add_parser("import", help="从 .md 批量迁移")
+    sp.add_argument(
+        "--from",
+        dest="src_dir",
+        required=True,
+        help="源目录（含 .md 文件）",
+    )
+
+    # export [--to <path>]
+    sp = sub.add_parser("export", help="JSON 备份")
+    sp.add_argument(
+        "--to",
+        dest="dest",
+        help=(
+            "备份文件路径（默认 <db_dir>/secrets-backup-YYYYMMDD-HHMMSS.json）"
+        ),
+    )
+
+
+def run(args: Sequence[str]) -> int:
+    """x secret 入口：解析参数并分发到子命令 handler。
+
+    对应 BDD：``docs/behaviors/secret-behavior.md``（17 场景）。
+
+    无 action → 打印 usage + 退出码 0（BDD §场景 16）。
+    action 解析后通过 ``globals().get("_secret_<action>")`` 派发到对应 handler。
+
+    v0.6.1: ``x secret help``（位置别名）→ 打印 secret help 并退出；
+    ``x secret --help`` / ``x secret -h`` 由 argparse 原生处理。
+    """
+    # v0.6.1: positional ``help`` alias
+    if list(args) == ["help"]:
+        parser = argparse.ArgumentParser(
+            prog="x secret", description="密钥管理（独立 JSON DB）"
+        )
+        register(parser)
+        parser.print_help()
+        return 0
+
+    parser = argparse.ArgumentParser(
+        prog="x secret", description="密钥管理（独立 JSON DB）"
+    )
+    register(parser)
+    parsed = parser.parse_args(list(args))
+
+    if not parsed.secret_action:
+        parser.print_help()
+        return 0
+
+    handler_name = f"_secret_{parsed.secret_action.replace('-', '_')}"
+    handler = globals().get(handler_name)
+    if handler is None:
+        print(
+            f"🚧 x secret {parsed.secret_action} 还未实现",
+            file=sys.stderr,
+        )
+        return 1
+    return handler(parsed)
+
+
+# ============================================================
+#  Table renderer (shared by list / search)
+# ============================================================
+
+
+# list / search 共用的表格列定义（表头 + 取值函数），集中维护 schema
+_SECRET_LIST_COLUMNS: tuple[tuple[str, Callable[[object], str]], ...] = (
+    ("Name", lambda e: f"🔐 {e.name}"),
+    ("Category", lambda e: f"📂 {e.category}"),
+    ("Updated", lambda e: f"🕐 {e.updated_at}"),
+)
+
+
+def _render_secret_table(entries: list) -> str:
+    """Render a list of SecretEntry as a CJK-aligned table (BDD §场景 1, 12).
+
+    空列表走友好提示行，不打表头。列宽按表头与所有数据行的最大
+    display-width 计算（CJK 按 2 宽算），保证中英混排对齐。
+    """
+    if not entries:
+        return "📭 暂无密钥（试试 x secret set <name> --value <v> 创建）\n"
+
+    header_cells = [h for h, _ in _SECRET_LIST_COLUMNS]
+    rows: list[list[str]] = [
+        [col(e) for _, col in _SECRET_LIST_COLUMNS] for e in entries
+    ]
+    col_widths = [
+        max(
+            [display_width(header_cells[i])]
+            + [display_width(row[i]) for row in rows]
+        )
+        for i in range(len(_SECRET_LIST_COLUMNS))
+    ]
+
+    lines: list[str] = [
+        "  ".join(pad(c, col_widths[i]) for i, c in enumerate(header_cells)),
+        "  ".join("─" * col_widths[i] for i in range(len(_SECRET_LIST_COLUMNS))),
+    ]
+    for row in rows:
+        lines.append(
+            "  ".join(pad(c, col_widths[i]) for i, c in enumerate(row))
+        )
+    return "\n".join(lines) + "\n"
+
+
+# ============================================================
+#  Handlers
+# ============================================================
+
+
+# Pattern that recognises a "key line" in a multi-line stored value,
+# e.g. "api_key: sk-xxx" or "token: foo" or "app_secret: bar". Used by
+# ``_secret_get`` to extract a single token from a multi-line value
+# before writing to the clipboard (the most common use case is "I just
+# want the api_key to paste into a tool, not the whole block with
+# base_url, client_id, etc.").
+#
+# Note: anchored at line start, takes the first non-whitespace run
+# after the colon as the value. Multi-line values with three api_key
+# entries (e.g. the migrated 小米 token) get the FIRST one on the
+# clipboard — the user can use --no-clipboard to see all of them.
+import re
+
+_KEY_LINE_RE = re.compile(r"^[ \t]*(?:api_key|token|app_secret|gateway_token)[ \t]*:[ \t]*(\S+)", re.MULTILINE)
+
+
+def _extract_first_key(value: str) -> str | None:
+    """Return the first ``api_key:`` / ``token:`` / ``app_secret:`` / ``gateway_token:``
+    value found in a multi-line stored value, or ``None`` if no such line
+    is present.
+
+    Used by :func:`_secret_get` to write a clean token to the clipboard
+    when the stored value is multi-line. The full value still goes to
+    stdout (so piping / ``--no-clipboard`` users see everything).
+    """
+    match = _KEY_LINE_RE.search(value)
+    return match.group(1) if match else None
+
+
+def _secret_service():
+    """Create the shared secret application service without eager imports."""
+
+    from core.secret_service import SecretService
+
+    return SecretService()
+
+
+def _secret_list(args: argparse.Namespace) -> int:
+    """``x secret list [--category <c>]`` — 列出所有密钥（不显示 value）。
+
+    对应 BDD：§场景 1, 1.5, 1.6。按 name 字典序升序，永不显示 value（硬性约束）。
+    ``--category`` 过滤：只返回匹配的条目（大小写不敏感）。
+    退出码 0（包含空仓库）。
+    """
+    service = _secret_service()
+    entries = service.list(category=args.category)
+    sys.stdout.write(_render_secret_table(entries))
+    return 0
+
+
+def _secret_get(args: argparse.Namespace) -> int:
+    """``x secret get <name> [--field <label>]`` — 取主密钥或指定字段。
+
+    对应 BDD：§场景 2-4 + 用户增强（剪贴板）。
+
+    默认行为（最常用 — 拿来即用）:
+      - stdout 输出 value（兼容管道 / 旧测试）
+      - 复制 value 到系统剪贴板（按量使用的核心场景：拿到就粘贴）
+      - stderr 永远打警告
+
+    退出码：0 成功 / 3 找不到。
+    """
+    service = _secret_service()
+    entry = service.find(args.name)
+    if entry is None:
+        print(f"❌ 密钥不存在：{args.name}", file=sys.stderr)
+        return 3
+
+    if args.full:
+        # 完整元数据表格（BDD §场景 3）— 不复制到剪贴板（剪贴板只放纯值）
+        rows: list[tuple[str, str]] = [
+            ("name", entry.name),
+            ("category", entry.category),
+        ]
+        for item in entry.fields:
+            flags = item.kind + (", primary" if item.primary else "")
+            rows.append((f"field:{item.label}", f"{flags} | {item.value}"))
+        rows.extend(
+            [
+                ("note", entry.note or ""),
+                ("created_at", entry.created_at),
+                ("updated_at", entry.updated_at),
+            ]
+        )
+        col0_w = max(
+            display_width("Field"),
+            max(display_width(r[0]) for r in rows),
+        )
+        col1_w = max(
+            display_width("Value"),
+            max(display_width(r[1]) for r in rows),
+        )
+        out: list[str] = [
+            "  ".join([pad("Field", col0_w), pad("Value", col1_w)]),
+            "  ".join(["─" * col0_w, "─" * col1_w]),
+        ]
+        for k, v in rows:
+            out.append("  ".join([pad(k, col0_w), pad(v, col1_w)]))
+        sys.stdout.write("\n".join(out) + "\n")
+        print(
+            "🔐 警告：密钥已输出到 stdout（可能被 shell 历史 / 日志捕获）",
+            file=sys.stderr,
+        )
+        return 0
+
+    selected = (
+        entry.get_field(args.field_label)
+        if args.field_label is not None
+        else entry.primary_field
+    )
+    if selected is None:
+        print(
+            f"❌ 字段不存在：{args.field_label}（密钥：{entry.name}）",
+            file=sys.stderr,
+        )
+        return 2
+
+    # 默认流程：stdout + 剪贴板
+    # 剪贴板拿到的是「干净」的 token（从多行 value 中提取第一个
+    # api_key: / token: / app_secret: / gateway_token: 行的值），方便
+    # 直接粘贴。stdout 仍给完整 value（管道 / 调试用户能看到全部）。
+    if not args.no_stdout:
+        print(selected.value)
+
+    if not args.no_clipboard:
+        extracted = (
+            _extract_first_key(selected.value)
+            if args.field_label is None
+            else None
+        )
+        if extracted is not None and extracted != selected.value:
+            # 多行 value 且能识别 key 行 → 把第一个 key 写到剪贴板
+            clipboard_text = extracted
+            extract_note = "（已提取 api_key 行）"
+        else:
+            # 单行 value 或无 key 模式 → 整块写到剪贴板
+            clipboard_text = selected.value
+            extract_note = ""
+        ok, msg = _copy_to_clipboard(clipboard_text)
+        if ok:
+            note = f"📋 已复制到剪贴板（{msg}）{extract_note}".rstrip()
+            print(note, file=sys.stderr)
+        else:
+            print(f"⚠️ 复制到剪贴板失败：{msg}（请用 --no-stdout 关掉 stdout 或手动复制）", file=sys.stderr)
+
+    # BDD 硬性约束：get 永远 stderr 警告（不管是否 tty / 是否有 --full）
+    print(
+        "🔐 警告：密钥已输出到 stdout（可能被 shell 历史 / 日志捕获）",
+        file=sys.stderr,
+    )
+    return 0
+
+
+def _copy_to_clipboard(text: str) -> tuple[bool, str]:
+    """Copy ``text`` to the system clipboard. Returns ``(success, backend_name)``.
+
+    Tries in order: ``clip.exe`` (Windows) → ``pbcopy`` (macOS) → ``xclip`` (Linux X11)
+    → ``wl-copy`` (Linux Wayland) → fall back to printing a hint.
+
+    Stdlib only (no ``pyperclip``).
+    """
+    encoded = text.encode("utf-8")
+    candidates: list[tuple[list[str], str]] = [
+        (["clip"], "Windows clip.exe"),
+        (["pbcopy"], "macOS pbcopy"),
+        (["xclip", "-selection", "clipboard"], "Linux xclip"),
+        (["wl-copy"], "Linux wl-copy (Wayland)"),
+    ]
+    for cmd, name in candidates:
+        try:
+            subprocess.run(
+                cmd,
+                input=encoded,
+                check=True,
+                timeout=5,
+                capture_output=True,
+            )
+            return True, name
+        except FileNotFoundError:
+            continue
+        except subprocess.TimeoutExpired:
+            return False, f"{name} 超时"
+        except subprocess.CalledProcessError as e:
+            return False, f"{name} 退出码 {e.returncode}"
+    return False, "未找到剪贴板后端（clip/pbcopy/xclip/wl-copy）"
+
+
+def _secret_set(args: argparse.Namespace) -> int:
+    """``x secret set <name> --value <v> [--category <c>] [--note <n>]`` — 新增条目。
+
+    对应 BDD：§场景 5-7。已存在 → 退出码 4（用 update 改）。
+    """
+    from core.secrets import SecretAlreadyExistsError  # lazy import
+
+    service = _secret_service()
+    try:
+        entry = service.create(
+            args.name,
+            args.value,
+            category=args.category,
+            note=args.note,
+        )
+    except SecretAlreadyExistsError:
+        print(
+            f"❌ 密钥已存在：{args.name}（用 x secret update 修改）",
+            file=sys.stderr,
+        )
+        return 4
+
+    print(f"✅ 密钥已创建：{entry.name}")
+    return 0
+
+
+def _secret_update(args: argparse.Namespace) -> int:
+    """``x secret update <name> [--value <v>] [--note <n>] [--category <c>]`` — 修改 value / note / category。
+
+    对应 BDD：§场景 8-9, 8.5, 8.6。
+    - 至少要指定 ``--value`` 或 ``--note`` 或 ``--category`` 之一（否则退码 2）
+    - ``--note ""`` 显式传空串表示清空 note
+    - 找不到 → 退出码 3
+    """
+    if args.value is None and args.note is None and args.category is None:
+        print(
+            "❌ 至少要指定 --value / --note / --category 之一",
+            file=sys.stderr,
+        )
+        return 2
+
+    from core.secrets import SecretNotFoundError  # lazy import
+
+    service = _secret_service()
+    try:
+        entry = service.update(
+            args.name, value=args.value, note=args.note, category=args.category
+        )
+    except SecretNotFoundError:
+        print(f"❌ 密钥不存在：{args.name}", file=sys.stderr)
+        return 3
+
+    print(f"✅ 密钥已更新：{entry.name}")
+    return 0
+
+
+def _secret_rm(args: argparse.Namespace) -> int:
+    """``x secret rm <name>`` — 删除条目。
+
+    对应 BDD：§场景 10-11。找不到 → 退出码 3。
+    """
+    from core.secrets import SecretNotFoundError  # lazy import
+
+    service = _secret_service()
+    try:
+        entry = service.delete(args.name)
+    except SecretNotFoundError:
+        print(f"❌ 密钥不存在：{args.name}", file=sys.stderr)
+        return 3
+
+    print(f"✅ 密钥已删除：{entry.name}")
+    return 0
+
+
+def _secret_search(args: argparse.Namespace) -> int:
+    """``x secret search <keyword>`` — 按 name/note 模糊搜（不搜 value）。
+
+    对应 BDD：§场景 12。搜索范围 = name + note，硬性**不**搜 value
+    （避免 grep 撞到密钥）。输出格式与 list 一致。
+    """
+    service = _secret_service()
+    entries = sorted(service.search(args.keyword), key=lambda e: e.name)
+    sys.stdout.write(_render_secret_table(entries))
+    return 0
+
+
+def _secret_import(args: argparse.Namespace) -> int:
+    """``x secret import --from <dir>`` — 从 .md 批量迁移。
+
+    对应 BDD：§场景 13-14。源目录不存在 → 退出码 5。
+    旧 .md 文件**保留**（单向导入，不删源文件）。
+    """
+    src = Path(args.src_dir)
+    if not src.is_dir():
+        print(f"❌ 源目录不存在：{src}", file=sys.stderr)
+        return 5
+
+    service = _secret_service()
+    imported, skipped = service.import_from_dir(src)
+    print(f"📥 迁移完成：导入 {imported} 条，跳过 {skipped} 条（重复）")
+    return 0
+
+
+def _secret_export(args: argparse.Namespace) -> int:
+    """``x secret export [--to <path>]`` — JSON 备份。
+
+    对应 BDD：§场景 15。默认路径 = ``<db_dir>/secrets-backup-YYYYMMDD-HHMMSS.json``。
+    """
+    dest = Path(args.dest) if args.dest else None
+    service = _secret_service()
+    path = service.export(dest)
+    n = len(service.list())
+    print(f"✅ 已备份 {n} 条到 {path}")
+    return 0

@@ -1,0 +1,1071 @@
+"""Tests for ``core/secrets.py`` — SecretStore CRUD and import/export.
+
+Each test maps to a scenario in
+:file:`docs/behaviors/secret-behavior.md`. The store interface is
+the boundary between the CLI (``x secret ...``) and the JSON DB on
+disk; CLI-layer concerns (argparse, exit codes, table rendering)
+live in :file:`tests/test_e2e_secret.py` (T12).
+
+All tests use ``tmp_path`` for ``db_path`` so the real
+``%LOCALAPPDATA%\\x-cli\\secrets.json`` is never touched. The
+fixture :func:`store` below initialises an empty store rooted at
+``tmp_path`` per-test.
+
+BDD scenario mapping:
+
+============  ======================================================
+Scenario       Tests
+============  ======================================================
+1 (list)       ``test_list_*``
+2 (get value)  ``test_get_*``
+3 (find)       ``test_find_*``  (interface method, not BDD-listed)
+4 (set new)    ``test_set_creates_entry`` / ``test_set_duplicate_raises``
+5 (set dupe)   ``test_set_duplicate_raises``
+6 (set no arg) N/A — argparse layer (T12)
+7 (update)     ``test_update_*``
+8 (update 404) ``test_update_nonexistent_raises``
+9 (rm)         ``test_rm_*``
+10 (rm 404)    ``test_rm_nonexistent_raises``
+11 (search)    ``test_search_*``
+12 (import)    ``test_import_*``
+13 (import 404) N/A — CLI layer (T12) returns exit 5
+14 (export)    ``test_export_*``
+15 (empty)     N/A — CLI layer (T12)
+16 (help)      N/A — CLI layer (T12)
+============  ======================================================
+"""
+
+from __future__ import annotations
+
+import json
+import subprocess
+import sys
+import time
+from datetime import date
+from pathlib import Path
+
+import pytest
+
+from core.secrets import (
+    SecretAlreadyExistsError,
+    SecretEntry,
+    SecretError,
+    SecretField,
+    SecretNotFoundError,
+    SecretStore,
+)
+
+
+# ============================================================
+#  Fixtures
+# ============================================================
+
+
+@pytest.fixture
+def store(tmp_path: Path) -> SecretStore:
+    """An empty store rooted at a temp file (real DB is safe)."""
+    return SecretStore(db_path=tmp_path / "secrets.json")
+
+
+# ============================================================
+#  BDD scenario 1: list returns all entries sorted by name
+# ============================================================
+
+
+def test_list_empty_returns_empty_list(store: SecretStore) -> None:
+    """Empty DB → empty list."""
+    assert store.list() == []
+
+
+def test_list_sorts_by_name_case_insensitive(store: SecretStore) -> None:
+    """Sort key is case-insensitive (Apple < banana < zebra)."""
+    store.set("zebra", value="z")
+    store.set("Apple", value="a")
+    store.set("banana", value="b")
+    names = [e.name for e in store.list()]
+    assert names == ["Apple", "banana", "zebra"]
+
+
+def test_list_returns_secret_entry_instances(store: SecretStore) -> None:
+    """The list contains :class:`SecretEntry` instances, not dicts."""
+    store.set("minimax", value="x")
+    entries = store.list()
+    assert len(entries) == 1
+    assert isinstance(entries[0], SecretEntry)
+
+
+def test_list_by_category_filters_entries(store: SecretStore) -> None:
+    """``list(category=...)`` only returns entries matching the category (BDD scenario 1.5)."""
+    store.set("minimax", value="x", category="接口密钥")
+    store.set("openai", value="y", category="接口密钥")
+    store.set("aliyun_ssh", value="z", category="服务器")
+
+    api_entries = store.list(category="接口密钥")
+    names = [e.name for e in api_entries]
+    assert "minimax" in names
+    assert "openai" in names
+    assert "aliyun_ssh" not in names
+
+
+def test_list_by_category_no_match_returns_empty(store: SecretStore) -> None:
+    """``list(category=...)`` with no match returns empty list (BDD scenario 1.6)."""
+    store.set("minimax", value="x", category="接口密钥")
+    assert store.list(category="不存在的分组") == []
+
+
+def test_list_by_category_case_insensitive(store: SecretStore) -> None:
+    """Category filter is case-insensitive."""
+    store.set("minimax", value="x", category="API")
+    entries = store.list(category="api")
+    assert len(entries) == 1
+    assert entries[0].name == "minimax"
+
+
+# ============================================================
+#  BDD scenario 2: get returns exact match
+# ============================================================
+
+
+def test_get_existing(store: SecretStore) -> None:
+    """Exact name match returns the entry with value + category."""
+    store.set("minimax", value="sk-test1234", category="接口密钥")
+    e = store.get("minimax")
+    assert e is not None
+    assert e.name == "minimax"
+    assert e.value == "sk-test1234"
+    assert e.category == "接口密钥"
+
+
+def test_get_is_case_sensitive(store: SecretStore) -> None:
+    """``get`` is exact-match (case-sensitive); use :meth:`find` for
+    case-insensitive substring lookup. Original casing is preserved
+    on disk per BDD §"字段约束".
+    """
+    store.set("minimax", value="x")
+    # Exact match
+    assert store.get("minimax") is not None
+    # Different case → miss
+    assert store.get("MIniMax") is None
+    assert store.get("MINIMAX") is None
+    # But the original casing is preserved on the entry
+    assert store.get("minimax").name == "minimax"
+
+
+def test_get_nonexistent_returns_none(store: SecretStore) -> None:
+    """Missing key returns ``None`` (not an exception — per BDD scenario 4
+    which is CLI-side mapping to exit 3)."""
+    assert store.get("nope") is None
+
+
+# ============================================================
+#  BDD scenario 3 (interface method, not in BDD list): find
+# ============================================================
+
+
+def test_find_substring(store: SecretStore) -> None:
+    """``find`` does substring matching across names."""
+    store.set("minimax-prod", value="x")
+    e = store.find("minimax")
+    assert e is not None
+    assert e.name == "minimax-prod"
+
+
+def test_find_no_match_returns_none(store: SecretStore) -> None:
+    store.set("minimax-prod", value="x")
+    assert store.find("xyz123") is None
+
+
+# ============================================================
+#  BDD scenario 4 & 5: set inserts / rejects duplicate
+# ============================================================
+
+
+def test_set_creates_entry(store: SecretStore) -> None:
+    """``set`` with all fields returns a populated :class:`SecretEntry`."""
+    e = store.set("minimax", value="sk-1234", category="接口密钥", note="from xavier")
+    assert e.name == "minimax"
+    assert e.value == "sk-1234"
+    assert e.category == "接口密钥"
+    assert e.note == "from xavier"
+    assert e.created_at  # ISO 8601 non-empty
+    assert e.updated_at  # same as created_at on insert
+    assert e.created_at == e.updated_at
+
+
+def test_set_default_category(store: SecretStore) -> None:
+    """``category`` defaults to ``"default"`` if omitted."""
+    e = store.set("minimax", value="x")
+    assert e.category == "default"
+
+
+def test_set_persists_to_disk(store: SecretStore) -> None:
+    """After ``set``, reloading from disk finds the entry."""
+    store.set("minimax", value="sk-x", category="cat")
+    reloaded = SecretStore(db_path=store.db_path)
+    assert reloaded.get("minimax").value == "sk-x"
+
+
+def test_set_duplicate_raises(store: SecretStore) -> None:
+    """Re-setting the same name raises :class:`SecretAlreadyExistsError`."""
+    store.set("minimax", value="v1")
+    with pytest.raises(SecretAlreadyExistsError):
+        store.set("minimax", value="v2")
+
+
+def test_set_duplicate_does_not_overwrite(store: SecretStore) -> None:
+    """A failed set must NOT silently overwrite the existing value."""
+    store.set("minimax", value="original")
+    with pytest.raises(SecretAlreadyExistsError):
+        store.set("minimax", value="new")
+    assert store.get("minimax").value == "original"
+
+
+# ============================================================
+#  BDD scenario 7 & 8: update modifies / 404
+# ============================================================
+
+
+def test_update_value_only(store: SecretStore) -> None:
+    """``update`` with only ``value`` mutates value and bumps ``updated_at``."""
+    store.set("minimax", value="sk-old")
+    original_updated = store.get("minimax").updated_at
+    e = store.update("minimax", value="sk-new")
+    assert e.value == "sk-new"
+    assert e.updated_at  # may differ from created_at
+
+
+def test_update_preserves_created_at(store: SecretStore) -> None:
+    """``created_at`` is immutable; only ``updated_at`` changes."""
+    store.set("minimax", value="sk-old")
+    original_created = store.get("minimax").created_at
+    e = store.update("minimax", value="sk-new")
+    assert e.created_at == original_created
+
+
+def test_update_note_only(store: SecretStore) -> None:
+    """``update`` accepts ``value`` and ``note``; ``category`` is
+    immutable through this method (BDD scenario 8 only lists ``--value``).
+    """
+    store.set("minimax", value="x", category="keep", note="n1")
+    e = store.update("minimax", note="n2")
+    assert e.note == "n2"
+    assert e.value == "x"  # unchanged
+    assert e.category == "keep"  # not touched by update
+
+
+def test_update_category_only(store: SecretStore) -> None:
+    """``update`` with ``category`` changes the category (BDD scenario 8.5)."""
+    store.set("minimax", value="x", category="default")
+    e = store.update("minimax", category="接口密钥")
+    assert e.category == "接口密钥"
+    assert e.value == "x"
+
+
+def test_update_value_and_category(store: SecretStore) -> None:
+    """``update`` with both ``value`` and ``category`` (BDD scenario 8.6)."""
+    store.set("minimax", value="sk-old", category="default")
+    e = store.update("minimax", value="sk-new", category="接口密钥")
+    assert e.value == "sk-new"
+    assert e.category == "接口密钥"
+
+
+def test_update_category_persists_to_disk(store: SecretStore) -> None:
+    """Category change via ``update`` is persisted to disk."""
+    store.set("minimax", value="x", category="default")
+    store.update("minimax", category="接口密钥")
+    reloaded = SecretStore(db_path=store.db_path)
+    assert reloaded.get("minimax").category == "接口密钥"
+
+
+def test_update_persists_to_disk(store: SecretStore) -> None:
+    store.set("minimax", value="sk-old")
+    store.update("minimax", value="sk-new")
+    reloaded = SecretStore(db_path=store.db_path)
+    assert reloaded.get("minimax").value == "sk-new"
+
+
+def test_update_nonexistent_raises(store: SecretStore) -> None:
+    with pytest.raises(SecretNotFoundError):
+        store.update("nope", value="x")
+
+
+# ============================================================
+#  BDD scenario 9 & 10: rm deletes / 404
+# ============================================================
+
+
+def test_rm_existing(store: SecretStore) -> None:
+    """Removing an existing entry returns it; subsequent get returns None."""
+    store.set("minimax", value="x")
+    removed = store.rm("minimax")
+    assert removed.name == "minimax"
+    assert store.get("minimax") is None
+
+
+def test_rm_persists_to_disk(store: SecretStore) -> None:
+    store.set("minimax", value="x")
+    store.rm("minimax")
+    reloaded = SecretStore(db_path=store.db_path)
+    assert reloaded.get("minimax") is None
+
+
+def test_rm_nonexistent_raises(store: SecretStore) -> None:
+    with pytest.raises(SecretNotFoundError):
+        store.rm("nope")
+
+
+# ============================================================
+#  BDD scenario 11: search matches name+note, NEVER value
+# ============================================================
+
+
+def test_search_matches_name(store: SecretStore) -> None:
+    """Substring match on the name field."""
+    store.set("openai-prod", value="sk-x")
+    store.set("minimax", value="sk-y")
+    # "openai-prod" contains "open" and "prod"; pick one
+    results = store.search("open")
+    names = {r.name for r in results}
+    assert "openai-prod" in names
+    assert "minimax" not in names
+
+    # Case-insensitive
+    results_upper = store.search("OPEN")
+    assert {r.name for r in results_upper} == {"openai-prod"}
+
+
+def test_search_matches_note(store: SecretStore) -> None:
+    """Substring match on the note field too."""
+    store.set("minimax", value="sk-x", note="used for API calls")
+    results = store.search("API")
+    assert len(results) == 1
+    assert results[0].name == "minimax"
+
+
+def test_search_never_matches_value(store: SecretStore) -> None:
+    """CRITICAL: search must NOT match on value (privacy / grep leak)."""
+    store.set("minimax", value="sk-secret-value", note="")
+    results = store.search("sk-secret-value")
+    assert len(results) == 0
+
+
+def test_search_never_matches_text_field(store: SecretStore) -> None:
+    """Even non-secret field values stay outside the search index."""
+    store.set(
+        "webdav",
+        fields=[
+            SecretField("URL", "text", "https://private.example.test"),
+            SecretField("密码", "secret", "pw-secret", primary=True),
+        ],
+    )
+    assert store.search("private.example") == []
+
+
+def test_search_empty_query_returns_empty(store: SecretStore) -> None:
+    """Empty query → empty list (no accidental full-DB dump)."""
+    store.set("a", value="1")
+    store.set("b", value="2")
+    assert store.search("") == []
+
+
+# ============================================================
+#  BDD scenario 12: import_from_dir parses .md files
+# ============================================================
+
+
+def test_import_from_dir_basic(tmp_path: Path) -> None:
+    """A .md file with a ``## name`` section + ```text block``` becomes an entry."""
+    md_file = tmp_path / "接口密钥.md"
+    md_file.write_text(
+        "---\n"
+        "version: \"1.0\"\n"
+        "count: 1\n"
+        "---\n"
+        "\n"
+        "# 接口密钥\n"
+        "\n"
+        "## minimax\n"
+        "\n"
+        "| 字段 | 值 |\n"
+        "|------|-----|\n"
+        "| 用途 | 测试 |\n"
+        "\n"
+        "```text\n"
+        "api_key: sk-test1234\n"
+        "```\n",
+        encoding="utf-8",
+    )
+
+    store = SecretStore(db_path=tmp_path / "out.json")
+    imported, skipped = store.import_from_dir(tmp_path)
+    assert imported == 1
+    assert skipped == 0
+
+    entries = store.list()
+    assert len(entries) == 1
+    e = entries[0]
+    assert e.name == "minimax"
+    assert e.category == "接口密钥"  # from .md filename (sans .md)
+    # Value is stored verbatim — full ``api_key: sk-test1234`` preserved.
+    assert "api_key: sk-test1234" in e.value
+    # Metadata table → note
+    assert "用途" in e.note
+    assert "测试" in e.note
+
+
+def test_import_from_multiple_md_files(tmp_path: Path) -> None:
+    """Each .md → one category; one section per entry."""
+    (tmp_path / "接口密钥.md").write_text(
+        "## minimax\n\n```text\napi_key: sk-x\n```\n", encoding="utf-8"
+    )
+    (tmp_path / "令牌.md").write_text(
+        "## openai\n\n```text\ntoken: tk-y\n```\n", encoding="utf-8"
+    )
+
+    store = SecretStore(db_path=tmp_path / "out.json")
+    imported, skipped = store.import_from_dir(tmp_path)
+    assert imported == 2
+    assert skipped == 0
+
+    by_name = {e.name: e for e in store.list()}
+    assert by_name["minimax"].category == "接口密钥"
+    assert by_name["openai"].category == "令牌"
+
+
+def test_import_skips_duplicates(tmp_path: Path) -> None:
+    """If name already exists in the DB, skip (don't overwrite)."""
+    md_file = tmp_path / "keys.md"
+    md_file.write_text(
+        "## minimax\n\n```text\napi_key: from_md\n```\n",
+        encoding="utf-8",
+    )
+
+    store = SecretStore(db_path=tmp_path / "out.json")
+    store.set("minimax", value="pre-existing")
+
+    imported, skipped = store.import_from_dir(tmp_path)
+    assert imported == 0
+    assert skipped == 1
+
+    # Pre-existing value preserved
+    assert store.get("minimax").value == "pre-existing"
+
+
+def test_import_does_not_delete_old_files(tmp_path: Path) -> None:
+    """Old .md files must remain in the source dir after import."""
+    md_file = tmp_path / "key.md"
+    md_file.write_text("## test\n\n```text\nv: 1\n```\n", encoding="utf-8")
+
+    store = SecretStore(db_path=tmp_path / "out.json")
+    store.import_from_dir(tmp_path)
+
+    assert md_file.exists()
+
+
+def test_import_preserves_key_prefix_verbatim(tmp_path: Path) -> None:
+    """Single-line ``KEY: VALUE`` blocks store the line unchanged (no stripping)."""
+    md = tmp_path / "接口密钥.md"
+    md.write_text(
+        "## minimax\n\n```text\napi_key: sk-cp-xxxx\n```\n",
+        encoding="utf-8",
+    )
+
+    store = SecretStore(db_path=tmp_path / "out.json")
+    store.import_from_dir(tmp_path)
+    e = store.get("minimax")
+    assert e is not None
+    assert e.value == "api_key: sk-cp-xxxx"
+
+
+def test_import_preserves_multiline_verbatim(tmp_path: Path) -> None:
+    """Multi-line blocks preserve each line exactly — no prefix stripping."""
+    md = tmp_path / "令牌.md"
+    md.write_text(
+        "## feishu\n\n"
+        "```text\n"
+        "app_id: cli_a92\n"
+        "app_secret: 0UNVM\n"
+        "```\n",
+        encoding="utf-8",
+    )
+
+    store = SecretStore(db_path=tmp_path / "out.json")
+    store.import_from_dir(tmp_path)
+    e = store.get("feishu")
+    assert e is not None
+    assert "app_id: cli_a92" in e.value
+    assert "app_secret: 0UNVM" in e.value
+    assert len(e.fields) == 1
+    assert e.fields[0] == SecretField(
+        label="密钥",
+        kind="secret",
+        value=e.value,
+        primary=True,
+    )
+
+
+def test_import_skips_readme_files(tmp_path: Path) -> None:
+    """README.md / 模板.md are not treated as secret sources."""
+    (tmp_path / "README.md").write_text(
+        "## 格式规范（v1.0）\n\n```text\napi_key: sk-fake\n```\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "real.md").write_text(
+        "## real_key\n\n```text\nsk-real\n```\n",
+        encoding="utf-8",
+    )
+
+    store = SecretStore(db_path=tmp_path / "out.json")
+    imported, _skipped = store.import_from_dir(tmp_path)
+    assert imported == 1
+    assert store.get("real_key") is not None
+    assert store.get("格式规范（v1.0）") is None  # README section NOT imported
+
+
+def test_import_stamps_timestamps(tmp_path: Path) -> None:
+    """Imported entries get non-empty ``created_at`` / ``updated_at``."""
+    md = tmp_path / "keys.md"
+    md.write_text("## foo\n\n```text\nbar\n```\n", encoding="utf-8")
+
+    store = SecretStore(db_path=tmp_path / "out.json")
+    store.import_from_dir(tmp_path)
+    e = store.get("foo")
+    assert e is not None
+    assert e.created_at
+    assert e.updated_at
+
+
+def test_import_empty_dir_returns_zero_zero(tmp_path: Path) -> None:
+    """No .md files → (0, 0) cleanly."""
+    store = SecretStore(db_path=tmp_path / "out.json")
+    imported, skipped = store.import_from_dir(tmp_path)
+    assert imported == 0
+    assert skipped == 0
+
+
+# ============================================================
+#  BDD scenario 14: export creates backup file
+# ============================================================
+
+
+def test_export_creates_backup_file(tmp_path: Path) -> None:
+    """``export(dest=...)`` writes a valid JSON file at dest."""
+    store = SecretStore(db_path=tmp_path / "secrets.json")
+    store.set("minimax", value="sk-x")
+
+    backup = tmp_path / "backup.json"
+    returned = store.export(dest=backup)
+    assert returned == backup
+    assert backup.exists()
+
+    data = json.loads(backup.read_text(encoding="utf-8"))
+    assert "secrets" in data
+    assert data["secrets"][0]["name"] == "minimax"
+
+
+def test_export_auto_names_file(tmp_path: Path) -> None:
+    """``export()`` with no dest → auto-generates a timestamped filename."""
+    store = SecretStore(db_path=tmp_path / "secrets.json")
+    store.set("minimax", value="sk-x")
+
+    returned = store.export()  # no dest
+    assert returned.exists()
+    assert returned.parent == tmp_path
+    assert "backup" in returned.name
+
+
+def test_export_round_trip(tmp_path: Path) -> None:
+    """A backup file can be loaded back as a SecretStore (or contains
+    the same data)."""
+    db = tmp_path / "secrets.json"
+    s1 = SecretStore(db_path=db)
+    s1.set("a", value="1")
+    s1.set("b", value="2")
+
+    backup = tmp_path / "backup.json"
+    s1.export(dest=backup)
+
+    s2 = SecretStore(db_path=backup)
+    names = {e.name for e in s2.list()}
+    assert names == {"a", "b"}
+
+
+# ============================================================
+#  Persistence: re-loading preserves data
+# ============================================================
+
+
+def test_persistence_round_trip(tmp_path: Path) -> None:
+    """Write, then re-instantiate from the same db_path → all data preserved."""
+    db = tmp_path / "secrets.json"
+
+    s1 = SecretStore(db_path=db)
+    s1.set("minimax", value="sk-x", category="cat", note="note")
+
+    s2 = SecretStore(db_path=db)  # reload from disk
+    e = s2.get("minimax")
+    assert e is not None
+    assert e.value == "sk-x"
+    assert e.category == "cat"
+    assert e.note == "note"
+    # Timestamps round-trip
+    assert e.created_at == s1.get("minimax").created_at
+
+
+def test_loading_missing_db_creates_empty_store(tmp_path: Path) -> None:
+    """First run on a fresh machine: DB doesn't exist → empty store, no error."""
+    db = tmp_path / "fresh.json"
+    assert not db.exists()
+    s = SecretStore(db_path=db)
+    assert s.list() == []
+
+
+def test_loading_corrupt_db_raises(tmp_path: Path) -> None:
+    """A malformed JSON file should fail loudly (CLI maps to exit 5).
+
+    Per BDD §"退出码速查": DB 错 → exit 5 (JSON 损坏).
+    The store does not eagerly validate on ``__init__`` (the file
+    already exists so it does not get rewritten), but the first read
+    (``list``) raises :class:`SecretError`.
+    """
+    from core.secrets import SecretError
+
+    db = tmp_path / "corrupt.json"
+    db.write_text("{ not valid json", encoding="utf-8")
+    store = SecretStore(db_path=db)
+    with pytest.raises(SecretError):
+        store.list()
+
+
+# ============================================================
+#  BDD scenarios 18-23: multi-field schema and v1 migration
+# ============================================================
+
+
+def test_secret_entry_reads_legacy_value_as_primary_secret_field() -> None:
+    entry = SecretEntry.from_dict(
+        {
+            "name": "old",
+            "category": "legacy",
+            "value": "sk-old",
+            "note": "kept",
+        }
+    )
+
+    assert entry.value == "sk-old"
+    assert entry.primary_field == SecretField(
+        label="密钥", kind="secret", value="sk-old", primary=True
+    )
+
+
+def test_secret_entry_serializes_fields_without_duplicate_value() -> None:
+    entry = SecretEntry(
+        name="webdav",
+        fields=[
+            SecretField("URL", "text", "https://example.test"),
+            SecretField("密码", "secret", "pw", primary=True),
+        ],
+    )
+
+    payload = entry.to_dict()
+
+    assert "value" not in payload
+    assert payload["fields"] == [
+        {
+            "label": "URL",
+            "kind": "text",
+            "value": "https://example.test",
+            "primary": False,
+        },
+        {"label": "密码", "kind": "secret", "value": "pw", "primary": True},
+    ]
+
+
+@pytest.mark.parametrize(
+    "fields, message",
+    [
+        ([], "at least one"),
+        ([{"label": "", "kind": "secret", "value": "x", "primary": True}], "label"),
+        (
+            [
+                {"label": "URL", "kind": "text", "value": "a"},
+                {"label": "url", "kind": "secret", "value": "b", "primary": True},
+            ],
+            "unique",
+        ),
+        ([{"label": "x", "kind": "url", "value": "a", "primary": True}], "kind"),
+        ([{"label": "x", "kind": "secret", "value": "", "primary": True}], "value"),
+        ([{"label": "x", "kind": "secret", "value": "a"}], "primary"),
+        (
+            [
+                {"label": "a", "kind": "secret", "value": "a", "primary": True},
+                {"label": "b", "kind": "secret", "value": "b", "primary": True},
+            ],
+            "primary",
+        ),
+        ([{"label": "x", "kind": "text", "value": "a", "primary": True}], "secret"),
+        (
+            [
+                {"label": f"f{i}", "kind": "text", "value": str(i)}
+                for i in range(50)
+            ]
+            + [{"label": "main", "kind": "secret", "value": "x", "primary": True}],
+            "50",
+        ),
+    ],
+)
+def test_secret_fields_validate_shape(fields, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        SecretEntry(name="invalid", fields=fields)
+
+
+def test_unknown_entry_keys_survive_multi_field_round_trip() -> None:
+    entry = SecretEntry.from_dict(
+        {
+            "name": "future",
+            "fields": [
+                {"label": "密钥", "kind": "secret", "value": "x", "primary": True}
+            ],
+            "future_metadata": {"owner": "xavier"},
+        }
+    )
+
+    assert entry.to_dict()["future_metadata"] == {"owner": "xavier"}
+
+
+def _write_v1_db(path: Path) -> bytes:
+    original = (
+        '{\n  "version": "1.0",\n  "secrets": [\n'
+        '    {"name": "old", "value": "sk-old", "category": "legacy"}\n'
+        "  ]\n}\n"
+    ).encode("utf-8")
+    path.write_bytes(original)
+    return original
+
+
+def test_reading_v1_db_does_not_rewrite_or_backup(tmp_path: Path) -> None:
+    db = tmp_path / "secrets.json"
+    original = _write_v1_db(db)
+    store = SecretStore(db_path=db)
+
+    assert store.list()[0].value == "sk-old"
+    assert db.read_bytes() == original
+    assert list(tmp_path.glob("secrets-v1.0-backup-*.json")) == []
+
+
+def test_first_mutation_of_v1_db_creates_exact_original_backup(tmp_path: Path) -> None:
+    db = tmp_path / "secrets.json"
+    original = _write_v1_db(db)
+    store = SecretStore(db_path=db)
+
+    updated = store.update("old", value="sk-new")
+
+    backups = list(tmp_path.glob("secrets-v1.0-backup-*.json"))
+    assert len(backups) == 1
+    assert backups[0].read_bytes() == original
+    payload = json.loads(db.read_text(encoding="utf-8"))
+    assert payload["version"] == "1.1"
+    assert "value" not in payload["secrets"][0]
+    assert updated.value == "sk-new"
+
+
+def test_second_mutation_does_not_create_another_v1_backup(tmp_path: Path) -> None:
+    db = tmp_path / "secrets.json"
+    _write_v1_db(db)
+    store = SecretStore(db_path=db)
+
+    store.update("old", value="sk-new")
+    store.set("second", value="sk-second")
+
+    assert len(list(tmp_path.glob("secrets-v1.0-backup-*.json"))) == 1
+
+
+def test_failed_backup_keeps_original_db_untouched(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    db = tmp_path / "secrets.json"
+    original = _write_v1_db(db)
+    store = SecretStore(db_path=db)
+
+    def fail_backup(_original: bytes) -> Path:
+        raise OSError("backup denied")
+
+    monkeypatch.setattr(store, "_write_migration_backup", fail_backup)
+
+    with pytest.raises(SecretError, match="backup"):
+        store.update("old", value="sk-new")
+    assert db.read_bytes() == original
+
+
+def test_set_accepts_fields_and_rejects_fields_with_legacy_value(
+    store: SecretStore,
+) -> None:
+    fields = [
+        SecretField("URL", "text", "https://example.test"),
+        SecretField("密码", "secret", "pw", primary=True),
+    ]
+
+    entry = store.set("webdav", fields=fields)
+    assert entry.fields == fields
+    assert entry.value == "pw"
+
+    with pytest.raises(ValueError, match="value.*fields"):
+        store.set("ambiguous", value="x", fields=fields)
+    assert store.get("ambiguous") is None
+
+
+def test_update_fields_and_legacy_value_updates_only_primary(
+    store: SecretStore,
+) -> None:
+    store.set(
+        "webdav",
+        fields=[
+            SecretField("URL", "text", "https://old.example"),
+            SecretField("密码", "secret", "old", primary=True),
+        ],
+    )
+
+    updated = store.update("webdav", value="new")
+    assert updated.value == "new"
+    assert updated.get_field("url").value == "https://old.example"
+
+    replacement = [
+        SecretField("端点", "text", "https://new.example"),
+        SecretField("令牌", "secret", "token", primary=True),
+    ]
+    updated = store.update("webdav", fields=replacement)
+    assert updated.fields == replacement
+
+    with pytest.raises(ValueError, match="value.*fields"):
+        store.update("webdav", value="x", fields=replacement)
+    assert store.get("webdav").fields == replacement
+
+
+def test_unknown_future_db_version_is_rejected(tmp_path: Path) -> None:
+    db = tmp_path / "future.json"
+    db.write_text('{"version":"9.0","secrets":[]}', encoding="utf-8")
+    store = SecretStore(db_path=db)
+
+    with pytest.raises(SecretError, match="unsupported.*9.0"):
+        store.list()
+
+
+# ============================================================
+#  Timestamps
+# ============================================================
+
+
+def test_created_at_is_iso8601_date(store: SecretStore) -> None:
+    """``created_at`` matches today's date in ISO format (YYYY-MM-DD or full)."""
+    e = store.set("minimax", value="x")
+    today = date.today().isoformat()
+    assert today in e.created_at  # ISO 8601 contains today's date
+
+
+def test_updated_at_advances_on_update(store: SecretStore) -> None:
+    """Updating bumps ``updated_at`` to (at least) the same day as created_at.
+
+    We can't reliably fake the clock in a stdlib-only setup, so we
+    verify the field is present and non-empty after an update.
+    """
+    store.set("minimax", value="x")
+    e = store.update("minimax", value="y")
+    assert e.updated_at
+    assert isinstance(e.updated_at, str)
+
+
+# ============================================================
+#  File permissions
+# ============================================================
+
+
+def test_file_created_with_600_perms(tmp_path: Path) -> None:
+    """On Unix, the DB file mode should be 0o600 (owner read/write only).
+
+    On Windows, ACL is used and ``stat().st_mode`` reflects the DOS
+    bits, so we skip the check there.
+    """
+    if sys.platform == "win32":
+        pytest.skip("chmod 600 not enforced on Windows (ACL differs)")
+
+    db = tmp_path / "secrets.json"
+    SecretStore(db_path=db)
+    mode = db.stat().st_mode & 0o777
+    assert mode == 0o600
+
+
+def test_existing_db_preserves_mode_on_write(tmp_path: Path) -> None:
+    """A pre-existing file with weird mode is not auto-tightened — this
+    matches the principle that we don't surprise the user by changing
+    perms on files they created.
+
+    Implementation may choose to re-tighten; this test pins the
+    behaviour either way by NOT making it tighter than the OS default.
+    """
+    if sys.platform == "win32":
+        pytest.skip("POSIX mode semantics don't apply on Windows")
+
+    db = tmp_path / "secrets.json"
+    db.write_text("{}", encoding="utf-8")  # already a file
+    # Save current mode (whatever it is, default for tmp_path is 0o700 for dirs
+    # but 0o600 for files written by Python on most systems)
+    before = db.stat().st_mode & 0o777
+
+    store = SecretStore(db_path=db)
+    store.set("minimax", value="x")
+    after = db.stat().st_mode & 0o777
+
+    # After write, mode is at least as tight as before (never looser)
+    assert after <= before or after == 0o600
+
+
+# ============================================================
+#  Cross-cutting: integration
+# ============================================================
+
+
+def test_full_lifecycle_add_update_remove(store: SecretStore) -> None:
+    """set → update → rm — happy path."""
+    e1 = store.set("minimax", value="v1")
+    assert e1.value == "v1"
+
+    e2 = store.update("minimax", value="v2")
+    assert e2.value == "v2"
+    assert store.get("minimax").value == "v2"
+
+    removed = store.rm("minimax")
+    assert removed.name == "minimax"
+    assert store.get("minimax") is None
+
+
+# ============================================================
+#  BDD scenario 25: cross-process mutation locking
+# ============================================================
+
+
+def test_lock_sidecar_contains_no_secret_data(
+    store: SecretStore,
+) -> None:
+    store.set("sensitive-name", value="sensitive-value")
+
+    assert store.lock_path == store.db_path.with_suffix(".json.lock")
+    assert store.lock_path.read_bytes() == b"\0"
+
+
+def test_cross_process_lock_serializes_a_mutation(tmp_path: Path) -> None:
+    db_path = tmp_path / "secrets.json"
+    ready_path = tmp_path / "holder-ready"
+    SecretStore(db_path=db_path)
+    repo_root = Path(__file__).resolve().parents[1]
+
+    holder_code = """
+import sys
+import time
+from pathlib import Path
+from core.secrets import SecretStore
+
+store = SecretStore(db_path=Path(sys.argv[1]))
+with store._mutation_lock():
+    Path(sys.argv[2]).write_text("ready", encoding="utf-8")
+    time.sleep(0.8)
+"""
+    writer_code = """
+import sys
+from pathlib import Path
+from core.secrets import SecretStore
+
+SecretStore(db_path=Path(sys.argv[1])).set("writer", value="secret-value")
+"""
+
+    holder = subprocess.Popen(
+        [sys.executable, "-c", holder_code, str(db_path), str(ready_path)],
+        cwd=repo_root,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        deadline = time.monotonic() + 5
+        while not ready_path.exists() and time.monotonic() < deadline:
+            if holder.poll() is not None:
+                stdout, stderr = holder.communicate()
+                pytest.fail(
+                    f"lock holder exited early ({holder.returncode}): "
+                    f"stdout={stdout!r}, stderr={stderr!r}"
+                )
+            time.sleep(0.02)
+        assert ready_path.exists(), "lock holder did not become ready"
+
+        started = time.monotonic()
+        writer = subprocess.run(
+            [sys.executable, "-c", writer_code, str(db_path)],
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        elapsed = time.monotonic() - started
+
+        assert writer.returncode == 0, writer.stderr
+        assert elapsed >= 0.5
+        assert SecretStore(db_path=db_path).get("writer") is not None
+    finally:
+        if holder.poll() is None:
+            holder.terminate()
+        holder.wait(timeout=5)
+
+
+def test_concurrent_process_mutations_preserve_every_successful_write(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "secrets.json"
+    start_path = tmp_path / "start"
+    repo_root = Path(__file__).resolve().parents[1]
+    worker_code = """
+import sys
+import time
+from pathlib import Path
+from core.secrets import SecretStore
+
+db_path = Path(sys.argv[1])
+start_path = Path(sys.argv[2])
+while not start_path.exists():
+    time.sleep(0.01)
+SecretStore(db_path=db_path).set(sys.argv[3], value="worker-value")
+"""
+
+    workers = [
+        subprocess.Popen(
+            [
+                sys.executable,
+                "-c",
+                worker_code,
+                str(db_path),
+                str(start_path),
+                f"worker-{index}",
+            ],
+            cwd=repo_root,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for index in range(6)
+    ]
+    start_path.write_text("go", encoding="utf-8")
+
+    failures: list[str] = []
+    for worker in workers:
+        stdout, stderr = worker.communicate(timeout=10)
+        if worker.returncode != 0:
+            failures.append(
+                f"returncode={worker.returncode}, stdout={stdout!r}, stderr={stderr!r}"
+            )
+
+    assert failures == []
+    assert {entry.name for entry in SecretStore(db_path=db_path).list()} == {
+        f"worker-{index}" for index in range(6)
+    }
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__, "-v"]))

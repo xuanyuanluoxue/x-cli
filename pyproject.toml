@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "x-cli"
+dynamic = ["version"]
+description = "Personal CLI toolset for tasks, credentials, diaries, topic notes, and a local web UI"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Xavier" },
+]
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+]
+release = [
+    "build>=1.2",
+    "pyinstaller>=6.0",
+]
+
+[project.scripts]
+x = "x:main"
+
+[tool.setuptools]
+py-modules = ["x"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["core*", "plugins*"]
+
+[tool.setuptools.dynamic]
+version = { attr = "core.version.__version__" }
+
+[tool.setuptools.package-data]
+"core.web" = [
+    "static/**/*",
+    "static/*.html",
+    "static/assets/*.js",
+    "static/assets/*.css",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v --tb=short"

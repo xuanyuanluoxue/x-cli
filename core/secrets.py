@@ -1,0 +1,990 @@
+"""core/secrets.py — JSON-backed credential store for ``x secret``.
+
+This module is the data layer behind the ``x secret`` subcommand. It
+owns a single JSON file (default: ``<xcli_data_dir>/secrets.json``,
+overridable via :envvar:`XCLI_SECRETS_DIR`) and exposes a small
+CRUD surface: :meth:`SecretStore.list`, :meth:`SecretStore.get`,
+:meth:`SecretStore.set`, :meth:`SecretStore.update`,
+:meth:`SecretStore.rm`, plus helpers for fuzzy lookup, search,
+migration from the legacy ``~/.xavier/密钥/*.md`` directory, and
+JSON export for backups.
+
+Design constraints (per ``docs/behaviors/secret-behavior.md`` and
+``docs/architecture.md`` §11):
+
+* **Stdlib-only** — ``json``, ``pathlib``, ``os``, ``datetime``,
+  ``dataclasses``. No third-party deps.
+* **File permissions** — ``os.chmod(path, 0o600)`` is called on
+  creation. On Windows this is a no-op (ACLs are not modified); the
+  limitation is documented in a comment near :meth:`SecretStore._init_db`.
+* **MVP has no encryption** — values are stored in plaintext. The
+  :envvar:`XCLI_SECRETS_DIR` override plus 600 permissions are the
+  only OS-level protection.
+* **Atomicity** — writes go through a temp file + ``os.replace`` so
+  a crash mid-write cannot corrupt the DB.
+* **Concurrency** — read-modify-write transactions use a process-local
+  re-entrant lock plus a cross-process ``<db>.lock`` sidecar lock.
+
+The module is independent of the legacy ``~/.xavier/密钥/`` layout
+on purpose: ``x secret`` is a generic CLI tool, not a wrapper around
+xavier's personal data directory.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import threading
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Iterator
+
+from core.paths import xcli_secrets_path
+
+
+# ============================================================
+#  Constants
+# ============================================================
+
+
+DB_VERSION = "1.1"
+LEGACY_DB_VERSION = "1.0"
+SUPPORTED_DB_VERSIONS = {LEGACY_DB_VERSION, DB_VERSION}
+MAX_SECRET_FIELDS = 50
+MAX_SECRET_FIELD_LABEL_LENGTH = 64
+SECRET_FIELD_KINDS = {"secret", "text"}
+
+# A ``## <title>`` heading at the start of a line. Anchored to the
+# start of line so it does not match ``### `` (deeper headings).
+_HEADING_RE = re.compile(r"^##\s+(.+?)\s*$")
+
+# A fenced code block. We capture the language tag and the body so
+# the MD importer can pick out ``text`` blocks while ignoring others.
+_FENCE_RE = re.compile(
+    r"^```(\S+)?\s*$", re.MULTILINE
+)
+
+# A pipe-delimited table row: ``| 字段 | 值 |`` (or ``|------|---|``).
+_TABLE_ROW_RE = re.compile(r"^\|\s*(.+?)\s*\|\s*$")
+
+# A separator row: ``|------|------|`` (or any dash-only cells).
+_TABLE_SEP_RE = re.compile(r"^\|[\s\-:|]+\|\s*$")
+
+
+# ============================================================
+#  Exceptions
+# ============================================================
+
+
+class SecretError(Exception):
+    """Base class for all :class:`SecretStore` errors."""
+
+
+class SecretNotFoundError(SecretError, LookupError):
+    """Raised when looking up a secret name that does not exist."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"secret not found: {name}")
+        self.name = name
+
+
+class SecretAlreadyExistsError(SecretError, ValueError):
+    """Raised when inserting a secret whose name already exists."""
+
+    def __init__(self, name: str) -> None:
+        super().__init__(f"secret already exists: {name}")
+        self.name = name
+
+
+# ============================================================
+#  Cross-process mutation locking
+# ============================================================
+
+
+_LOCK_WAIT_SECONDS = 30.0
+_LOCK_POLL_SECONDS = 0.05
+_PROCESS_LOCKS_GUARD = threading.Lock()
+_PROCESS_LOCKS: dict[str, Any] = {}
+
+
+def _process_lock_for(path: Path) -> Any:
+    """Return one re-entrant lock for a normalized DB path in this process."""
+
+    key = os.path.normcase(str(path.resolve(strict=False)))
+    with _PROCESS_LOCKS_GUARD:
+        lock = _PROCESS_LOCKS.get(key)
+        if lock is None:
+            lock = threading.RLock()
+            _PROCESS_LOCKS[key] = lock
+        return lock
+
+
+@contextmanager
+def _exclusive_file_lock(
+    lock_path: Path,
+    *,
+    timeout: float = _LOCK_WAIT_SECONDS,
+) -> Iterator[None]:
+    """Acquire a one-byte cross-process lock on ``lock_path``.
+
+    The sidecar contains only a null byte. Windows uses ``msvcrt`` and POSIX
+    uses ``fcntl`` so the runtime remains dependency-free. A crashed process
+    releases the OS lock when its file descriptor is closed by the kernel.
+    """
+
+    try:
+        lock_file = lock_path.open("a+b")
+    except OSError as exc:
+        raise SecretError(f"failed to open secrets lock ({lock_path}): {exc}") from exc
+
+    acquired = False
+    try:
+        lock_file.seek(0, os.SEEK_END)
+        if lock_file.tell() == 0:
+            lock_file.write(b"\0")
+            lock_file.flush()
+        try:
+            os.chmod(lock_path, 0o600)
+        except OSError:
+            pass
+
+        deadline = time.monotonic() + timeout
+        lock_file.seek(0)
+        if os.name == "nt":
+            import msvcrt
+
+            while True:
+                try:
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_NBLCK, 1)
+                    acquired = True
+                    break
+                except OSError as exc:
+                    if time.monotonic() >= deadline:
+                        raise SecretError(
+                            f"timed out waiting for secrets lock: {lock_path}"
+                        ) from exc
+                    time.sleep(_LOCK_POLL_SECONDS)
+        else:
+            import fcntl
+
+            while True:
+                try:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    acquired = True
+                    break
+                except BlockingIOError as exc:
+                    if time.monotonic() >= deadline:
+                        raise SecretError(
+                            f"timed out waiting for secrets lock: {lock_path}"
+                        ) from exc
+                    time.sleep(_LOCK_POLL_SECONDS)
+
+        yield
+    finally:
+        if acquired:
+            try:
+                lock_file.seek(0)
+                if os.name == "nt":
+                    import msvcrt
+
+                    msvcrt.locking(lock_file.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+        lock_file.close()
+
+
+# ============================================================
+#  Data model
+# ============================================================
+
+
+@dataclass
+class SecretField:
+    """One named value belonging to a :class:`SecretEntry`."""
+
+    label: str
+    kind: str
+    value: str
+    primary: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "label": self.label,
+            "kind": self.kind,
+            "value": self.value,
+            "primary": self.primary,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> "SecretField":
+        if not isinstance(data, dict):
+            raise ValueError("each secret field must be an object")
+        return cls(
+            label=data.get("label", ""),
+            kind=data.get("kind", ""),
+            value=data.get("value", ""),
+            primary=data.get("primary", False),
+        )
+
+
+def normalize_secret_fields(fields_value: Any) -> list[SecretField]:
+    """Validate and copy a complete secret-field collection.
+
+    This is the single validation boundary shared by storage, CLI and Web API.
+    Values are deliberately not stripped: credentials and multi-line text must
+    round-trip byte-for-byte once decoded from JSON.
+    """
+
+    if not isinstance(fields_value, (list, tuple)):
+        raise ValueError("fields must be a list")
+    if not fields_value:
+        raise ValueError("at least one secret field is required")
+    if len(fields_value) > MAX_SECRET_FIELDS:
+        raise ValueError(f"fields cannot contain more than {MAX_SECRET_FIELDS} items")
+
+    normalized: list[SecretField] = []
+    labels: set[str] = set()
+    for raw in fields_value:
+        if isinstance(raw, SecretField):
+            candidate = SecretField(
+                label=raw.label,
+                kind=raw.kind,
+                value=raw.value,
+                primary=raw.primary,
+            )
+        elif isinstance(raw, dict):
+            candidate = SecretField.from_dict(raw)
+        else:
+            raise ValueError("each secret field must be an object")
+
+        if not isinstance(candidate.label, str):
+            raise ValueError("field label must be a string")
+        candidate.label = candidate.label.strip()
+        if not candidate.label:
+            raise ValueError("field label is required")
+        if len(candidate.label) > MAX_SECRET_FIELD_LABEL_LENGTH:
+            raise ValueError(
+                f"field label cannot exceed {MAX_SECRET_FIELD_LABEL_LENGTH} characters"
+            )
+        label_key = candidate.label.casefold()
+        if label_key in labels:
+            raise ValueError("field labels must be unique")
+        labels.add(label_key)
+
+        if candidate.kind not in SECRET_FIELD_KINDS:
+            raise ValueError("field kind must be 'secret' or 'text'")
+        if not isinstance(candidate.value, str):
+            raise ValueError("field value must be a string")
+        if candidate.value == "":
+            raise ValueError("field value is required")
+        if type(candidate.primary) is not bool:
+            raise ValueError("field primary must be a boolean")
+
+        normalized.append(candidate)
+
+    primary_fields = [item for item in normalized if item.primary]
+    if len(primary_fields) != 1:
+        raise ValueError("exactly one primary secret field is required")
+    if primary_fields[0].kind != "secret":
+        raise ValueError("the primary field must be a secret field")
+    return normalized
+
+
+def legacy_value_fields(value: Any) -> list[SecretField]:
+    """Convert a schema-1.0 top-level value into schema-1.1 fields."""
+
+    if not isinstance(value, str):
+        raise ValueError("legacy secret value must be a string")
+    return normalize_secret_fields(
+        [SecretField(label="密钥", kind="secret", value=value, primary=True)]
+    )
+
+
+@dataclass
+class SecretEntry:
+    """In-memory representation of one credential.
+
+    Attributes
+    ----------
+    name:
+        Unique identifier (1-64 chars). Comparison is case-insensitive
+        but the original casing is preserved on round-trip.
+    category:
+        Free-form label (default ``"default"``). The ``x secret import``
+        command fills this with the source ``.md`` filename (without
+        the ``.md`` extension).
+    fields:
+        Ordered named values. Exactly one ``secret`` field is primary.
+        The compatibility :attr:`value` property exposes that field.
+    note:
+        Optional free-form annotation. The ``import`` command packs
+        the source section's metadata table into this field as one
+        ``key: value`` line per row.
+    created_at, updated_at:
+        ISO 8601 timestamps. ``set`` populates both with the same
+        value; ``update`` only refreshes ``updated_at`` and leaves
+        ``created_at`` alone.
+    """
+
+    name: str
+    category: str = "default"
+    fields: list[SecretField] = field(default_factory=list)
+    note: str = ""
+    created_at: str = ""
+    updated_at: str = ""
+    extra: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        self.fields = normalize_secret_fields(self.fields)
+
+    @property
+    def primary_field(self) -> SecretField:
+        return next(item for item in self.fields if item.primary)
+
+    @property
+    def value(self) -> str:
+        """Compatibility alias for the primary secret field value."""
+
+        return self.primary_field.value
+
+    def get_field(self, label: str) -> SecretField | None:
+        """Return an exact named field (case-insensitive), or ``None``."""
+
+        needle = label.casefold()
+        for item in self.fields:
+            if item.label.casefold() == needle:
+                return item
+        return None
+
+    # --------------------------------------------------------
+    #  Serialisation
+    # --------------------------------------------------------
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-friendly dict for this entry.
+
+        ``extra`` is flattened in (top-level keys) so the on-disk
+        shape is flat — easier for humans to diff and edit by hand.
+        """
+        merged: dict[str, Any] = {
+            "name": self.name,
+            "category": self.category,
+            "fields": [item.to_dict() for item in self.fields],
+            "note": self.note,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+        for key, value in (self.extra or {}).items():
+            if key not in merged and key != "value":
+                merged[key] = value
+        return merged
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> "SecretEntry":
+        """Build a :class:`SecretEntry` from a JSON dict.
+
+        Unknown keys land in :attr:`extra` so future schema additions
+        do not silently drop user metadata.
+        """
+        known = {
+            "name",
+            "category",
+            "fields",
+            "value",
+            "note",
+            "created_at",
+            "updated_at",
+        }
+        kwargs: dict[str, Any] = {}
+        extra: dict[str, Any] = {}
+        for key, value in d.items():
+            if key in known:
+                kwargs[key] = value
+            else:
+                extra[key] = value
+        if "fields" in kwargs and "value" in kwargs:
+            raise ValueError("secret entry cannot contain both value and fields")
+        if "fields" in kwargs:
+            fields_value = kwargs.pop("fields")
+        else:
+            fields_value = legacy_value_fields(kwargs.pop("value", ""))
+        return cls(fields=fields_value, extra=extra, **kwargs)
+
+
+# ============================================================
+#  SecretStore
+# ============================================================
+
+
+class SecretStore:
+    """JSON-backed CRUD layer for the ``x secret`` subcommand.
+
+    Parameters
+    ----------
+    db_path:
+        Explicit path to the secrets JSON file. When ``None`` (the
+        default), the constructor falls back to
+        :func:`core.paths.xcli_secrets_path`, which honours the
+        :envvar:`XCLI_SECRETS_DIR` override and the per-platform
+        default. Tests should pass a ``tmp_path`` here (or set the
+        env var) so the real ``%LOCALAPPDATA%\\x-cli\\secrets.json``
+        is never touched.
+
+    Notes
+    -----
+    Writes are serialized across threads and processes with a sidecar
+    lock that covers the complete read-modify-write transaction. Final
+    persistence still uses a temp file plus ``os.replace`` so readers
+    only observe complete JSON payloads.
+    """
+
+    def __init__(self, db_path: Path | str | None = None) -> None:
+        if db_path is None:
+            self.db_path: Path = xcli_secrets_path()
+        else:
+            self.db_path = Path(db_path)
+        self.lock_path = self.db_path.with_suffix(self.db_path.suffix + ".lock")
+        self._process_lock = _process_lock_for(self.db_path)
+        self._init_db()
+
+    # --------------------------------------------------------
+    #  Internal: DB lifecycle
+    # --------------------------------------------------------
+
+    def _init_db(self) -> None:
+        """Create the DB file with an empty secrets list if missing.
+
+        Sets file permissions to ``0o600`` (owner read/write only).
+        On Windows ``os.chmod`` is effectively a no-op; the OS still
+        applies DACLs based on the creating user, but the call is
+        kept for cross-platform parity (and to make the intent
+        explicit to readers of the code).
+
+        The on-disk file is **not** validated here; corruption is
+        detected lazily on the first read (e.g. via :meth:`list`),
+        which raises :class:`SecretError`. This avoids forcing a
+        read on every ``SecretStore()`` construction (the typical
+        single-op CLI invocation).
+        """
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        with self._mutation_lock():
+            if not self.db_path.exists():
+                self._write_raw({"version": DB_VERSION, "secrets": []})
+                return
+            # File already exists — still try to tighten permissions.
+            # We do this lazily: only on first construction, and only if
+            # the file is currently readable by the group/others.
+            try:
+                mode = self.db_path.stat().st_mode
+                if mode & 0o077:
+                    os.chmod(self.db_path, 0o600)
+            except OSError:
+                # Windows: chmod may fail; safe to ignore.
+                pass
+
+    @contextmanager
+    def _mutation_lock(self) -> Iterator[None]:
+        """Serialize one complete mutation transaction for this DB path."""
+
+        with self._process_lock:
+            with _exclusive_file_lock(self.lock_path):
+                yield
+
+    def _load_payload(self) -> dict[str, Any]:
+        """Read and validate the versioned top-level DB payload."""
+
+        text = self.db_path.read_text(encoding="utf-8")
+        if not text.strip():
+            return {"version": LEGACY_DB_VERSION, "secrets": []}
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise SecretError(
+                f"secrets DB is corrupt ({self.db_path}): {exc}"
+            ) from exc
+        if not isinstance(data, dict):
+            raise SecretError(
+                f"secrets DB has unexpected shape: top-level must be an object"
+            )
+        version = data.get("version", LEGACY_DB_VERSION)
+        if not isinstance(version, str) or version not in SUPPORTED_DB_VERSIONS:
+            raise SecretError(f"unsupported secrets DB version: {version}")
+        secrets = data.get("secrets", [])
+        if not isinstance(secrets, list):
+            raise SecretError(
+                f"secrets DB has unexpected shape: 'secrets' must be a list"
+            )
+        data["version"] = version
+        data["secrets"] = secrets
+        return data
+
+    def _load(self) -> list[dict[str, Any]]:
+        """Read the secrets list from disk. Returns ``[]`` if empty."""
+
+        return self._load_payload()["secrets"]
+
+    def _save(self, secrets: list[dict[str, Any]]) -> None:
+        """Persist rows atomically, backing up schema 1.0 before migration."""
+
+        current = self._load_payload()
+        if current["version"] == LEGACY_DB_VERSION:
+            original = self.db_path.read_bytes()
+            try:
+                self._write_migration_backup(original)
+            except OSError as exc:
+                raise SecretError(f"failed to create schema 1.0 backup: {exc}") from exc
+        payload = {"version": DB_VERSION, "secrets": secrets}
+        self._write_raw(payload)
+
+    def _write_migration_backup(self, original: bytes) -> Path:
+        """Atomically preserve the exact schema-1.0 bytes before first write."""
+
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        base_name = f"secrets-v1.0-backup-{stamp}"
+        backup = self.db_path.parent / f"{base_name}.json"
+        sequence = 1
+        while backup.exists():
+            backup = self.db_path.parent / f"{base_name}-{sequence}.json"
+            sequence += 1
+
+        tmp_path = backup.with_suffix(backup.suffix + ".tmp")
+        tmp_path.write_bytes(original)
+        try:
+            os.chmod(tmp_path, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp_path, backup)
+        return backup
+
+    def _write_raw(self, payload: dict[str, Any]) -> None:
+        """Write ``payload`` to ``self.db_path`` with 0600 permissions."""
+        tmp_path = self.db_path.with_suffix(self.db_path.suffix + ".tmp")
+        text = json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+        tmp_path.write_text(text, encoding="utf-8")
+        try:
+            os.chmod(tmp_path, 0o600)
+        except OSError:
+            # Windows: chmod is a no-op for normal users; safe to ignore.
+            pass
+        os.replace(tmp_path, self.db_path)
+
+    def _now(self) -> str:
+        """Return the current local time as an ISO 8601 string."""
+        return datetime.now().replace(microsecond=0).isoformat()
+
+    # --------------------------------------------------------
+    #  Read paths
+    # --------------------------------------------------------
+
+    def list(self, category: str | None = None) -> list[SecretEntry]:
+        """Return all entries, sorted by ``name`` (case-insensitive).
+
+        Parameters
+        ----------
+        category:
+            When provided, only return entries whose ``category``
+            matches (case-insensitive). When ``None`` (the default),
+            return all entries.
+        """
+        raw = self._load()
+        entries = [SecretEntry.from_dict(d) for d in raw]
+        if category is not None:
+            needle = category.casefold()
+            entries = [e for e in entries if e.category.casefold() == needle]
+        entries.sort(key=lambda e: e.name.casefold())
+        return entries
+
+    def get(self, name: str) -> SecretEntry | None:
+        """Look up an entry by exact name. Returns ``None`` if not found.
+
+        ``get`` is case-sensitive; case-insensitive substring lookup
+        is provided by :meth:`find`. Original casing is preserved
+        on disk per BDD §"字段约束".
+        """
+        if not name:
+            return None
+        for d in self._load():
+            if d.get("name") == name:
+                return SecretEntry.from_dict(d)
+        return None
+
+    def find(self, name: str) -> SecretEntry | None:
+        """Return the first entry whose name contains ``name`` (case-insensitive).
+
+        Used by ``x secret get <name>`` to support partial matches
+        (per ``secret-behavior.md`` scenario 3). Returns ``None`` when
+        no entry matches.
+        """
+        if not name:
+            return None
+        needle = name.casefold()
+        for d in self._load():
+            candidate = d.get("name", "")
+            if needle in candidate.casefold():
+                return SecretEntry.from_dict(d)
+        return None
+
+    def search(self, keyword: str) -> list[SecretEntry]:
+        """Return entries whose ``name`` or ``note`` matches ``keyword``.
+
+        Matching is case-insensitive and **lenient**: an entry is a
+        match when either
+
+        1. ``keyword`` is a substring of the name or note, **or**
+        2. every character of ``keyword`` appears in the name or
+           note (loose, order-independent — for the "fuzzy" use case
+           like searching ``api`` and finding ``openai-prod``).
+
+        The ``value`` field is **deliberately excluded** from the
+        search space (per ``secret-behavior.md`` scenario 12 — we
+        never want a casual ``x secret search api`` to leak a real
+        credential through a value match).
+
+        Empty ``keyword`` returns ``[]`` (no accidental full-DB
+        dump via ``x secret search`` with no args). The result is
+        sorted by name (case-insensitive), mirroring :meth:`list`.
+        """
+        if not keyword:
+            return []
+        needle = keyword.casefold()
+        results: list[SecretEntry] = []
+        for d in self._load():
+            name = d.get("name", "")
+            note = d.get("note", "")
+            name_lc = name.casefold()
+            note_lc = note.casefold()
+            if (
+                needle in name_lc
+                or needle in note_lc
+                or (needle and all(c in name_lc for c in needle))
+                or (needle and all(c in note_lc for c in needle))
+            ):
+                results.append(SecretEntry.from_dict(d))
+        results.sort(key=lambda e: e.name.casefold())
+        return results
+
+    # --------------------------------------------------------
+    #  Write paths
+    # --------------------------------------------------------
+
+    def set(
+        self,
+        name: str,
+        value: str | None = None,
+        category: str = "default",
+        note: str = "",
+        *,
+        fields: list[SecretField | dict[str, Any]] | None = None,
+    ) -> SecretEntry:
+        """Insert a brand-new secret.
+
+        Raises
+        ------
+        SecretAlreadyExistsError
+            If an entry with the same ``name`` already exists. Use
+            :meth:`update` to modify an existing entry.
+        """
+        if not name:
+            raise ValueError("secret name is required")
+        if value is not None and fields is not None:
+            raise ValueError("value and fields cannot be provided together")
+        if fields is None:
+            if value is None:
+                raise ValueError("value or fields is required")
+            normalized_fields = legacy_value_fields(value)
+        else:
+            normalized_fields = normalize_secret_fields(fields)
+        with self._mutation_lock():
+            rows = self._load()
+            if any(row.get("name") == name for row in rows):
+                raise SecretAlreadyExistsError(name)
+            now = self._now()
+            entry = SecretEntry(
+                name=name,
+                category=category or "default",
+                fields=normalized_fields,
+                note=note,
+                created_at=now,
+                updated_at=now,
+            )
+            self._save(rows + [entry.to_dict()])
+            return entry
+
+    def update(
+        self,
+        name: str,
+        value: str | None = None,
+        note: str | None = None,
+        category: str | None = None,
+        *,
+        fields: list[SecretField | dict[str, Any]] | None = None,
+    ) -> SecretEntry:
+        """Update ``value`` and/or ``note`` and/or ``category`` on an existing entry.
+
+        Only fields whose argument is not ``None`` are mutated. The
+        ``created_at`` timestamp is preserved; ``updated_at`` is
+        refreshed to the current time. Lookup is case-sensitive —
+        use the exact name you got from :meth:`get` or
+        :meth:`list`.
+
+        Raises
+        ------
+        SecretNotFoundError
+            If no entry with the given ``name`` exists.
+        """
+        if value is not None and fields is not None:
+            raise ValueError("value and fields cannot be provided together")
+
+        with self._mutation_lock():
+            rows = self._load()
+            for i, d in enumerate(rows):
+                if d.get("name") == name:
+                    entry = SecretEntry.from_dict(d)
+                    if value is not None:
+                        updated_fields = [
+                            SecretField(
+                                label=item.label,
+                                kind=item.kind,
+                                value=value if item.primary else item.value,
+                                primary=item.primary,
+                            )
+                            for item in entry.fields
+                        ]
+                        entry.fields = normalize_secret_fields(updated_fields)
+                    elif fields is not None:
+                        entry.fields = normalize_secret_fields(fields)
+                    if note is not None:
+                        entry.note = note
+                    if category is not None:
+                        entry.category = category
+                    entry.updated_at = self._now()
+                    rows[i] = entry.to_dict()
+                    self._save(rows)
+                    return entry
+        raise SecretNotFoundError(name)
+
+    def rm(self, name: str) -> SecretEntry:
+        """Delete the entry with the given name.
+
+        Returns the removed entry (useful for "undo" UIs / confirmation
+        messages). Lookup is case-sensitive — pass the exact name
+        you got from :meth:`get` or :meth:`list`. Raises
+        :class:`SecretNotFoundError` if the entry does not exist.
+        """
+        with self._mutation_lock():
+            rows = self._load()
+            for i, d in enumerate(rows):
+                if d.get("name") == name:
+                    rows.pop(i)
+                    self._save(rows)
+                    return SecretEntry.from_dict(d)
+        raise SecretNotFoundError(name)
+
+    # --------------------------------------------------------
+    #  Migration & backup
+    # --------------------------------------------------------
+
+    def import_from_dir(self, src_dir: Path) -> tuple[int, int]:
+        """Migrate credentials from a directory of ``.md`` files.
+
+        The expected on-disk shape is documented in
+        ``docs/behaviors/secret-behavior.md`` scenario 13 and
+        ``docs/architecture.md`` §11.5: each ``.md`` file contains
+        one or more ``## <title>`` sections, each with a metadata
+        table and a ``text``-fenced code block.
+
+        Returns
+        -------
+        (imported, skipped)
+            ``imported`` is the number of new entries added;
+            ``skipped`` is the number of ``## <title>`` sections
+            that were ignored (because the name already exists in
+            the DB, or because the section has no ``text`` block).
+            Old ``.md`` files are never deleted.
+
+        Raises
+        ------
+        FileNotFoundError
+            If ``src_dir`` does not exist.
+        """
+        src_dir = Path(src_dir)
+        if not src_dir.is_dir():
+            raise FileNotFoundError(f"source directory not found: {src_dir}")
+
+        candidates: list[SecretEntry] = []
+        for md_path in sorted(src_dir.glob("*.md")):
+            # Skip README / index files (they document the format, not real secrets).
+            if md_path.stem.lower() in {"readme", "index", "模板"}:
+                continue
+            category = md_path.stem
+            text = md_path.read_text(encoding="utf-8")
+            candidates.extend(_parse_markdown_sections(text, category))
+
+        with self._mutation_lock():
+            rows = self._load()
+            existing_names = {d.get("name") for d in rows}
+            imported = 0
+            skipped = 0
+            for entry in candidates:
+                if entry.name in existing_names:
+                    skipped += 1
+                    continue
+                # Stamp the import time so the row has a usable updated_at for `list`.
+                now = self._now()
+                entry.created_at = now
+                entry.updated_at = now
+                rows.append(entry.to_dict())
+                existing_names.add(entry.name)
+                imported += 1
+
+            if imported:
+                self._save(rows)
+            return imported, skipped
+
+    def export(self, dest: Path | None = None) -> Path:
+        """Write the current DB to ``dest`` (or an auto-named backup file).
+
+        Parameters
+        ----------
+        dest:
+            Target path. When ``None``, the store writes a
+            timestamped backup file alongside the DB:
+            ``<db_dir>/secrets-backup-YYYYMMDD-HHMMSS.json``.
+
+        Returns
+        -------
+        Path
+            Absolute path to the file that was written.
+        """
+        if dest is None:
+            stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+            dest = self.db_path.parent / f"secrets-backup-{stamp}.json"
+        dest = Path(dest)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        # Re-use the same atomic-write strategy as the live DB.
+        payload = self._load_payload()
+        tmp_path = dest.with_suffix(dest.suffix + ".tmp")
+        tmp_path.write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        try:
+            os.chmod(tmp_path, 0o600)
+        except OSError:
+            pass
+        os.replace(tmp_path, dest)
+        return dest
+
+
+# ============================================================
+#  MD file parser (used by import_from_dir)
+# ============================================================
+
+
+def _parse_markdown_sections(text: str, category: str) -> list[SecretEntry]:
+    """Parse a ``~/.xavier/密钥/*.md`` file into :class:`SecretEntry` rows.
+
+    The format is a series of ``## <title>`` sections, each optionally
+    preceded by a ``| 字段 | 值 |`` table and always containing a
+    ``text``-fenced code block whose body becomes the ``value``.
+
+    Sections with no ``text`` block are skipped (counted in the
+    caller's ``skipped`` tally). Section titles that are also the
+    first line of the document (i.e. the H1 ``# 接口密钥``) are
+    ignored.
+
+    State machine
+    -------------
+    * ``OUTSIDE`` — pre-section preamble (H1, frontmatter, blanks).
+    * ``IN_SECTION`` — between ``## `` heading and first fence.
+      Table rows are captured as ``note`` lines; non-text fences
+      flip us to ``IN_OTHER_FENCE``.
+    * ``IN_TEXT_FENCE`` — collecting the section's ``value``.
+    * ``IN_OTHER_FENCE`` — scanning for the closing ````` so we can
+      return to ``IN_SECTION`` and look at the next table row.
+    """
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    sections: list[dict[str, Any]] = []
+    title: str | None = None
+    value: list[str] = []
+    note: list[str] = []
+    state = "OUTSIDE"
+
+    def _flush() -> None:
+        nonlocal title, value, note, state
+        if title is not None and value:
+            sections.append(
+                {
+                    "title": title,
+                    "value": "\n".join(value).strip("\n"),
+                    "note": "\n".join(note),
+                }
+            )
+        title = None
+        value = []
+        note = []
+        state = "OUTSIDE"
+
+    for line in lines:
+        heading = _HEADING_RE.match(line)
+        if heading:
+            # New section begins — close out the previous one.
+            _flush()
+            title = heading.group(1).strip()
+            state = "IN_SECTION"
+            continue
+        if state == "OUTSIDE":
+            # Preamble: ignore until the first ``## `` heading.
+            continue
+
+        if state == "IN_TEXT_FENCE":
+            if line.strip().startswith("```"):
+                state = "IN_SECTION"
+            else:
+                # Store the line verbatim — no transformations. If the
+                # user wants only the value, they put only the value in
+                # ``x secret set``; for .md imports the whole ``key: value``
+                # block is the canonical source so we preserve it as-is.
+                value.append(line)
+            continue
+
+        if state == "IN_OTHER_FENCE":
+            if line.strip().startswith("```"):
+                state = "IN_SECTION"
+            continue
+
+        # state == IN_SECTION
+        fence = _FENCE_RE.match(line)
+        if fence:
+            lang = (fence.group(1) or "").lower()
+            if lang == "text":
+                state = "IN_TEXT_FENCE"
+            else:
+                state = "IN_OTHER_FENCE"
+            continue
+        if _TABLE_ROW_RE.match(line) and not _TABLE_SEP_RE.match(line):
+            cells = [c.strip() for c in line.strip("|").split("|")]
+            if len(cells) >= 2 and cells[0]:
+                note.append(f"{cells[0]}: {cells[1]}")
+
+    _flush()
+
+    entries: list[SecretEntry] = []
+    for section in sections:
+        entries.append(
+            SecretEntry(
+                name=section["title"],
+                category=category,
+                fields=legacy_value_fields(section["value"]),
+                note=section["note"],
+            )
+        )
+    return entries

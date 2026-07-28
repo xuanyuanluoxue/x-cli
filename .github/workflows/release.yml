@@ -1,0 +1,127 @@
+name: Build Windows release
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Test and build Windows x64
+    runs-on: windows-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Create isolated release environment
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv\Scripts\python.exe -m pip install -e ".[dev,release]"
+
+      - name: Check source and tag version
+        id: version
+        shell: pwsh
+        run: |
+          $Version = (& .\.venv\Scripts\python.exe -c "from core.version import __version__; print(__version__)").Trim()
+          if ($env:GITHUB_REF_TYPE -eq "tag" -and $env:GITHUB_REF_NAME -ne "v$Version") {
+            throw "Tag $env:GITHUB_REF_NAME does not match source version v$Version"
+          }
+          if ($env:GITHUB_REF_TYPE -eq "tag") {
+            git merge-base --is-ancestor $env:GITHUB_SHA origin/main
+            if ($LASTEXITCODE -ne 0) {
+              throw "Tag $env:GITHUB_REF_NAME does not point to a commit on main"
+            }
+          }
+          "version=$Version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+      - name: Build and smoke-test release artifacts
+        shell: pwsh
+        run: .\scripts\build-windows.ps1
+
+      - name: Generate WinGet manifest
+        shell: pwsh
+        run: |
+          $Version = "${{ steps.version.outputs.version }}"
+          $Url = "https://github.com/xuanyuanluoxue/x-cli/releases/download/v$Version/x-windows-x86_64.exe"
+          .\.venv\Scripts\python.exe scripts\generate_winget_manifest.py `
+            --version $Version `
+            --installer dist\x-windows-x86_64.exe `
+            --url $Url `
+            --output dist\winget
+
+      - name: Install a manifest-compatible WinGet
+        shell: powershell
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          $ProgressPreference = "SilentlyContinue"
+          Install-PackageProvider -Name NuGet -Force | Out-Null
+          Install-Module -Name Microsoft.WinGet.Client -Force -Repository PSGallery | Out-Null
+          Import-Module Microsoft.WinGet.Client
+          Repair-WinGetPackageManager -Force -Latest
+          winget --version
+
+      - name: Validate and archive WinGet manifest
+        shell: pwsh
+        run: |
+          $Version = "${{ steps.version.outputs.version }}"
+          $Manifest = "dist\winget\manifests\x\XuanyuanLuoxue\XCLI\$Version"
+          winget validate --manifest $Manifest --disable-interactivity
+          Compress-Archive `
+            -LiteralPath dist\winget\manifests `
+            -DestinationPath "dist\winget-manifests-$Version.zip" `
+            -Force
+
+      - name: Upload verified build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: x-cli-${{ steps.version.outputs.version }}
+          if-no-files-found: error
+          path: |
+            dist/x-windows-x86_64.exe
+            dist/x-windows-x86_64.exe.sha256
+            dist/x_cli-${{ steps.version.outputs.version }}-py3-none-any.whl
+            dist/x_cli-${{ steps.version.outputs.version }}.tar.gz
+            dist/winget-manifests-${{ steps.version.outputs.version }}.zip
+
+  release:
+    name: Publish GitHub Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download verified artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: x-cli-${{ needs.build.outputs.version }}
+          path: release-artifacts
+
+      - name: Create immutable versioned release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" release-artifacts/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --verify-tag \
+            --generate-notes \
+            --title "x-cli $GITHUB_REF_NAME"

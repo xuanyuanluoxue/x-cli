@@ -1,0 +1,534 @@
+# x secret 行为规格
+
+> **目标读者**: 接续开发的 AI agent
+> **范围**: `x secret <子命令>` 命令族，独立于 `<legacy-credentials-dir>/`，自管 JSON 数据库
+> **对应测试**: `tests/test_secrets.py`（单元）+ `tests/test_e2e_secret.py`（子进程）
+> **状态**: 🚧 多字段 schema 1.1 实施中（2026-07-19）
+
+---
+
+## 存储约定
+
+**路径**（跨平台，stdlib 自动解析）：
+
+| OS | 默认路径 |
+|---|---|
+| Windows | `%LOCALAPPDATA%\x-cli\secrets.json` |
+| macOS/Linux | `$XDG_DATA_HOME/x-cli/secrets.json` → fallback `~/.local/share/x-cli/secrets.json` |
+
+**覆盖**：环境变量 `XCLI_SECRETS_DIR` 指向文件（测试 / 自定义位置用）
+
+**文件权限**：600（仅所有者读写）
+
+**JSON schema**：
+
+```json
+{
+  "version": "1.1",
+  "secrets": [
+    {
+      "name": "minimax",
+      "category": "接口密钥",
+      "fields": [
+        {
+          "label": "API Key",
+          "kind": "secret",
+          "value": "sk-test1234",
+          "primary": true
+        },
+        {
+          "label": "Base URL",
+          "kind": "text",
+          "value": "https://api.example.com/v1",
+          "primary": false
+        }
+      ],
+      "note": "Migrated from 接口密钥.md",
+      "created_at": "2026-06-21T12:34:56",
+      "updated_at": "2026-06-21T12:34:56"
+    }
+  ]
+}
+```
+
+字段约束：
+- `name` — 唯一，必填，1-64 字符，**不**区分大小写（迁移保留原大小写）
+- `category` — 默认 `"default"`，迁移时填入 `.md` 文件名（去 `.md`）
+- `fields` — 1-50 个具名字段；label 大小写不敏感唯一，value 非空且可含换行
+- `fields[].kind` — 只允许 `secret` / `text`
+- `fields[].primary` — 恰好一个为 true，且必须属于 `secret` 字段
+- 旧版顶层 `value` — 兼容读取为一个 label=`密钥` 的主 secret 字段，新写入不再重复保存
+- `note` — 可选，备注
+- `created_at` / `updated_at` — ISO 8601 字符串
+
+---
+
+## 场景 1：list 列出所有密钥（不显示值）
+
+**Given**:
+- 测试 DB 含 3 个条目（minimax / openai / aliyun_ssh）
+
+**When**:
+- `x secret list`
+
+**Then**:
+- 退出码 0
+- stdout 是表格：列 `Name / Category / Updated`，4 行（表头 + 3 数据）
+- `value` 字段**绝不**出现在输出里
+- 排序：按 `name` 字典序升序
+
+---
+
+## 场景 1.5：list --category 按分组过滤
+
+**Given**:
+- 测试 DB 含 3 个条目：
+  - minimax（category = `接口密钥`）
+  - openai（category = `接口密钥`）
+  - aliyun_ssh（category = `服务器`）
+
+**When**:
+- `x secret list --category 接口密钥`
+
+**Then**:
+- 退出码 0
+- stdout 表格只含 minimax 和 openai（2 数据行）
+- 不含 aliyun_ssh
+
+---
+
+## 场景 1.6：list --category 无匹配
+
+**Given**:
+- 测试 DB 含 1 个条目（minimax，category = `接口密钥`）
+
+**When**:
+- `x secret list --category 不存在的分组`
+
+**Then**:
+- 退出码 0
+- stdout 含 `📭 暂无密钥` 提示
+
+---
+
+## 场景 2：get <name> 输出 value
+
+**Given**:
+- DB 含 `minimax`，value = `sk-test1234`
+
+**When**:
+- `x secret get minimax`
+
+**Then**:
+- 退出码 0
+- stdout 第一行 = `sk-test1234`（**仅** value，无前缀）
+- stderr 含 `🔐 警告：密钥已输出到 stdout（可能被 shell 历史 / 日志捕获）`
+- `note` / `category` / `created_at` **不**打印（除非 `--full`）
+
+### 场景 2.5：get <name> 多行 value 时剪贴板只拿 api_key
+
+**Given**:
+- DB 含 `multitest`，value 是多行文本（含 `api_key:` / `token:` / `app_secret:` / `gateway_token:` 模式之一）
+  ```
+  api_key: sk-extracted-test
+  base_url: https://example.com/v1
+  api_key: sk-second-key
+  ```
+
+**When**:
+- `x secret get multitest`（默认行为 + 剪贴板）
+
+**Then**:
+- 退出码 0
+- **stdout**：完整多行 value（**不**改 — 管道 / `--no-clipboard` 用户看到全部）
+- **剪贴板**：只有第一个 `api_key:` / `token:` / `app_secret:` / `gateway_token:` 行的值（无前缀、无换行）— `sk-extracted-test`
+- stderr 含 `📋 已复制到剪贴板（…）（已提取 api_key 行）`
+- 适用：多行 value 里的纯 API key 直接粘贴到 API 工具。如果用户要看完整 value 仍可以用 `--no-clipboard` 或 `--full`
+
+> **设计动机**：用户粘贴密钥到工具时，多行 value（migration 自旧系统时常见）粘出来是 5 行乱七八糟的文本。自动提取第一个 key 行让"拿来即用"。
+
+### 场景 2.6：get 默认取得主密钥字段
+
+**Given**:
+- DB 条目有普通文本字段 URL 和两个 secret 字段
+- 其中 label=`密码` 的 secret 字段 primary=true
+
+**When**:
+- `x secret get 123pan.webdav`
+
+**Then**:
+- stdout 和剪贴板取得 `密码` 字段的值
+- URL 和非主 secret 的值不输出
+- stderr 仍显示密钥输出警告
+
+### 场景 2.7：get --field 精确取得具名字段
+
+**Given**:
+- DB 条目有 label=`URL`、kind=`text` 的字段
+
+**When**:
+- `x secret get 123pan.webdav --field URL`
+
+**Then**:
+- stdout 和剪贴板取得 URL 原值
+- label 按大小写不敏感精确匹配，不做模糊匹配
+- 不存在的 label 返回退出码 2，错误输出不得包含其他字段值
+- 显式选择字段时不执行旧式多行 key 猜测
+
+---
+
+## 场景 3：get --full 输出完整元数据
+
+**Given**:
+- DB 含 `minimax`，category = `接口密钥`，note = `迁移自旧系统`
+
+**When**:
+- `x secret get minimax --full`
+
+**Then**:
+- 退出码 0
+- stdout 表格：列 `Field / Value`，含 name / category / value / note / created_at / updated_at
+
+---
+
+## 场景 4：get <name> 不存在
+
+**When**:
+- `x secret get nonexistent`
+
+**Then**:
+- 退出码 3
+- stderr 含 `❌ 密钥不存在：nonexistent`
+- stdout 为空
+
+---
+
+## 场景 5：set <name> --value <v> 新增条目
+
+**Given**:
+- DB 不含 `minimax`
+
+**When**:
+- `x secret set minimax --value sk-test1234 --category 接口密钥`
+
+**Then**:
+- 退出码 0
+- stdout 含 `✅ 密钥已创建：minimax`
+- DB 新增条目（name=minimax, category=接口密钥, value=sk-test1234, created_at=今天）
+
+---
+
+## 场景 6：set <name> 缺 --value
+
+**When**:
+- `x secret set minimax`
+
+**Then**:
+- 退出码 2（argparse 拒绝）
+- stderr 含 `the following arguments are required: --value`
+
+---
+
+## 场景 7：set <name> 已存在 → 拒绝
+
+**Given**:
+- DB 已含 `minimax`
+
+**When**:
+- `x secret set minimax --value sk-new`
+
+**Then**:
+- 退出码 4
+- stderr 含 `❌ 密钥已存在：minimax（用 x secret update 修改）`
+
+---
+
+## 场景 8：update <name> --value 修改
+
+**Given**:
+- DB 含 `minimax`，value = `sk-old`
+
+**When**:
+- `x secret update minimax --value sk-new`
+
+**Then**:
+- 退出码 0
+- stdout 含 `✅ 密钥已更新：minimax`
+- DB 中 minimax.value = `sk-new`，updated_at = 今天
+
+---
+
+## 场景 8.5：update <name> --category 修改分组
+
+**Given**:
+- DB 含 `minimax`，category = `default`
+
+**When**:
+- `x secret update minimax --category 接口密钥`
+
+**Then**:
+- 退出码 0
+- stdout 含 `✅ 密钥已更新：minimax`
+- DB 中 minimax.category = `接口密钥`，updated_at = 今天
+
+---
+
+## 场景 8.6：update <name> 同时修改 value + category
+
+**Given**:
+- DB 含 `minimax`，value = `sk-old`，category = `default`
+
+**When**:
+- `x secret update minimax --value sk-new --category 接口密钥`
+
+**Then**:
+- 退出码 0
+- DB 中 minimax.value = `sk-new`，minimax.category = `接口密钥`
+
+---
+
+## 场景 9：update <name> 不存在
+
+**When**:
+- `x secret update nonexistent --value sk-x`
+
+**Then**:
+- 退出码 3
+- stderr 含 `❌ 密钥不存在：nonexistent`
+
+---
+
+## 场景 10：rm <name> 删除
+
+**Given**:
+- DB 含 `minimax`
+
+**When**:
+- `x secret rm minimax`
+
+**Then**:
+- 退出码 0
+- stdout 含 `✅ 密钥已删除：minimax`
+- DB 中 minimax 不再存在
+
+---
+
+## 场景 11：rm <name> 不存在
+
+**When**:
+- `x secret rm nonexistent`
+
+**Then**:
+- 退出码 3
+- stderr 含 `❌ 密钥不存在：nonexistent`
+
+---
+
+## 场景 12：search <keyword> 模糊匹配
+
+**Given**:
+- DB 含 `minimax` / `openai-prod` / `aliyun_ssh`
+
+**When**:
+- `x secret search api`
+
+**Then**:
+- 退出码 0
+- stdout 表格：含 `openai-prod`（name 含 "api"），**不**含 `minimax`（值是 sk-test，但 name 不含）
+
+**搜索范围**：`name` + `note`，**不**搜 `value`（避免密钥泄露到 grep）
+
+---
+
+## 场景 13：import --from <dir> 从 .md 迁移
+
+**Given**:
+- 临时目录有 2 个 .md 文件：
+  - `接口密钥.md` 含 section `minimax`（text 块：`api_key: sk-x`）
+  - `令牌.md` 含 section `openai`（text 块：`token: tk-y`）
+- DB 已含 `minimax`（**重复**）
+
+**When**:
+- `x secret import --from <tmp_dir>`
+
+**Then**:
+- 退出码 0
+- stdout 含：
+  ```
+  📥 迁移完成：导入 1 条，跳过 1 条（重复）
+  ```
+- DB 中 `minimax`（原值不变），`openai` 新增（category=`令牌`）
+- 旧 .md 文件**保留**在 `<tmp_dir>`（不删）
+
+---
+
+## 场景 14：import --from <dir> 目录不存在
+
+**When**:
+- `x secret import --from /nonexistent/path`
+
+**Then**:
+- 退出码 5
+- stderr 含 `❌ 源目录不存在：/nonexistent/path`
+
+---
+
+## 场景 15：export 备份到 JSON
+
+**Given**:
+- DB 含 2 个条目
+
+**When**:
+- `x secret export`
+
+**Then**:
+- 退出码 0
+- stdout 含 `✅ 已备份 N 条到 <path>`
+- 备份文件：`<DB 目录>/secrets-backup-YYYYMMDD-HHMMSS.json`
+- 备份格式与 DB 相同（可直接覆盖恢复）
+
+---
+
+## 场景 16：<空> 显示用法
+
+**When**:
+- `x secret`（无子命令）
+
+**Then**:
+- 退出码 0
+- stdout 显示 usage + 7 个子命令（list / get / set / update / rm / search / import / export）
+
+---
+
+## 场景 17：`x secret --help`
+
+**Then**:
+- 退出码 0
+- stdout 含 usage + 全局选项 + 子命令说明
+
+---
+
+## 场景 18：旧 schema 1.0 只读不改写
+
+**Given**:
+- DB version=`1.0`，条目只有顶层 `value`
+
+**When**:
+- 执行 list / get / search 任一只读命令
+
+**Then**:
+- 行为等同一个 label=`密钥`、kind=`secret`、primary=true 的字段
+- DB 文件字节不变
+- 不生成迁移备份
+
+## 场景 19：首次写入旧 DB 自动备份
+
+**Given**:
+- DB version=`1.0`
+
+**When**:
+- 执行 set / update / rm / import 任一成功写操作
+
+**Then**:
+- 写入前生成一个 `secrets-v1.0-backup-YYYYMMDD-HHMMSS.json`
+- 备份内容与写入前 DB 完全一致
+- 新 DB version=`1.1`
+- 后续 1.1 写入不再生成 v1.0 迁移备份
+- 备份失败时原 DB 不得变化
+
+## 场景 20：多字段校验失败时原子拒绝
+
+以下任一输入必须拒绝且 DB 不变化：
+
+- fields 为空或超过 50 个
+- label 为空、超过 64 字符或大小写不敏感重复
+- kind 不是 `secret` / `text`
+- value 不是字符串或为空
+- 没有主字段、多个主字段或 text 被设为主字段
+- 同一调用同时提供 `value` 和 `fields`
+
+## 场景 21：set/update --value 保持兼容
+
+- `set --value` 创建一个 label=`密钥` 的主 secret 字段
+- `update --value` 只更新现有主 secret 字段，不删除 URL 等其他字段
+
+## 场景 22：list/search 不泄露任何字段值
+
+- list 不显示 fields、secret 值或 text 值
+- search 只搜索 name + note，不匹配任何 fields 值
+
+## 场景 23：import 映射到主密钥字段
+
+- 旧 Markdown text 代码块原文保存为一个 label=`密钥` 的主 secret 字段
+- 原来的多行 key 提取兼容行为继续生效
+
+## 场景 24：CLI 与 Web 共享密钥业务入口
+
+**Given**:
+- CLI 与 Web 指向同一个密钥 DB
+
+**When**:
+- 任一入口执行 list/get/find/search/create/update/delete/import/export
+
+**Then**:
+- 两端都通过 `SecretService` 执行业务操作
+- 字段校验、重复判断、不存在判断和持久化语义一致
+- CLI 退出码/剪贴板/终端提示与 Web HTTP 状态/JSON 响应仍由各自适配器处理
+- Web 未启动时 CLI 仍可独立工作
+
+## 场景 25：独立进程并发写入不丢失
+
+**Given**:
+- CLI 进程与 Web 进程（或两个 CLI 进程）指向同一个 `secrets.json`
+
+**When**:
+- 两个进程几乎同时成功创建或修改不同条目
+
+**Then**:
+- 完整读—校验—写事务通过 `<db>.lock` 串行执行
+- 两个已报告成功的修改都保留在 DB 中
+- DB 始终是完整合法 JSON
+- lock sidecar 不包含名称、fields 或任何 value
+- 持锁进程退出后操作系统释放锁，sidecar 文件存在不代表仍被占用
+
+## 不变量
+
+| 项 | 值 |
+|---|---|
+| **真实 DB 路径** | `%LOCALAPPDATA%\x-cli\secrets.json`（**永不触碰**，测试走临时目录） |
+| **覆盖** | 环境变量 `XCLI_SECRETS_DIR` |
+| **文件权限** | 600（Windows 用 ACL）|
+| **加密** | MVP 不加密（明文 + 文件权限保护） |
+| **依赖** | **零**第三方库（stdlib JSON + `threading` + `msvcrt`/`fcntl`）|
+| **并发写入** | `<db>.lock` 排他锁覆盖完整读—校验—写事务 |
+| **list 不显示 fields/value** | 硬性约束（避免 `x secret list > log.txt` 泄露）|
+| **get 永远带警告** | 硬性约束（不管是否 tty）|
+| **search 不搜任何 fields/value** | 硬性约束（包括普通文本字段，避免 grep 撞到）|
+
+---
+
+## 退出码速查
+
+| 码 | 含义 |
+|----|------|
+| 0 | 成功 |
+| 2 | 参数错（argparse 拒绝）|
+| 3 | 不存在 |
+| 4 | 已存在（set 时）|
+| 5 | DB 错（JSON 损坏 / 权限 / 迁移源不存在）|
+
+---
+
+## 不做（多字段 1.1）
+
+- ❌ 加密（master password / Fernet）
+- ❌ 子命令缩写（`x s l`）
+- ❌ TUI（rich / textual）
+- ❌ 标签（用 `category` 分组替代）
+- ❌ 自动备份到云端（用 `export` 手动备份）
+- ❌ CLI 增删/重排多个字段（本期由 Web/API 完成）
+- ❌ 单字段 REST 路由、字段历史版本与多用户权限模型
+
+---
+
+*本文档是活文档，命令扩展同步更新。*
