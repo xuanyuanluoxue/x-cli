@@ -28,6 +28,12 @@ Web frontend source lives only in `web/`; `core/web/static/` is committed build 
 Use four-space indentation, type hints, descriptive `snake_case` names, and `PascalCase` for classes. Keep runtime dependencies empty: do not add Click, Typer, Rich, PyYAML, or similar packages. Preserve unknown YAML frontmatter fields through `Task.extra`; never replace the handwritten parser casually. Core modules and plugins must not import `x`, which would create circular imports. Register every new plugin explicitly in `core.dispatch.SUBCOMMAND_MODULES`; `x.py` must not statically import concrete plugins.
 Pyflakes (`ruff` 的 `F` 规则) 必须保持零错误；新增代码不得用 `noqa` 隐藏未定义名称、死导入或其他真实错误。
 
+CLI 与 Web 共用 `core` 中的应用服务。任务能力经 `TaskService`、密钥能力经
+`SecretService` 进入存储层；CLI adapter 只负责 argparse、终端输出和退出码，
+Web adapter 只负责 HTTP、JSON 和前端集成。新 CLI 功能可以先发布，Web 后续在
+独立短期分支中按需接入同一个 service API；禁止在 Web handler 复制业务规则，
+也禁止 CLI 调 Web HTTP 或 Web 执行 CLI 子进程。
+
 ## Risk-Based Development Workflow
 
 Use the lightest process that safely matches the change. Escalate to the next level when scope or risk is unclear.

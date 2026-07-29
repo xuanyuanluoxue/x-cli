@@ -13,7 +13,6 @@ from core.slug import (
     parse_remind,
     parse_repeat,
     parse_tags,
-    unique_slug,
     validate_deadline,
     validate_time,
 )
@@ -23,6 +22,7 @@ from core.storage import (
     TaskNotFoundError,
     TaskStore,
 )
+from core.task_service import TaskService
 
 def _todo_update(args: argparse.Namespace) -> int:
     """处理 ``x todo update <id> [选项]`` 命令（已被 run 解析过）。
@@ -49,8 +49,7 @@ def _todo_update(args: argparse.Namespace) -> int:
                 return 3
         else:
             # --all without --filter = update every task (active + archived)
-            from core.storage import TaskStore as _TS
-            matched = _TS().list_tasks(include_archived=True)
+            matched = TaskService().list(include_archived=True)
 
         # Loop over each target
         any_fail = False
@@ -95,6 +94,7 @@ def _todo_update_single(args: argparse.Namespace) -> int:
     can call it once per matched target without duplicating validation.
     """
     from datetime import date  # local import to keep module load cheap
+    service = TaskService()
 
     # BDD 场景 8：至少要有一个 --xxx 选项；用 argparse 标准错误格式
     if (
@@ -210,11 +210,10 @@ def _todo_update_single(args: argparse.Namespace) -> int:
     if args.depends is not None and not clear_depends:
         deps = [d.strip() for d in args.depends.split(",") if d.strip()]
         if deps:
-            from core.storage import TaskStore as _TS
             for d in deps:
                 # Allow depending on archived tasks (they're "satisfied"
                 # by default; user may be re-referencing a known predecessor).
-                if _TS().get_task(d, include_archived=True) is None:
+                if service.get(d, include_archived=True) is None:
                     print(f"❌ 依赖任务不存在：{d}", file=sys.stderr)
                     return 3
             new_depends = deps
@@ -224,7 +223,6 @@ def _todo_update_single(args: argparse.Namespace) -> int:
     clear_parent = args.parent is not None and args.parent == ""
     if args.parent is not None and not clear_parent:
         new_parent_value = args.parent
-        store_for_check = TaskStore()
         # Cannot set parent to self
         if new_parent_value == args.id:
             print(
@@ -232,7 +230,10 @@ def _todo_update_single(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             return 2
-        parent_task = store_for_check.get_task(new_parent_value, include_archived=False)
+        parent_task = service.get(
+            new_parent_value,
+            include_archived=False,
+        )
         if parent_task is None:
             print(
                 f"❌ 父任务不存在：{new_parent_value}",
@@ -248,7 +249,10 @@ def _todo_update_single(args: argparse.Namespace) -> int:
                 break
             visited.add(current.id)
             depth += 1
-            current = store_for_check.get_task(current.parent, include_archived=False)
+            current = service.get(
+                current.parent,
+                include_archived=False,
+            )
         if depth >= 2:
             print(
                 f"❌ 子任务最多 2 层：{new_parent_value} 已经是孙任务",
@@ -257,7 +261,7 @@ def _todo_update_single(args: argparse.Namespace) -> int:
             return 2
         # Cycle check: cannot set parent to one of our own descendants
         from core.storage import find_descendants
-        all_active = store_for_check.list_tasks(include_archived=False)
+        all_active = service.list(include_archived=False)
         descendants = find_descendants(args.id, all_active)
         if any(d.id == new_parent_value for d in descendants):
             print(
@@ -271,7 +275,6 @@ def _todo_update_single(args: argparse.Namespace) -> int:
     # If args.parent is None (not passed), leave new_parent as sentinel → no change
 
     # 写盘
-    store = TaskStore()
     update_kwargs: dict = dict(
         status=TaskStatus(args.status) if args.status else None,
         priority=Priority(args.priority) if args.priority else None,
@@ -298,7 +301,7 @@ def _todo_update_single(args: argparse.Namespace) -> int:
         update_kwargs["depends"] = new_depends if not clear_depends else None
         update_kwargs["clear_depends"] = clear_depends
     try:
-        task = store.update_task(args.id, **update_kwargs)
+        task = service.update(args.id, **update_kwargs)
     except TaskNotFoundError:
         # BDD 场景 3
         print(f"❌ 任务不存在：{args.id}", file=sys.stderr)
@@ -332,6 +335,7 @@ def _todo_add(args: argparse.Namespace) -> int:
     默认空）—— 这同时满足 BDD §场景 8「不得写入未在前缀参数中出现的字段」。
     """
     from datetime import date  # local import — keep module load cheap
+    service = TaskService()
 
     name: str = (args.name or "").strip()
     if not name:
@@ -415,8 +419,7 @@ def _todo_add(args: argparse.Namespace) -> int:
     if args.parent is not None and args.parent != "":
         parent_id = args.parent
         # Existence + depth check
-        store_for_check = TaskStore()
-        parent_task = store_for_check.get_task(parent_id, include_archived=False)
+        parent_task = service.get(parent_id, include_archived=False)
         if parent_task is None:
             print(
                 f"❌ 父任务不存在：{parent_id}",
@@ -435,7 +438,7 @@ def _todo_add(args: argparse.Namespace) -> int:
                 break  # cycle, treat as depth 0
             visited.add(current.id)
             depth += 1
-            current = store_for_check.get_task(current.parent, include_archived=False)
+            current = service.get(current.parent, include_archived=False)
         if depth >= 2:
             print(
                 f"❌ 子任务最多 2 层：{parent_id} 已经是孙任务",
@@ -466,10 +469,9 @@ def _todo_add(args: argparse.Namespace) -> int:
     if args.depends is not None and args.depends != "":
         deps = [d.strip() for d in args.depends.split(",") if d.strip()]
         if deps:
-            from core.storage import TaskStore as _TS
             for d in deps:
                 # Allow depending on archived tasks (satisfied by default)
-                if _TS().get_task(d, include_archived=True) is None:
+                if service.get(d, include_archived=True) is None:
                     print(f"❌ 依赖任务不存在：{d}", file=sys.stderr)
                     return 3
             depends_list = deps
@@ -477,33 +479,22 @@ def _todo_add(args: argparse.Namespace) -> int:
     # 写入日期：created/updated 同为今天（YYYY-MM-DD 本地日期）。
     today = date.today().isoformat()
 
-    # 生成 id：slugify 候选 → 检查碰撞 → 必要时追加 -2 / -3 / …
-    store = TaskStore()
-    existing_ids = {t.id for t in store.list_tasks(include_archived=True) if t.id}
-    task_id = unique_slug(name, existing_ids)
-
-    task = Task(
-        id=task_id,
-        name=name,
-        status=TaskStatus.PENDING,
-        priority=Priority(args.priority),
-        created=today,
-        updated=today,
-        deadline=deadline_str,
-        time=time_str,
-        end_time=end_time_str,
-        duration_min=duration_min,
-        parent=parent_id,
-        remind=remind_list,
-        repeat=repeat_rule,
-        depends=depends_list,
-        folder=f"任务/{name}",
-        tags=tags,
-    )
-
     # BDD §场景 3：任务名重复 → 退出码 3
     try:
-        store.add_task(task)
+        task = service.create(
+            name,
+            priority=args.priority,
+            deadline=deadline_str,
+            tags=tags,
+            time=time_str,
+            end_time=end_time_str,
+            duration_min=duration_min,
+            parent=parent_id,
+            remind=remind_list,
+            repeat=repeat_rule,
+            depends=depends_list,
+            today=today,
+        )
     except TaskAlreadyExistsError as exc:
         print(
             f"❌ 任务已存在：{exc.name}"

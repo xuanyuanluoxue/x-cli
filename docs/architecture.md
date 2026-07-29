@@ -8,7 +8,7 @@
 
 ## 1. 整体架构
 
-### 1.1 当前架构：延迟分发的模块化单体（v0.7.x）
+### 1.1 当前架构：延迟分发的模块化单体（v0.8.x）
 
 **x-cli 5 层架构**（从上到下）：
 
@@ -40,6 +40,7 @@ core/  (核心库，被 x.py + plugins/ 共享)
 ├── slug.py        ← 中英文 slug 生成（stdlib-only）
 ├── paths.py       ← 跨平台路径解析（todo / secret / diary / notes / config / log）
 ├── formatting.py  ← CJK-aware display helpers（display_width + pad）
+├── task_service.py ← TaskService：CLI / Web 共用的任务业务 API
 ├── storage.py     ← TaskStore：文件系统 CRUD + 统计 + 索引维护
 ├── secret_service.py ← SecretService：CLI / Web 共用的密钥业务 API
 ├── secrets.py     ← SecretStore：JSON DB、事务锁、CRUD + import + export
@@ -99,7 +100,9 @@ plugins.todo.run("list --status pending")
     ↓
 plugins.todo: argparse 解析 list 的子参数（--status/--priority/--tag/--all）
     ↓
-plugins.todo_queries._todo_list: 调 TaskStore().list_tasks() 拿所有 active 任务
+plugins.todo_queries._todo_list: 调 TaskService.list() 拿所有 active 任务
+    ↓
+core/task_service.py: 统一查询过滤并调用 TaskStore
     ↓
 core/storage.py: glob 任务/<name>/TODO.md → parse_frontmatter → Task
     ↓
@@ -135,6 +138,14 @@ stdlib-only——Node/Vite 仅是**开发期**工具链，最终用户无需安�
 - 密钥列表只请求 summary，不获取或渲染 `value`（`getSecret` 不出现在列表 bundle）。
 - 密钥详情页必须先弹出明文警告，用户确认后才请求单条记录。
 - 所有静态资源同源本地加载，不连接 CDN 或外部字体服务。
+
+Web 与 CLI 的后端边界：
+
+- CLI 和 Web 都直接调用本进程中的 `TaskService` / `SecretService`。
+- CLI 可以先增加 service API 和命令；Web 不要求同期追平全部 CLI 功能。
+- Web 后续通过短期分支增加 HTTP adapter 和页面，复用已有 service API。
+- CLI 不依赖 Web 进程；Web 不执行 CLI 子进程。
+- 具体决策见 ADR-0008。
 
 ---
 
@@ -467,6 +478,7 @@ GitHub Release 是不可变下载源。清单提交前必须运行 `winget valid
 | CLI 框架 | argparse | 够用；不引 click |
 | 插件加载 | 静态白名单 + importlib 延迟加载 | version/help 不加载无关插件，同时阻止任意模块导入 |
 | 数据存储 | 文件系统（todo） + JSON DB（secret） | todo 兼容 `<xcli_todo_dir>/`；secret 用独立 JSON（不与 legacy TODO system耦合）|
+| 应用服务 | TaskService / SecretService | CLI 与 Web 共用业务入口，允许 Web 功能独立滞后 |
 | 测试框架 | pytest + pytest-cov | Python 生态标准 |
 | 打包 | PyInstaller one-file（Windows x64） | 首次发行简单；约 10 MiB，无需预装 Python |
 | Windows 分发 | GitHub Release + WinGet portable | 安装、升级、卸载由系统包管理器接管 |
@@ -541,4 +553,26 @@ tests/
 
 ---
 
-*本文档是活文档，随架构演进更新。当前实际状态时间：2026-07-17。*
+## 12. CLI / Web 共享任务服务
+
+`TaskService` 是任务应用能力的稳定边界：
+
+```text
+plugins/todo_*.py ─┐
+                   ├─> core/task_service.py ─> core/storage.py
+core/web/handlers/ ─┘
+```
+
+当前共享 API 包括 list、get、search、create、update、archive、restore、
+remove、find_overdue 和 stats。CLI adapter 可以继续编排批量操作、终端提示和
+退出码；Web handler 只映射 HTTP 输入输出。新业务规则必须先进入 service 并有
+单元测试，Web 页面与路由可以在后续短期分支中独立接入。
+
+现有模板展开和重复任务实例化仍包含兼容旧 ID/目录规则的 CLI 编排；后续修改
+这些行为时，应先把相应规则迁入 `TaskService`，不得新增 Web 私有实现。
+
+详细契约见 `docs/behaviors/shared-task-service-behavior.md` 和 ADR-0008。
+
+---
+
+*本文档是活文档，随架构演进更新。当前实际状态时间：2026-07-29。*

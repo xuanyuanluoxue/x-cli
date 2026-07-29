@@ -29,6 +29,7 @@ from core.config import ConfigError
 from core.secrets import SecretField, SecretStore
 from core.secret_service import SecretService
 from core.storage import TaskStore
+from core.task_service import TaskService
 from core.web.auth import generate_token, is_valid_token
 from core.web.server import WebServer
 
@@ -290,6 +291,117 @@ def test_web_secret_handlers_use_injected_shared_service(tmp_path: Path):
         assert srv.secrets is store
     finally:
         srv.stop()
+
+
+def test_web_task_handlers_use_injected_shared_service(tmp_path: Path):
+    class RecordingTaskService(TaskService):
+        def __init__(self, store: TaskStore) -> None:
+            super().__init__(store)
+            self.calls: list[str] = []
+
+        def list(self, **kwargs):
+            self.calls.append("list")
+            return super().list(**kwargs)
+
+        def get(self, name_or_id, *, include_archived=True):
+            self.calls.append("get")
+            return super().get(
+                name_or_id,
+                include_archived=include_archived,
+            )
+
+        def create(self, name, **kwargs):
+            self.calls.append("create")
+            return super().create(name, **kwargs)
+
+        def update(self, name_or_id, **kwargs):
+            self.calls.append("update")
+            return super().update(name_or_id, **kwargs)
+
+        def archive(self, name_or_id, *, reason=None):
+            self.calls.append("archive")
+            return super().archive(name_or_id, reason=reason)
+
+        def stats(self, *, today=None):
+            self.calls.append("stats")
+            return super().stats(today=today)
+
+    store = TaskStore(tmp_path / "todo")
+    service = RecordingTaskService(store)
+    port = _free_port()
+    srv = WebServer(
+        host="127.0.0.1",
+        port=port,
+        token=None,
+        task_service=service,
+    )
+    srv.test_token = ""
+    srv.start()
+    try:
+        assert _request(
+            srv,
+            "POST",
+            "/api/tasks",
+            token=None,
+            body={"name": "demo"},
+        )[0] == 201
+        assert _request(srv, "GET", "/api/tasks", token=None)[0] == 200
+        assert _request(
+            srv,
+            "GET",
+            "/api/tasks/demo",
+            token=None,
+        )[0] == 200
+        assert _request(
+            srv,
+            "PATCH",
+            "/api/tasks/demo",
+            token=None,
+            body={"status": "in_progress"},
+        )[0] == 200
+        assert _request(
+            srv,
+            "POST",
+            "/api/tasks/demo/archive",
+            token=None,
+            body={"reason": "done"},
+        )[0] == 200
+        assert _request(
+            srv,
+            "GET",
+            "/api/tasks/stats",
+            token=None,
+        )[0] == 200
+    finally:
+        srv.stop()
+
+    assert service.calls == [
+        "create",
+        "list",
+        "get",
+        "update",
+        "archive",
+        "stats",
+    ]
+
+
+def test_web_server_rejects_conflicting_task_dependencies(
+    tmp_path: Path,
+) -> None:
+    store = TaskStore(tmp_path / "one")
+    service = TaskService(TaskStore(tmp_path / "two"))
+
+    with pytest.raises(
+        ValueError,
+        match="task_service and store must reference the same store",
+    ):
+        WebServer(
+            host="127.0.0.1",
+            port=0,
+            token=None,
+            store=store,
+            task_service=service,
+        )
 
 
 # ============================================================
