@@ -36,6 +36,29 @@ WinGet manifest set.
 The CLI is designed for one user on one machine. It has no cloud sync, telemetry,
 team workspace, or third-party runtime dependency.
 
+## Relationship with x-cmd
+
+x-cli shares the `x` prefix with [x-cmd](https://x-cmd.com), a POSIX shell
+toolkit ("Shell Superpowers for AI Agents") with 300+ modules and 600+ on-demand
+packages. Both projects chose `x` as a short, fast command, and x-cmd's
+design — a "standard library for shell", POSIX-first, on-demand loading — has
+influenced x-cli's own philosophy of zero-dependency, plain-text tooling.
+
+- **Usage may conflict; functionality does not.** Installing both puts two `x`
+  commands on the same machine — the shell resolves whichever comes first in
+  `PATH` (x-cmd also removes an existing `x` alias during installation). The
+  feature sets are complementary: x-cmd owns the POSIX shell/agent ecosystem,
+  x-cli owns native Windows personal data (todo / secret / diary / note + web UI).
+- **Environment variables do not collide.** x-cmd uses the `___X_CMD_*`
+  namespace; x-cli uses `XCLI_*`. Data roots are separate
+  (`$___X_CMD_ROOT_DATA` vs `%LOCALAPPDATA%\x-cli\` / `$XDG_DATA_HOME/x-cli/`).
+- **Cooperation in progress.** A secret-vault design and a `todo` module have
+  been proposed upstream ([discussion #455](https://github.com/x-cmd/x-cmd/discussions/455),
+  [PR #456](https://github.com/x-cmd/x-cmd/pull/456)). If those modules mature,
+  the projects may merge or co-exist: x-cmd modules serve POSIX and agents,
+  while x-cli keeps the native Windows experience, with a possible shared data
+  format between them in the long term.
+
 ## Quick tour
 
 ```powershell
