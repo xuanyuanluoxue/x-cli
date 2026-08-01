@@ -73,3 +73,7 @@ web/dist/
 
 # Local Playwright inspection sessions and screenshots.
 .playwright-cli/
+
+# Local clone of the upstream x-cmd project (https://github.com/x-cmd/x-cmd).
+# Used for studying and contributing modules; not part of x-cli source.
+x-cmd/

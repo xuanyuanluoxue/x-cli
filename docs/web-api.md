@@ -3,13 +3,16 @@
 > **目标读者**：前端 AI（实现） + 后端实现者 + 集成者
 > **范围**：`x web` 子命令的 REST API
 > **状态**：✅ 已实现（Web 前后端，2026-07-18）
-> **基础**：v0.6.0 的 `x todo` + `x secret` CLI 命令全部 API 化
+> **基础**：Web 按需暴露 CLI 能力的稳定子集，不要求与 CLI 同期完成功能对齐
 
 ---
 
 ## 1. 总览
 
-`x web` 启动一个 stdlib HTTP server（**0 第三方依赖**），把 `TaskStore` 与共享的 `SecretService` 暴露为 REST API。密钥 service 与 CLI 共用同一个 `SecretStore` 持久化边界，浏览器前端通过这些端点读写数据。
+`x web` 启动一个 stdlib HTTP server（**0 第三方依赖**），把共享的
+`TaskService` 与 `SecretService` 暴露为 REST API。两个 service 都由 CLI
+直接复用，再分别进入 `TaskStore` / `SecretStore` 持久化边界。浏览器前端
+通过这些端点读写数据；Web 可以落后于 CLI，但不得重新实现同一业务规则。
 
 **安全模型**：
 - 默认绑定 `127.0.0.1`（仅本机可访问）

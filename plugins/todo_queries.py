@@ -16,6 +16,7 @@ from core.storage import (
     TaskNotFoundError,
     TaskStore,
 )
+from core.task_service import TaskService
 from plugins.todo_presenters import (
     _LIST_COLUMNS,
     _LIST_COLUMNS_TEMPLATE,
@@ -24,7 +25,6 @@ from plugins.todo_presenters import (
     _coerce_status,
     _compute_tree_indent,
     _list_name_cell,
-    _matches_list_filters,
     _render_auto_archive_summary,
     _render_stats,
 )
@@ -57,7 +57,8 @@ def _todo_search(args: argparse.Namespace) -> int:
         )
         return 2
 
-    store = TaskStore()
+    service = TaskService()
+    store = service.store
 
     # Auto-archive hook (opt-in). Per BDD §场景 5 the search result
     # table must NOT contain the just-archived overdue tasks. The
@@ -76,7 +77,7 @@ def _todo_search(args: argparse.Namespace) -> int:
     )
     include_active_effective = not archived_only
 
-    matches = store.search_tasks(
+    matches = service.search(
         keyword,
         include_archived=include_archived_effective,
         include_active=include_active_effective,
@@ -232,19 +233,18 @@ def _todo_list(args: argparse.Namespace) -> int:
     only_reminding: bool = bool(getattr(args, "reminding", False))
 
     # 0. Auto-archive hook (opt-in, default disabled).
-    store = TaskStore()
+    service = TaskService()
+    store = service.store
     archived = _auto_archive_overdue(store)
     sys.stdout.write(_render_auto_archive_summary(archived))
 
     # 2. 取任务列表（默认不含归档；--all 包含）
-    tasks = store.list_tasks(include_archived=include_archived)
-
-    # 3. 应用过滤（AND 关系，BDD §场景 7）
-    if status is not None or priority is not None or tag is not None:
-        tasks = [
-            t for t in tasks
-            if _matches_list_filters(t, status=status, priority=priority, tag=tag)
-        ]
+    tasks = service.list(
+        include_archived=include_archived,
+        status=status,
+        priority=priority,
+        tag=tag,
+    )
 
     # v0.5 Phase C — --reminding filter (BDD §场景 9)
     if only_reminding:
@@ -407,7 +407,8 @@ def _todo_stats(args: Sequence[str]) -> int:
     )
     parser.parse_args(list(args))  # 当前不接受额外参数
 
-    store = TaskStore()
+    service = TaskService()
+    store = service.store
 
     # Auto-archive hook (opt-in). Summary goes to stdout BEFORE the
     # stats block so the user sees "you archived 3, here's the
@@ -417,7 +418,7 @@ def _todo_stats(args: Sequence[str]) -> int:
 
     broken = _find_broken_tasks(store.todo_dir)
 
-    stats = store.stats()
+    stats = service.stats()
     sys.stdout.write(_render_stats(stats))
 
     if broken:
@@ -531,8 +532,8 @@ def _todo_export(args: argparse.Namespace) -> int:
     include_archived = bool(getattr(args, "all", False))
     output_path = getattr(args, "output", None)
 
-    store = TaskStore()
-    tasks = store.list_tasks(include_archived=include_archived)
+    service = TaskService()
+    tasks = service.list(include_archived=include_archived)
 
     if fmt not in ("json", "csv", "md"):
         print(

@@ -105,8 +105,8 @@ class WebHandler(BaseHTTPRequestHandler):
     """Single-handler that routes ``/api/*`` and ``/`` requests.
 
     Configuration is read from server attributes (``server.token``,
-    ``server.store``, ``server.secret_service``). The :class:`WebServer`
-    sets these before serving.
+    ``server.task_service``, ``server.secret_service``). The
+    :class:`WebServer` sets these before serving.
     """
 
     # Suppress default per-request log noise; we use stderr writes ourselves.
@@ -235,14 +235,15 @@ class _Server(ThreadingHTTPServer):
         server_address: tuple[str, int],
         handler_cls: type[BaseHTTPRequestHandler],
         token: str | None,
-        store: Any,  # TaskStore — avoid circular import
+        task_service: Any,  # TaskService
         secret_service: Any,  # SecretService
         config_path: Path,
         secret_confirmation_required: bool,
     ) -> None:
         super().__init__(server_address, handler_cls)
         self.token = token
-        self.store = store
+        self.task_service = task_service
+        self.store = task_service.store
         self.secret_service = secret_service
         self.secrets = secret_service.store
         self.config_path = config_path
@@ -270,6 +271,7 @@ class WebServer:
         port: int,
         token: str | None = None,
         store: Any | None = None,
+        task_service: Any | None = None,
         secrets_store: Any | None = None,
         secret_service: Any | None = None,
         config_path: Path | None = None,
@@ -278,6 +280,7 @@ class WebServer:
         from core.secret_service import SecretService  # lazy import
         from core.secrets import SecretStore  # lazy import
         from core.storage import TaskStore  # lazy import
+        from core.task_service import TaskService  # lazy import
         from core.paths import xcli_config_path  # lazy import
 
         self.host = host
@@ -287,7 +290,16 @@ class WebServer:
             Path(config_path) if config_path is not None else xcli_config_path()
         )
         self.secret_confirmation_required = bool(secret_confirmation_required)
-        self.store = store if store is not None else TaskStore()
+        if task_service is not None:
+            if store is not None and task_service.store is not store:
+                raise ValueError(
+                    "task_service and store must reference the same store"
+                )
+            self.task_service = task_service
+            self.store = task_service.store
+        else:
+            self.store = store if store is not None else TaskStore()
+            self.task_service = TaskService(self.store)
         if secret_service is not None:
             if (
                 secrets_store is not None
@@ -321,7 +333,7 @@ class WebServer:
             (self.host, self.port),
             WebHandler,
             token=self.token,
-            store=self.store,
+            task_service=self.task_service,
             secret_service=self.secret_service,
             config_path=self.config_path,
             secret_confirmation_required=self.secret_confirmation_required,

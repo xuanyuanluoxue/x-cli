@@ -13,8 +13,8 @@ from core.storage import (
     TaskAlreadyExistsError,
     TaskNotArchivedError,
     TaskNotFoundError,
-    TaskStore,
 )
+from core.task_service import TaskService
 from plugins.todo_presenters import _list_time_cell
 
 def _todo_archive(args: argparse.Namespace) -> int:
@@ -64,7 +64,8 @@ def _todo_archive(args: argparse.Namespace) -> int:
         return 2
 
     # 2. Resolve targets
-    store = TaskStore()
+    service = TaskService()
+    store = service.store
     targets: list[Task] = []
     not_found: list[str] = []
     if ids:
@@ -72,7 +73,7 @@ def _todo_archive(args: argparse.Namespace) -> int:
             tid = raw.strip()
             if not tid:
                 continue
-            t = store.get_task(tid, include_archived=True)
+            t = service.get(tid, include_archived=True)
             if t is None:
                 not_found.append(tid)
             else:
@@ -97,7 +98,7 @@ def _todo_archive(args: argparse.Namespace) -> int:
         return 3
 
     # Cascade to descendants
-    all_active = store.list_tasks(include_archived=False)
+    all_active = service.list(include_archived=False)
     full_targets: list[Task] = []
     for t in targets:
         if t not in full_targets:
@@ -111,7 +112,7 @@ def _todo_archive(args: argparse.Namespace) -> int:
     any_already_archived = False
     for t in full_targets:
         try:
-            archived = store.archive_task(t.id or "", reason=reason_str)
+            archived = service.archive(t.id or "", reason=reason_str)
             archived_set.append(archived)
         except TaskNotFoundError:
             continue
@@ -192,9 +193,9 @@ def _todo_restore(args: argparse.Namespace) -> int:
 
     target_status = TaskStatus(args.status) if args.status else None
 
-    store = TaskStore()
+    service = TaskService()
     try:
-        restored = store.restore_task(
+        restored = service.restore(
             args.id,
             target_status=target_status,
             dry_run=args.dry_run,
@@ -292,8 +293,8 @@ def _todo_reminder_list() -> int:
     输出表格列：ID / Name / Deadline / Time / Reminders。
     表格为空时输出提示文案（而非错误）。
     """
-    store = TaskStore()
-    tasks = store.list_tasks(include_archived=False)
+    service = TaskService()
+    tasks = service.list(include_archived=False)
     reminded = [t for t in tasks if t.remind]
 
     if not reminded:
@@ -329,7 +330,7 @@ def _todo_reminder_clear(ids: list[str]) -> int:
     """
     from datetime import date
 
-    store = TaskStore()
+    service = TaskService()
     today = date.today().isoformat()
     cleared: list[str] = []
     not_found: list[str] = []
@@ -338,7 +339,7 @@ def _todo_reminder_clear(ids: list[str]) -> int:
         if not tid:
             continue
         try:
-            task = store.update_task(
+            task = service.update(
                 tid,
                 clear_remind=True,
                 today=today,
@@ -379,8 +380,9 @@ def _todo_repeat_fire(args: argparse.Namespace) -> int:
         print("❌ 任务 ID 不能为空", file=sys.stderr)
         return 2
 
-    store = TaskStore()
-    task = store.get_task(tid, include_archived=False)
+    service = TaskService()
+    store = service.store
+    task = service.get(tid, include_archived=False)
     if task is None:
         print(f"❌ 任务不存在：{tid}", file=sys.stderr)
         return 3
@@ -393,7 +395,9 @@ def _todo_repeat_fire(args: argparse.Namespace) -> int:
     task_id = task.id or ""
     base_name = task.name
     seq = 1
-    existing_ids = {t.id for t in store.list_tasks(include_archived=True) if t.id}
+    existing_ids = {
+        t.id for t in service.list(include_archived=True) if t.id
+    }
     while f"{task_id}-{seq:03d}" in existing_ids:
         seq += 1
     new_id = f"{task_id}-{seq:03d}"
@@ -468,7 +472,7 @@ def _todo_remove(args: argparse.Namespace) -> int:
         return 2
 
     # Resolve targets: ids explicit OR --filter matching
-    store = TaskStore()
+    service = TaskService()
     targets: list[Task] = []
     not_found: list[str] = []
     if ids:
@@ -476,7 +480,7 @@ def _todo_remove(args: argparse.Namespace) -> int:
             tid = raw.strip()
             if not tid:
                 continue
-            t = store.get_task(tid, include_archived=False)
+            t = service.get(tid, include_archived=False)
             if t is None:
                 not_found.append(tid)
             else:
@@ -503,7 +507,7 @@ def _todo_remove(args: argparse.Namespace) -> int:
         return 3
 
     # Cascade to descendants
-    all_active = store.list_tasks(include_archived=False)
+    all_active = service.list(include_archived=False)
     cascade_targets: list[Task] = []
     for t in targets:
         cascade_targets.append(t)
@@ -516,7 +520,7 @@ def _todo_remove(args: argparse.Namespace) -> int:
     recycled_count = 0
     for t in cascade_targets:
         try:
-            _, recycled = store.remove_task(t.id or t.name, force=force)
+            _, recycled = service.remove(t.id or t.name, force=force)
             removed_ids.append(t.id or t.name)
             if recycled:
                 recycled_count += 1

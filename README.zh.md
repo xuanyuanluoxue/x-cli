@@ -34,6 +34,27 @@ Windows 用户目前可以从 v0.8.0 Release 下载 `x-windows-x86_64.exe`。
 
 x-cli 面向单用户、单机器，不做云同步、遥测、团队空间，也不增加第三方运行依赖。
 
+## 与 x-cmd 的关系
+
+x-cli 与 [x-cmd](https://x-cmd.com) 都以 `x` 开头。x-cmd 是一个 POSIX shell
+工具包（"Shell Superpowers for AI Agents"），提供 300+ 模块和 600+ 按需加载的
+包。两个项目都选择了 `x` 作为简短快速的命令名，且 x-cmd 的设计——"Shell 版的
+Python 标准库"、POSIX 优先、按需加载——也影响了 x-cli 零依赖、纯文本工具集的
+理念。
+
+- **使用方式可能冲突，功能没有冲突。** 同时安装两个项目会在同一台机器上出现
+  两个 `x` 命令——shell 会解析 `PATH` 中靠前的那个（x-cmd 安装时还会移除已有
+  的 `x` 别名）。功能上互补：x-cmd 负责 POSIX shell 与 agent 生态，x-cli 负责
+  Windows 原生个人数据（todo / secret / diary / note + Web UI）。
+- **环境变量不冲突。** x-cmd 使用 `___X_CMD_*` 命名空间，x-cli 使用 `XCLI_*`；
+  数据根目录各自独立（`$___X_CMD_ROOT_DATA` vs `%LOCALAPPDATA%\x-cli\` /
+  `$XDG_DATA_HOME/x-cli/`）。
+- **合作进行中。** 密钥库设计和 `todo` 模块已向上游提出
+  （[讨论 #455](https://github.com/x-cmd/x-cmd/discussions/455)、
+  [PR #456](https://github.com/x-cmd/x-cmd/pull/456)）。若上游模块成熟，两个
+  项目可能合并或并存：x-cmd 模块服务 POSIX 与 agent，x-cli 保留 Windows 原生
+  体验，长期来看两者可能共享统一的数据格式。
+
 ## 快速体验
 
 ```powershell

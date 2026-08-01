@@ -15,7 +15,6 @@ wire format so we can evolve them independently.
 
 from __future__ import annotations
 
-from datetime import date
 from http import HTTPStatus
 
 from core.web.response import error_response, json_response, read_json_body
@@ -45,52 +44,6 @@ def _task_to_dict(task) -> dict:
     }
 
 
-def _parse_status(value: str) -> str:
-    from core.models import TaskStatus
-
-    try:
-        return TaskStatus(value).value
-    except ValueError as exc:
-        raise ValueError(f"invalid status: {value!r}") from exc
-
-
-def _parse_priority(value: str) -> str:
-    from core.models import Priority
-
-    try:
-        return Priority(value).value
-    except ValueError as exc:
-        raise ValueError(f"invalid priority: {value!r}") from exc
-
-
-def _parse_archive_reason(value: str | None) -> str:
-    from core.models import ArchiveReason
-
-    if value is None:
-        return ArchiveReason.DONE.value
-    try:
-        return ArchiveReason(value).value
-    except ValueError as exc:
-        raise ValueError(f"invalid reason: {value!r}") from exc
-
-
-def _coerce_status(value):
-    """Convert str to TaskStatus enum, or pass through enum."""
-    from core.models import TaskStatus
-
-    if isinstance(value, TaskStatus):
-        return value
-    return TaskStatus(value)
-
-
-def _coerce_priority(value):
-    from core.models import Priority
-
-    if isinstance(value, Priority):
-        return value
-    return Priority(value)
-
-
 # ============================================================
 #  /api/tasks  collection
 # ============================================================
@@ -113,25 +66,22 @@ def _list_tasks(handler) -> None:
     priority_filter = qs.get("priority", [None])[0]
     tag_filter = qs.get("tag", [None])[0]
 
-    store = handler.server.store
-    tasks = store.list_tasks(include_archived=include_archived)
-
-    if status_filter:
-        try:
-            status_val = _parse_status(status_filter)
-        except ValueError as exc:
-            error_response(handler, HTTPStatus.BAD_REQUEST, "validation_error", str(exc))
-            return
-        tasks = [t for t in tasks if t.status.value == status_val]
-    if priority_filter:
-        try:
-            prio_val = _parse_priority(priority_filter)
-        except ValueError as exc:
-            error_response(handler, HTTPStatus.BAD_REQUEST, "validation_error", str(exc))
-            return
-        tasks = [t for t in tasks if t.priority.value == prio_val]
-    if tag_filter:
-        tasks = [t for t in tasks if t.tags and tag_filter in t.tags]
+    service = handler.server.task_service
+    try:
+        tasks = service.list(
+            include_archived=include_archived,
+            status=status_filter or None,
+            priority=priority_filter or None,
+            tag=tag_filter or None,
+        )
+    except ValueError as exc:
+        error_response(
+            handler,
+            HTTPStatus.BAD_REQUEST,
+            "validation_error",
+            str(exc),
+        )
+        return
 
     json_response(
         handler,
@@ -144,9 +94,7 @@ def _list_tasks(handler) -> None:
 
 
 def _create_task(handler) -> None:
-    from core.models import Priority, Task, TaskStatus
     from core.storage import TaskAlreadyExistsError
-    from core.slug import unique_slug
 
     body, err = read_json_body(handler)
     if err == "empty_body":
@@ -160,13 +108,6 @@ def _create_task(handler) -> None:
     name = (body.get("name") or "").strip()
     if not name:
         error_response(handler, HTTPStatus.BAD_REQUEST, "validation_error", "name is required")
-        return
-
-    priority_str = body.get("priority", "medium")
-    try:
-        priority_val = _parse_priority(priority_str)
-    except ValueError as exc:
-        error_response(handler, HTTPStatus.BAD_REQUEST, "validation_error", str(exc))
         return
 
     deadline = body.get("deadline")
@@ -184,26 +125,14 @@ def _create_task(handler) -> None:
         error_response(handler, HTTPStatus.BAD_REQUEST, "validation_error", "tags must be a list")
         return
 
-    today = date.today().isoformat()
-    store = handler.server.store
-
-    existing_ids = {t.id for t in store.list_tasks(include_archived=True) if t.id}
-    task_id = unique_slug(name, existing_ids)
-
-    task = Task(
-        id=task_id,
-        name=name,
-        status=TaskStatus.PENDING,
-        priority=Priority(priority_val),
-        created=today,
-        updated=today,
-        deadline=deadline,
-        folder=f"任务/{name}",
-        tags=tags if tags else None,
-    )
-
+    service = handler.server.task_service
     try:
-        store.add_task(task)
+        task = service.create(
+            name,
+            priority=body.get("priority", "medium"),
+            deadline=deadline,
+            tags=tags or None,
+        )
     except TaskAlreadyExistsError:
         error_response(
             handler,
@@ -235,8 +164,8 @@ def handle_task_item(handler, task_id: str, action: str) -> None:
 
 
 def _get_task(handler, task_id: str) -> None:
-    store = handler.server.store
-    task = store.get_task(task_id, include_archived=True)
+    service = handler.server.task_service
+    task = service.get(task_id, include_archived=True)
     if task is None:
         error_response(handler, HTTPStatus.NOT_FOUND, "not_found", f"task not found: {task_id}", id=task_id)
         return
@@ -260,17 +189,9 @@ def _update_task(handler, task_id: str) -> None:
 
     kwargs: dict = {}
     if "status" in body:
-        try:
-            kwargs["status"] = _parse_status(body["status"])
-        except ValueError as exc:
-            error_response(handler, HTTPStatus.BAD_REQUEST, "validation_error", str(exc))
-            return
+        kwargs["status"] = body["status"]
     if "priority" in body:
-        try:
-            kwargs["priority"] = _parse_priority(body["priority"])
-        except ValueError as exc:
-            error_response(handler, HTTPStatus.BAD_REQUEST, "validation_error", str(exc))
-            return
+        kwargs["priority"] = body["priority"]
     if "deadline" in body:
         if body["deadline"] is None:
             kwargs["clear_deadline"] = True
@@ -279,9 +200,9 @@ def _update_task(handler, task_id: str) -> None:
     if "tags" in body:
         kwargs["tags"] = body["tags"]
 
-    store = handler.server.store
+    service = handler.server.task_service
     try:
-        task = store.update_task(task_id, **kwargs)
+        task = service.update(task_id, **kwargs)
     except TaskNotFoundError as exc:
         error_response(handler, HTTPStatus.NOT_FOUND, "not_found", str(exc), id=task_id)
         return
@@ -302,7 +223,6 @@ def _update_task(handler, task_id: str) -> None:
 
 
 def handle_task_archive(handler, task_id: str) -> None:
-    from core.models import ArchiveReason
     from core.storage import TaskAlreadyArchivedError, TaskNotFoundError
 
     body: dict = {}
@@ -310,16 +230,10 @@ def handle_task_archive(handler, task_id: str) -> None:
     if err is None and raw is not None:
         body = raw
 
-    reason_str = body.get("reason") if body else None
+    reason = body.get("reason") if body else None
+    service = handler.server.task_service
     try:
-        reason_val = _parse_archive_reason(reason_str)
-    except ValueError as exc:
-        error_response(handler, HTTPStatus.BAD_REQUEST, "validation_error", str(exc))
-        return
-
-    store = handler.server.store
-    try:
-        task = store.archive_task(task_id, reason=ArchiveReason(reason_val))
+        task = service.archive(task_id, reason=reason)
     except TaskNotFoundError:
         error_response(handler, HTTPStatus.NOT_FOUND, "not_found", f"task not found: {task_id}", id=task_id)
         return
@@ -340,8 +254,8 @@ def handle_task_archive(handler, task_id: str) -> None:
 
 
 def handle_tasks_stats(handler) -> None:
-    store = handler.server.store
-    stats = store.stats()
+    service = handler.server.task_service
+    stats = service.stats()
     json_response(handler, HTTPStatus.OK, stats)
 
 
